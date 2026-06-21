@@ -2,8 +2,6 @@
 
 Ambrosia Trade Review is a pre-trade adversarial review MVP. A user brings a market thesis before acting; Ambrosia structures it, challenges it, produces validation/refusal logic, surfaces tradeability questions, captures a decision state, and stores the review as decision memory.
 
-This repository implements the first product loop described in `../papers/index18.txt`, `../papers/index19.txt`, `../papers/index20.txt`, and `../papers/index21.txt`.
-
 ## Current State
 
 The MVP is implemented as a working monorepo with a polished Next.js workbench and a FastAPI backend. The frontend is usable as an investor-demo workbench with sample reviews, automatic thesis seeding, API-backed review creation when the backend is available, and deterministic local fallback when it is not.

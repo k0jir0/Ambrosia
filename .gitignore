@@ -1,0 +1,36 @@
+# dependencies
+node_modules/
+.pnpm-store/
+
+# next
+.next/
+out/
+
+# tests
+test-results/
+playwright-report/
+
+# python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+
+# env
+.env
+.env.local
+.env.*.local
+
+# logs
+*.log
+logs/
+
+# local db/data
+*.sqlite3
+*.db
+data/
+
+# OS/editor
+.DS_Store
+Thumbs.db

@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ambrosia.local/schemas/review.v1.json",
+  "title": "Ambrosia Trade Review",
+  "type": "object",
+  "required": [
+    "id",
+    "schemaVersion",
+    "workflowVersion",
+    "thesis",
+    "claims",
+    "strongestCritique",
+    "disconfirmingTest",
+    "validation",
+    "tradeability",
+    "decisionState",
+    "confidence",
+    "trialCountImpact",
+    "audit"
+  ],
+  "properties": {
+    "id": { "type": "string" },
+    "schemaVersion": { "const": "review.v1" },
+    "workflowVersion": { "type": "string" },
+    "thesis": { "type": "string" },
+    "decisionState": { "type": ["string", "null"], "enum": ["pursue", "watch", "reject", "needs_more_data", null] },
+    "confidence": { "type": "integer", "minimum": 0, "maximum": 100 },
+    "trialCountImpact": { "type": "integer", "minimum": 0 }
+  }
+}

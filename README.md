@@ -4,6 +4,42 @@ Ambrosia Trade Review is a pre-trade adversarial review MVP. A user brings a mar
 
 This repository implements the first product loop described in `../papers/index18.txt`, `../papers/index19.txt`, `../papers/index20.txt`, and `../papers/index21.txt`.
 
+## Current State
+
+The MVP is implemented as a working monorepo with a polished Next.js workbench and a FastAPI backend. The frontend is usable as an investor-demo workbench with sample reviews, automatic thesis seeding, API-backed review creation when the backend is available, and deterministic local fallback when it is not.
+
+Implemented frontend capabilities:
+
+- Direct workbench-first experience, not a landing page or chat UI.
+- Manual thesis intake.
+- `Generate thesis` button that seeds candidate review inputs without presenting them as recommendations.
+- API-first review creation through the FastAPI `/reviews` endpoint.
+- Local deterministic fallback if the API is unavailable.
+- Structured Trade Review artifact with critique, disconfirming test, historical analogue, validation/refusal panel, claims, tradeability checklist, evidence pointers, decision strip, and audit trace.
+- Decision state buttons: pursue, watch, reject, and needs more data.
+- Functional left navigation for Review workbench, Decision memory, Calibration, and Source library.
+- Live dashboard metrics derived from current review state.
+- Visible form validation errors.
+- Playwright smoke tests for desktop and tablet viewports.
+
+Implemented backend capabilities:
+
+- FastAPI health endpoint.
+- In-memory review store for MVP/demo use.
+- Deterministic review generator matching the MVP artifact shape.
+- Review list, create, detail, decision update, outcome update, and TradingView webhook routes.
+- Prompt-injection screening for TradingView webhook payloads.
+- Pydantic schemas for the review artifact and decision updates.
+- pytest and Ruff verification.
+
+Implemented architecture scaffolding:
+
+- PostgreSQL and pgvector-ready schema in `infra/db/init.sql`.
+- Workflow notes for the future LangGraph implementation.
+- MCP-style tool adapter notes.
+- Shared schema documentation.
+- Evaluation fixtures and a runnable eval fixture gate.
+
 ## MVP Scope
 
 The first build focuses on one loop:
@@ -43,6 +79,8 @@ Frontend:
 - Zod
 - Lucide icons
 - Playwright
+- Recharts
+- Radix/shadcn-style dependency baseline
 
 Backend:
 
@@ -52,28 +90,103 @@ Backend:
 - SQLAlchemy-ready schema design
 - PostgreSQL and pgvector target schema
 - Structured audit events
+- uv
+- pytest
+- Ruff
+
+Infrastructure and scaffolding:
+
+- Docker Compose for PostgreSQL/pgvector and Redis targets
+- PostgreSQL schema seed
+- Evaluation fixtures for refusal, prompt injection, and tradeability checks
+- LangGraph workflow placeholder
+- MCP-style tool adapter contracts
 
 ## Local Development
 
-This workspace was generated in an environment where Node.js and Python were not available, so dependencies were not installed here.
+Required runtimes:
 
-Once Node.js and Python are installed:
+- Node.js 20 or newer
+- pnpm 9.x
+- Python 3.12
+- uv
+
+Install dependencies from the repo root:
 
 ```powershell
 cd C:\Users\user\Desktop\ARC\Ambrosia
 pnpm install
-pnpm dev:web
+cd services\api
+uv sync
 ```
 
-In another terminal:
+Run the API:
 
 ```powershell
 cd C:\Users\user\Desktop\ARC\Ambrosia\services\api
-uv sync
 uv run uvicorn app.main:app --reload --port 8000
 ```
 
-The frontend is designed to run with realistic local sample data even before the backend is connected.
+Run the web app:
+
+```powershell
+cd C:\Users\user\Desktop\ARC\Ambrosia
+pnpm dev:web
+```
+
+Local URLs:
+
+- Web app: `http://localhost:3000`
+- API: `http://127.0.0.1:8000`
+- API docs: `http://127.0.0.1:8000/docs`
+
+The frontend is resilient for demos: it attempts to use the API first and falls back to local deterministic generation if the API is unavailable.
+
+## Verification
+
+From the repo root:
+
+```powershell
+pnpm build:web
+pnpm lint:web
+pnpm test:e2e
+pnpm test:api
+pnpm lint:api
+pnpm evals
+```
+
+Current verification status:
+
+- Frontend build passes.
+- Frontend lint passes.
+- Playwright e2e passes, including generated-thesis and navigation-panel flows.
+- Backend tests pass.
+- Backend lint passes.
+- Eval fixture gate passes.
+- VS Code diagnostics show no errors.
+
+## GitHub
+
+Private repository:
+
+```text
+https://github.com/k0jir0/Ambrosia
+```
+
+Default branch:
+
+```text
+main
+```
+
+## Next Implementation Steps
+
+1. Replace in-memory API storage with PostgreSQL persistence.
+2. Add pgvector hybrid retrieval over reviews, notes, and source pointers.
+3. Add LangGraph workflow nodes behind the existing API contract.
+4. Add model provider integration and heterogeneous adversarial critique.
+5. Promote `packages/evals` into CI.
+6. Add a small protected internal inspection surface for workflow runs, retrieval sets, tool calls, refusal reasons, and eval results.
 
 ## Design Principle
 

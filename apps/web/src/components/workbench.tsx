@@ -90,11 +90,7 @@ export function Workbench() {
       setActiveId(review.id);
       setActiveView("workbench");
       setGenerationMode("fallback");
-      setGenerationError(
-        error instanceof ApiUnavailableError
-          ? "API unavailable, so Ambrosia generated this review locally."
-          : "API review generation failed, so Ambrosia generated this review locally."
-      );
+      setGenerationError(error instanceof ApiUnavailableError ? null : "API review generation failed, so Ambrosia generated this review locally.");
     }
   }
 

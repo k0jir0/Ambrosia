@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: ambrosia-api
+    name: ambrosia-trade-review-api
     runtime: python
     rootDir: services/api
     plan: free
@@ -10,11 +10,11 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: 3.12.10
-      - key: ALLOWED_ORIGINS
-        value: https://ambrosia-web.onrender.com
+      - key: ALLOWED_ORIGIN_REGEX
+        value: https://.*\.onrender\.com
 
   - type: web
-    name: ambrosia-web
+    name: ambrosia-trade-review-web
     runtime: node
     rootDir: .
     plan: free
@@ -23,5 +23,3 @@ services:
     envVars:
       - key: NODE_VERSION
         value: 20.18.1
-      - key: NEXT_PUBLIC_API_BASE_URL
-        value: https://ambrosia-api.onrender.com

@@ -1,6 +1,6 @@
 import type { ThesisInput, TradeReview } from "./types";
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
+const CONFIGURED_API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL?.trim();
 const DEFAULT_API_TIMEOUT_MS = 2500;
 const CREATE_REVIEW_TIMEOUT_MS = 8000;
 
@@ -9,6 +9,18 @@ export class ApiUnavailableError extends Error {
     super(message);
     this.name = "ApiUnavailableError";
   }
+}
+
+function getApiBaseUrl(): string | null {
+  if (CONFIGURED_API_BASE_URL) {
+    return CONFIGURED_API_BASE_URL.replace(/\/$/, "");
+  }
+
+  if (typeof window !== "undefined" && ["localhost", "127.0.0.1"].includes(window.location.hostname)) {
+    return "http://localhost:8000";
+  }
+
+  return null;
 }
 
 async function fetchWithTimeout(input: RequestInfo | URL, init?: RequestInit, timeoutMs = DEFAULT_API_TIMEOUT_MS): Promise<Response> {
@@ -28,8 +40,13 @@ async function fetchWithTimeout(input: RequestInfo | URL, init?: RequestInit, ti
 }
 
 export async function createReview(input: ThesisInput): Promise<TradeReview> {
+  const apiBaseUrl = getApiBaseUrl();
+  if (!apiBaseUrl) {
+    throw new ApiUnavailableError();
+  }
+
   const response = await fetchWithTimeout(
-    `${API_BASE_URL}/reviews`,
+    `${apiBaseUrl}/reviews`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -53,7 +70,12 @@ export async function createReview(input: ThesisInput): Promise<TradeReview> {
 }
 
 export async function listReviews(): Promise<TradeReview[]> {
-  const response = await fetchWithTimeout(`${API_BASE_URL}/reviews`);
+  const apiBaseUrl = getApiBaseUrl();
+  if (!apiBaseUrl) {
+    throw new ApiUnavailableError();
+  }
+
+  const response = await fetchWithTimeout(`${apiBaseUrl}/reviews`);
 
   if (!response.ok) {
     throw new Error(`Review list failed: ${response.status}`);
@@ -63,7 +85,12 @@ export async function listReviews(): Promise<TradeReview[]> {
 }
 
 export async function recordDecision(reviewId: string, decisionState: string): Promise<TradeReview> {
-  const response = await fetchWithTimeout(`${API_BASE_URL}/reviews/${reviewId}/decision`, {
+  const apiBaseUrl = getApiBaseUrl();
+  if (!apiBaseUrl) {
+    throw new ApiUnavailableError();
+  }
+
+  const response = await fetchWithTimeout(`${apiBaseUrl}/reviews/${reviewId}/decision`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ decision_state: decisionState })

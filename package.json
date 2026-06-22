@@ -4,6 +4,7 @@
   "version": "0.1.0",
   "description": "Ambrosia Trade Review MVP monorepo",
   "scripts": {
+    "start": "node index.js",
     "dev:web": "pnpm --filter @ambrosia/web dev",
     "build:web": "pnpm --filter @ambrosia/web build",
     "lint:web": "pnpm --filter @ambrosia/web lint",

@@ -6,6 +6,13 @@ Ambrosia Trade Review is a pre-trade adversarial review MVP. A user brings a mar
 
 The MVP is implemented as a working monorepo with a polished Next.js workbench and a FastAPI backend. The frontend is usable as an investor-demo workbench with sample reviews, automatic thesis seeding, API-backed review creation when the backend is available, and deterministic local fallback when it is not.
 
+Deployment state:
+
+- Fresh Render web service is live from this repository on `main`.
+- Public URL: `https://ambrosia-5aec.onrender.com/`
+- Render service ID: `srv-d8s9ga6gvqtc73fuccb0`
+- The earlier Render project/service was deleted and recreated cleanly as a Node web service.
+
 Implemented frontend capabilities:
 
 - Direct workbench-first experience, not a landing page or chat UI.
@@ -142,7 +149,17 @@ The frontend is resilient for demos: it attempts to use the API first and falls 
 
 ## Render Deployment
 
-For the existing Render web service, use the Ambrosia repository on `main`.
+For the current Render web service, use the Ambrosia repository on `main`.
+
+Live service:
+
+- URL: `https://ambrosia-5aec.onrender.com/`
+- Service ID: `srv-d8s9ga6gvqtc73fuccb0`
+- Runtime: `node`
+- Branch: `main`
+- Root Directory: `.`
+- Build Command: `pnpm build`
+- Start Command: `node index.js`
 
 If the service root directory is the repository root:
 

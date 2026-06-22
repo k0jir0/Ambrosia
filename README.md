@@ -22,7 +22,7 @@ The MVP is live as a working monorepo with a Next.js workbench and a FastAPI bac
 
 Live deployment:
 
-- URL: `https://ambrosia-5aec.onrender.com/`
+- [https://ambrosia-5aec.onrender.com/](https://ambrosia-5aec.onrender.com/)
 - Service ID: `srv-d8s9ga6gvqtc73fuccb0`
 - Runtime: `node`
 - Branch: `main`
@@ -72,12 +72,6 @@ cd C:\Users\user\Desktop\ARC\Ambrosia
 pnpm dev:web
 ```
 
-Local URLs:
-
-- Web app: `http://localhost:3000`
-- API: `http://127.0.0.1:8000`
-- API docs: `http://127.0.0.1:8000/docs`
-
 ## Render
 
 Current Render settings:
@@ -88,7 +82,7 @@ Current Render settings:
 - Build Command: `pnpm build`
 - Start Command: `node index.js`
 
-Both start paths bind to Render's `$PORT`. Leave `NEXT_PUBLIC_API_BASE_URL` unset unless a live Ambrosia API URL is available.
+The live product is served at [https://ambrosia-5aec.onrender.com/](https://ambrosia-5aec.onrender.com/). Leave `NEXT_PUBLIC_API_BASE_URL` unset unless a live Ambrosia API URL is available.
 
 ## Verification
 

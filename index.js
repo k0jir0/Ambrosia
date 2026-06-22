@@ -2,7 +2,7 @@ const { spawn } = require("node:child_process");
 const { join } = require("node:path");
 
 const webRoot = join(__dirname, "apps", "web");
-const nextCli = join(webRoot, "node_modules", "next", "dist", "bin", "next");
+const nextCli = require.resolve("next/dist/bin/next", { paths: [webRoot, __dirname] });
 const port = process.env.PORT || "3000";
 
 const child = spawn(

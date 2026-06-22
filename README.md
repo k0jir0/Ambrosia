@@ -140,6 +140,26 @@ Local URLs:
 
 The frontend is resilient for demos: it attempts to use the API first and falls back to local deterministic generation if the API is unavailable.
 
+## Render Deployment
+
+For the existing Render web service, use the Ambrosia repository on `main`.
+
+If the service root directory is the repository root:
+
+```bash
+Build Command: pnpm build
+Start Command: node index.js
+```
+
+If the service root directory is `apps/web`:
+
+```bash
+Build Command: pnpm build
+Start Command: node index.js
+```
+
+Both start paths bind to Render's `$PORT`. Leave `NEXT_PUBLIC_API_BASE_URL` unset unless a live Ambrosia API service URL is available.
+
 ## Verification
 
 From the repo root:

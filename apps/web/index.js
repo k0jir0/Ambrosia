@@ -1,8 +1,7 @@
 /* eslint-disable @typescript-eslint/no-require-imports */
 const { spawn } = require("node:child_process");
-const { join } = require("node:path");
 
-const nextCli = join(__dirname, "node_modules", "next", "dist", "bin", "next");
+const nextCli = require.resolve("next/dist/bin/next", { paths: [__dirname, process.cwd()] });
 const port = process.env.PORT || "3000";
 
 const child = spawn(

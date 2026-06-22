@@ -5,8 +5,8 @@
   "scripts": {
     "dev": "node scripts/dev.mjs",
     "build": "next build",
-    "start": "next start --port 3000",
-    "start:render": "next start --hostname 0.0.0.0 --port $PORT",
+    "start": "node index.js",
+    "start:render": "node index.js",
     "lint": "eslint . --max-warnings=0",
     "test:e2e": "node scripts/test-e2e.mjs"
   },

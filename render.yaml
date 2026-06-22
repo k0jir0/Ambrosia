@@ -18,7 +18,7 @@ services:
     runtime: node
     rootDir: .
     plan: free
-    buildCommand: corepack enable && corepack prepare pnpm@9.12.0 --activate && pnpm install --frozen-lockfile && pnpm build:web
+    buildCommand: corepack prepare pnpm@9.12.0 --activate && pnpm install --frozen-lockfile --force && pnpm build:web
     startCommand: node index.js
     envVars:
       - key: NODE_VERSION

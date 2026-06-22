@@ -11,6 +11,27 @@ export class ApiUnavailableError extends Error {
   }
 }
 
+function isApiUnavailableStatus(status: number): boolean {
+  return status === 404 || status >= 500;
+}
+
+async function readJsonResponse<T>(response: Response): Promise<T> {
+  const contentType = response.headers.get("content-type") ?? "";
+
+  if (!response.ok) {
+    if (isApiUnavailableStatus(response.status)) {
+      throw new ApiUnavailableError();
+    }
+    throw new Error(`API request failed: ${response.status}`);
+  }
+
+  if (!contentType.includes("application/json")) {
+    throw new ApiUnavailableError();
+  }
+
+  return response.json() as Promise<T>;
+}
+
 function getApiBaseUrl(): string | null {
   if (CONFIGURED_API_BASE_URL) {
     return CONFIGURED_API_BASE_URL.replace(/\/$/, "");
@@ -62,11 +83,7 @@ export async function createReview(input: ThesisInput): Promise<TradeReview> {
     CREATE_REVIEW_TIMEOUT_MS
   );
 
-  if (!response.ok) {
-    throw new Error(`Review generation failed: ${response.status}`);
-  }
-
-  return response.json();
+  return readJsonResponse<TradeReview>(response);
 }
 
 export async function listReviews(): Promise<TradeReview[]> {
@@ -77,11 +94,7 @@ export async function listReviews(): Promise<TradeReview[]> {
 
   const response = await fetchWithTimeout(`${apiBaseUrl}/reviews`);
 
-  if (!response.ok) {
-    throw new Error(`Review list failed: ${response.status}`);
-  }
-
-  return response.json();
+  return readJsonResponse<TradeReview[]>(response);
 }
 
 export async function recordDecision(reviewId: string, decisionState: string): Promise<TradeReview> {
@@ -96,9 +109,5 @@ export async function recordDecision(reviewId: string, decisionState: string): P
     body: JSON.stringify({ decision_state: decisionState })
   });
 
-  if (!response.ok) {
-    throw new Error(`Decision update failed: ${response.status}`);
-  }
-
-  return response.json();
+  return readJsonResponse<TradeReview>(response);
 }

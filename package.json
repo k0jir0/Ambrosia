@@ -4,6 +4,7 @@
   "version": "0.1.0",
   "description": "Ambrosia Trade Review MVP monorepo",
   "scripts": {
+    "build": "corepack prepare pnpm@9.12.0 --activate && pnpm install --frozen-lockfile --force && pnpm build:web",
     "start": "node index.js",
     "dev:web": "pnpm --filter @ambrosia/web dev",
     "build:web": "pnpm --filter @ambrosia/web build",

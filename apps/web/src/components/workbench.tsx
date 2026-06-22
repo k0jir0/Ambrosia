@@ -6,7 +6,7 @@ import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { createReview, listReviews, recordDecision } from "@/lib/api";
+import { ApiUnavailableError, createReview, listReviews, recordDecision } from "@/lib/api";
 import { sampleReviews } from "@/lib/sample-data";
 import { generateLocalReview, thesisCandidates } from "@/lib/review-generator";
 import type { Claim, DashboardMetrics, DecisionState, ReviewStatus, SourcePointer, ThesisInput, TradeReview } from "@/lib/types";
@@ -90,7 +90,11 @@ export function Workbench() {
       setActiveId(review.id);
       setActiveView("workbench");
       setGenerationMode("fallback");
-      setGenerationError(error instanceof Error ? error.message : "API review generation failed.");
+      setGenerationError(
+        error instanceof ApiUnavailableError
+          ? "API unavailable, so Ambrosia generated this review locally."
+          : "API review generation failed, so Ambrosia generated this review locally."
+      );
     }
   }
 
@@ -159,7 +163,7 @@ function LeftRail({ reviews, activeId, activeView, onSelect, onViewChange }: { r
   return (
     <Panel className="h-[calc(100vh-2.5rem)] overflow-hidden p-3 max-lg:h-auto">
       <div className="flex items-center gap-2 px-2 py-2">
-        <div className="grid h-9 w-9 place-items-center rounded-lg bg-pine text-white">
+        <div className="grid h-9 w-9 place-items-center rounded-lg bg-teal text-fog">
           <Sparkles size={18} />
         </div>
         <div>
@@ -173,8 +177,8 @@ function LeftRail({ reviews, activeId, activeView, onSelect, onViewChange }: { r
             key={view}
             onClick={() => onViewChange(view)}
             className={cn(
-              "focus-ring flex items-center gap-2 rounded-md px-2 py-2 text-left text-slate-700 hover:bg-slate-100",
-              activeView === view ? "bg-teal/10 font-semibold text-pine" : ""
+              "focus-ring flex items-center gap-2 rounded-md px-2 py-2 text-left text-slate-200 hover:bg-line",
+              activeView === view ? "bg-teal/10 font-semibold text-teal" : ""
             )}
           >
             <Icon size={16} />
@@ -191,7 +195,7 @@ function LeftRail({ reviews, activeId, activeView, onSelect, onViewChange }: { r
               onClick={() => onSelect(review.id)}
               className={cn(
                 "focus-ring w-full rounded-lg border p-3 text-left transition",
-                review.id === activeId ? "border-teal bg-teal/10" : "border-line bg-white hover:border-teal/40"
+                review.id === activeId ? "border-teal bg-teal/10" : "border-line bg-paper hover:border-teal/40"
               )}
             >
               <p className="line-clamp-2 text-sm font-medium">{review.title}</p>
@@ -261,7 +265,7 @@ function ThesisIntake({ onSubmit, generationMode, generationError }: { onSubmit:
       >
         {generationError ? <p className="rounded-md border border-amber/30 bg-amber/10 p-3 text-xs text-amber">{generationError}</p> : null}
         <textarea
-          className="focus-ring min-h-24 resize-y rounded-lg border border-line bg-white p-3 text-sm"
+          className="focus-ring min-h-24 resize-y rounded-lg border border-line bg-paper p-3 text-sm"
           placeholder="Example: BTC miners may be mispriced relative to spot Bitcoin after a breakout..."
           {...form.register("thesis")}
         />
@@ -277,14 +281,14 @@ function ThesisIntake({ onSubmit, generationMode, generationError }: { onSubmit:
           <p className="max-w-2xl text-xs text-slate-500">The static MVP generator preserves artifact shape, refusal behavior, and audit events before model credentials are connected. Generated thesis candidates are review inputs, not recommendations.</p>
           <div className="flex flex-wrap gap-2">
             <button
-              className="focus-ring inline-flex items-center gap-2 rounded-md border border-line bg-white px-4 py-2 text-sm font-semibold text-ink hover:border-teal"
+              className="focus-ring inline-flex items-center gap-2 rounded-md border border-line bg-paper px-4 py-2 text-sm font-semibold text-ink hover:border-teal"
               type="button"
               onClick={generateThesisCandidate}
             >
               <Sparkles size={16} />
               Generate thesis
             </button>
-            <button className="focus-ring rounded-md bg-pine px-4 py-2 text-sm font-semibold text-white hover:bg-teal disabled:cursor-not-allowed disabled:opacity-60" type="submit" disabled={form.formState.isSubmitting}>
+            <button className="focus-ring rounded-md bg-teal px-4 py-2 text-sm font-semibold text-fog hover:bg-teal/80 disabled:cursor-not-allowed disabled:opacity-60" type="submit" disabled={form.formState.isSubmitting}>
               {form.formState.isSubmitting ? "Generating..." : "Generate review"}
             </button>
           </div>
@@ -297,9 +301,9 @@ function ThesisIntake({ onSubmit, generationMode, generationError }: { onSubmit:
 function Input(props: React.InputHTMLAttributes<HTMLInputElement> & { label: string; error?: string }) {
   const { label, error, ...inputProps } = props;
   return (
-    <label className="grid gap-1 text-xs font-medium text-slate-600">
+    <label className="grid gap-1 text-xs font-medium text-slate-300">
       {label}
-      <input className="focus-ring rounded-md border border-line bg-white px-3 py-2 text-sm text-ink" {...inputProps} />
+      <input className="focus-ring rounded-md border border-line bg-paper px-3 py-2 text-sm text-ink" {...inputProps} />
       {error ? <FieldError message={error} /> : null}
     </label>
   );
@@ -318,9 +322,9 @@ function StatusTimeline({ status }: { status: ReviewStatus }) {
         {steps.map((step, index) => {
           const complete = index <= activeIndex;
           return (
-            <div key={step} className="flex items-center gap-2 rounded-md border border-line bg-white px-2 py-2">
-              {complete ? <CheckCircle2 className="text-teal" size={16} /> : <Activity className="text-slate-400" size={16} />}
-              <span className={cn("text-xs font-medium", complete ? "text-ink" : "text-slate-400")}>{statusLabels[step]}</span>
+            <div key={step} className="flex items-center gap-2 rounded-md border border-line bg-paper px-2 py-2">
+              {complete ? <CheckCircle2 className="text-teal" size={16} /> : <Activity className="text-slate-500" size={16} />}
+              <span className={cn("text-xs font-medium", complete ? "text-ink" : "text-slate-500")}>{statusLabels[step]}</span>
             </div>
           );
         })}
@@ -349,29 +353,29 @@ function ReviewArtifact({ review }: { review: TradeReview }) {
         </div>
 
         <div className="grid gap-4 lg:grid-cols-[1fr_1fr]">
-          <div className="rounded-lg border border-line bg-white p-4">
+          <div className="rounded-lg border border-line bg-paper p-4">
             <div className="flex items-center gap-2">
               <BookOpen className="text-violet" size={18} />
               <h3 className="font-semibold">Historical analogue</h3>
             </div>
             <p className="mt-3 font-medium">{review.historicalAnalogue.title}</p>
-            <dl className="mt-3 grid gap-2 text-sm text-slate-600">
+            <dl className="mt-3 grid gap-2 text-sm text-slate-300">
               <div><dt className="font-semibold text-ink">Similarity</dt><dd>{review.historicalAnalogue.similarity}</dd></div>
               <div><dt className="font-semibold text-ink">Differences</dt><dd>{review.historicalAnalogue.differences}</dd></div>
               <div><dt className="font-semibold text-ink">Resolution</dt><dd>{review.historicalAnalogue.resolution}</dd></div>
             </dl>
           </div>
-          <div className="rounded-lg border border-line bg-white p-4">
+          <div className="rounded-lg border border-line bg-paper p-4">
             <div className="flex items-center justify-between gap-2">
               <div className="flex items-center gap-2">
-                <ShieldCheck className="text-pine" size={18} />
+                <ShieldCheck className="text-teal" size={18} />
                 <h3 className="font-semibold">Validation specification</h3>
               </div>
               <Badge tone={review.validation.status === "refused" ? "bad" : "good"}>{review.validation.status}</Badge>
             </div>
-            <p className="mt-3 text-sm text-slate-700">{review.validation.protocol}</p>
+            <p className="mt-3 text-sm text-slate-200">{review.validation.protocol}</p>
             {review.validation.refusalReason ? <p className="mt-3 rounded-md border border-coral/30 bg-coral/10 p-3 text-sm text-coral">{review.validation.refusalReason}</p> : null}
-            <ul className="mt-3 grid gap-2 text-sm text-slate-600">
+            <ul className="mt-3 grid gap-2 text-sm text-slate-300">
               {review.validation.dataRequirements.map((item) => <li key={item}>- {item}</li>)}
             </ul>
           </div>
@@ -388,12 +392,12 @@ function ReviewArtifact({ review }: { review: TradeReview }) {
           <h3 className="font-semibold">Tradeability checklist</h3>
           <div className="mt-3 grid gap-3 md:grid-cols-3">
             {review.tradeability.map((question) => (
-              <div key={`${question.topic}-${question.question}`} className="rounded-lg border border-line bg-white p-3">
+              <div key={`${question.topic}-${question.question}`} className="rounded-lg border border-line bg-paper p-3">
                 <div className="flex items-center justify-between gap-2">
                   <p className="text-sm font-semibold">{question.topic}</p>
                   <Badge tone={question.severity === "high" ? "bad" : question.severity === "medium" ? "warn" : "neutral"}>{question.severity}</Badge>
                 </div>
-                <p className="mt-2 text-sm text-slate-600">{question.question}</p>
+                <p className="mt-2 text-sm text-slate-300">{question.question}</p>
               </div>
             ))}
           </div>
@@ -407,7 +411,7 @@ function ArtifactBlock({ icon, title, body, tone }: { icon: React.ReactNode; tit
   return (
     <div className={cn("rounded-lg border p-4", tone === "bad" ? "border-coral/30 bg-coral/10" : "border-amber/30 bg-amber/10")}>
       <div className="flex items-center gap-2 font-semibold">{icon}{title}</div>
-      <p className="mt-3 text-sm leading-6 text-slate-700">{body}</p>
+      <p className="mt-3 text-sm leading-6 text-slate-200">{body}</p>
     </div>
   );
 }
@@ -415,12 +419,12 @@ function ArtifactBlock({ icon, title, body, tone }: { icon: React.ReactNode; tit
 function ClaimCard({ claim }: { claim: Claim }) {
   const tone = claim.kind === "sourced" ? "good" : claim.kind === "contradiction" ? "bad" : claim.kind === "unknown" ? "warn" : "neutral";
   return (
-    <div className="rounded-lg border border-line bg-white p-3">
+    <div className="rounded-lg border border-line bg-paper p-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <Badge tone={tone}>{claim.kind}</Badge>
         <span className="text-xs text-slate-500">Confidence {claim.confidence}%</span>
       </div>
-      <p className="mt-2 text-sm text-slate-700">{claim.text}</p>
+      <p className="mt-2 text-sm text-slate-200">{claim.text}</p>
       {claim.evidence ? <p className="mt-2 text-xs text-slate-500">Evidence: {claim.evidence}</p> : null}
     </div>
   );
@@ -432,7 +436,7 @@ function EvidencePanel({ review }: { review: TradeReview }) {
       <SectionTitle eyebrow="Evidence" title="Source pointers" />
       <div className="mt-3 space-y-3">
         {review.sources.map((source) => (
-          <div key={source.id} className="rounded-lg border border-line bg-white p-3">
+          <div key={source.id} className="rounded-lg border border-line bg-paper p-3">
             <div className="flex items-start justify-between gap-3">
               <div>
                 <p className="text-sm font-semibold">{source.title}</p>
@@ -440,7 +444,7 @@ function EvidencePanel({ review }: { review: TradeReview }) {
               </div>
               <Badge tone={source.permission === "user_owned" ? "good" : "warn"}>{source.permission}</Badge>
             </div>
-            <div className="mt-3 h-2 rounded-full bg-slate-100">
+            <div className="mt-3 h-2 rounded-full bg-line">
               <div className="h-2 rounded-full bg-teal" style={{ width: `${Math.round(source.relevance * 100)}%` }} />
             </div>
           </div>
@@ -461,7 +465,7 @@ function DecisionStrip({ review, onDecision }: { review: TradeReview; onDecision
             onClick={() => onDecision(decision)}
             className={cn(
               "focus-ring rounded-md border px-3 py-2 text-sm font-semibold",
-              review.decisionState === decision ? "border-pine bg-pine text-white" : "border-line bg-white text-ink hover:border-teal"
+              review.decisionState === decision ? "border-pine bg-teal text-fog" : "border-line bg-paper text-ink hover:border-teal"
             )}
           >
             {decisionLabels[decision]}
@@ -479,7 +483,7 @@ function DecisionStrip({ review, onDecision }: { review: TradeReview; onDecision
 
 function Metric({ label, value }: { label: string; value: string | number }) {
   return (
-    <div className="rounded-md border border-line bg-white p-2">
+    <div className="rounded-md border border-line bg-paper p-2">
       <p className="text-xs text-slate-500">{label}</p>
       <p className="mt-1 font-semibold">{value}</p>
     </div>
@@ -515,8 +519,8 @@ function DecisionMemoryPanel({ reviews, onSelectReview }: { reviews: TradeReview
   return (
     <Panel className="p-5">
       <SectionTitle eyebrow="Decision memory" title="Captured review decisions" />
-      <div className="mt-4 overflow-hidden rounded-lg border border-line bg-white">
-        <div className="grid grid-cols-[1.4fr_0.7fr_0.7fr_0.5fr] border-b border-line bg-slate-50 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-slate-500 max-md:hidden">
+      <div className="mt-4 overflow-hidden rounded-lg border border-line bg-paper">
+        <div className="grid grid-cols-[1.4fr_0.7fr_0.7fr_0.5fr] border-b border-line bg-fog px-3 py-2 text-xs font-semibold uppercase tracking-wide text-slate-500 max-md:hidden">
           <span>Review</span>
           <span>Decision</span>
           <span>Follow-up</span>
@@ -529,7 +533,7 @@ function DecisionMemoryPanel({ reviews, onSelectReview }: { reviews: TradeReview
               <span className="text-xs text-slate-500">{review.assetClass} · {review.timeHorizon}</span>
             </span>
             <span>{review.decisionState ? <Badge tone={review.decisionState === "reject" || review.decisionState === "needs_more_data" ? "warn" : "good"}>{decisionLabels[review.decisionState]}</Badge> : <Badge tone="neutral">Pending</Badge>}</span>
-            <span className="text-slate-600">{review.followUpDate}</span>
+            <span className="text-slate-300">{review.followUpDate}</span>
             <span className="font-semibold text-violet">+{review.trialCountImpact}</span>
           </button>
         ))}
@@ -549,7 +553,7 @@ function CalibrationPanel({ metrics, chartData, reviews }: { metrics: DashboardM
         <Metric label="Avg confidence" value={`${metrics.averageConfidence}%`} />
         <Metric label="Trial count" value={metrics.activeTrialCount} />
       </div>
-      <div className="mt-5 h-64 rounded-lg border border-line bg-white p-4">
+      <div className="mt-5 h-64 rounded-lg border border-line bg-paper p-4">
         <ResponsiveContainer width="100%" height="100%">
           <BarChart data={chartData} margin={{ top: 10, right: 12, bottom: 0, left: -18 }}>
             <CartesianGrid strokeDasharray="3 3" vertical={false} />
@@ -562,7 +566,7 @@ function CalibrationPanel({ metrics, chartData, reviews }: { metrics: DashboardM
       </div>
       <div className="mt-4 grid gap-3 md:grid-cols-2">
         {reviews.slice(0, 4).map((review) => (
-          <div key={review.id} className="rounded-lg border border-line bg-white p-3">
+          <div key={review.id} className="rounded-lg border border-line bg-paper p-3">
             <div className="flex items-center justify-between gap-2">
               <p className="text-sm font-semibold">{review.title}</p>
               <Badge tone="info">{review.confidence}%</Badge>
@@ -581,7 +585,7 @@ function SourceLibraryPanel({ sources, onSelectReview }: { sources: Array<Source
       <SectionTitle eyebrow="Source library" title="User-owned evidence and source pointers" />
       <div className="mt-4 grid gap-3">
         {sources.map((source) => (
-          <button key={`${source.reviewId}-${source.id}`} onClick={() => onSelectReview(source.reviewId)} className="focus-ring rounded-lg border border-line bg-white p-4 text-left hover:border-teal/50">
+          <button key={`${source.reviewId}-${source.id}`} onClick={() => onSelectReview(source.reviewId)} className="focus-ring rounded-lg border border-line bg-paper p-4 text-left hover:border-teal/50">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
                 <p className="font-semibold">{source.title}</p>
@@ -589,7 +593,7 @@ function SourceLibraryPanel({ sources, onSelectReview }: { sources: Array<Source
               </div>
               <Badge tone={source.permission === "user_owned" ? "good" : "warn"}>{source.permission}</Badge>
             </div>
-            <div className="mt-3 h-2 rounded-full bg-slate-100">
+            <div className="mt-3 h-2 rounded-full bg-line">
               <div className="h-2 rounded-full bg-teal" style={{ width: `${Math.round(source.relevance * 100)}%` }} />
             </div>
           </button>
@@ -605,12 +609,12 @@ function AuditPanel({ review }: { review: TradeReview }) {
       <SectionTitle eyebrow="Audit" title="Workflow trace" />
       <div className="mt-3 space-y-2">
         {review.audit.map((event) => (
-          <div key={event.id} className="rounded-md border border-line bg-white p-2 text-sm">
+          <div key={event.id} className="rounded-md border border-line bg-paper p-2 text-sm">
             <div className="flex items-center justify-between gap-2">
               <span className="font-semibold">{event.eventType}</span>
               <span className="text-xs text-slate-500">{event.timestamp}</span>
             </div>
-            <p className="mt-1 text-xs text-slate-600">{event.detail}</p>
+            <p className="mt-1 text-xs text-slate-300">{event.detail}</p>
           </div>
         ))}
       </div>

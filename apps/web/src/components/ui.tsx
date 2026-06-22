@@ -7,8 +7,8 @@ export function cn(...inputs: ClassValue[]) {
 
 export function Badge({ children, tone = "neutral" }: { children: React.ReactNode; tone?: "neutral" | "good" | "warn" | "bad" | "info" }) {
   const tones = {
-    neutral: "border-line bg-white text-ink",
-    good: "border-teal/30 bg-teal/10 text-pine",
+    neutral: "border-line bg-fog text-ink",
+    good: "border-teal/30 bg-teal/10 text-teal",
     warn: "border-amber/30 bg-amber/10 text-amber",
     bad: "border-coral/30 bg-coral/10 text-coral",
     info: "border-violet/30 bg-violet/10 text-violet"

@@ -5,18 +5,18 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
-        ink: "#172026",
-        fog: "#f5f7f8",
-        paper: "#fbfcfd",
-        line: "#dbe3e7",
+        ink: "#edf7f4",
+        fog: "#101820",
+        paper: "#16232d",
+        line: "#2b3f4c",
         pine: "#0f5f55",
-        teal: "#138c7e",
-        amber: "#b7791f",
-        coral: "#c84c3d",
-        violet: "#5d5a9c"
+        teal: "#38c7b6",
+        amber: "#f2b84b",
+        coral: "#ff7366",
+        violet: "#a9a4ff"
       },
       boxShadow: {
-        panel: "0 18px 48px rgba(23, 32, 38, 0.08)"
+        panel: "0 18px 48px rgba(0, 0, 0, 0.28)"
       }
     }
   },

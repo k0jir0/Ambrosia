@@ -14,6 +14,7 @@ test("generated thesis can seed and create a review", async ({ page }) => {
   await expect(page.getByRole("textbox", { name: "Ticker / basket" })).not.toHaveValue("");
   await page.getByRole("button", { name: "Generate review" }).click();
   await expect(page.getByRole("heading", { name: /adversarial review/i })).toBeVisible();
+  await expect(page.getByText(/signal is aborted/i)).toHaveCount(0);
 });
 
 test("navigation panels switch to memory calibration and sources", async ({ page }) => {
@@ -30,4 +31,31 @@ test("empty form shows validation instead of silent submit", async ({ page }) =>
   await page.goto("/");
   await page.getByRole("button", { name: "Generate review" }).click();
   await expect(page.getByText("Enter a decision-relevant thesis.")).toBeVisible();
+});
+
+test("decision buttons update the active review state", async ({ page }) => {
+  await page.goto("/");
+  const pursueButton = page.locator("aside").getByRole("button", { name: "Pursue" });
+  const rejectButton = page.locator("aside").getByRole("button", { name: "Reject" });
+
+  await pursueButton.click();
+  await expect(page.getByText("Decision recorded", { exact: true })).toBeVisible();
+  await expect(pursueButton).toHaveClass(/bg-teal/);
+
+  await rejectButton.click();
+  await expect(rejectButton).toHaveClass(/bg-teal/);
+});
+
+test("source library entries navigate back to their review", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Source library" }).click();
+  await page.getByRole("button", { name: /User watchlist: BTC miners relative strength/ }).click();
+  await expect(page.getByRole("heading", { name: "BTC miners lagging spot Bitcoin" })).toBeVisible();
+  await expect(page.getByText("Strongest critique")).toBeVisible();
+});
+
+test("dark mode is the default visual mode", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.locator("html")).toHaveCSS("color-scheme", "dark");
+  await expect(page.locator("body")).toHaveCSS("background-color", "rgb(16, 24, 32)");
 });

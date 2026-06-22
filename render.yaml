@@ -1,0 +1,27 @@
+services:
+  - type: web
+    name: ambrosia-api
+    runtime: python
+    rootDir: services/api
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.10
+      - key: ALLOWED_ORIGINS
+        value: https://ambrosia-web.onrender.com
+
+  - type: web
+    name: ambrosia-web
+    runtime: node
+    rootDir: .
+    plan: free
+    buildCommand: corepack enable && corepack prepare pnpm@9.12.0 --activate && pnpm install --frozen-lockfile && pnpm build:web
+    startCommand: corepack enable && corepack prepare pnpm@9.12.0 --activate && pnpm --filter @ambrosia/web start:render
+    envVars:
+      - key: NODE_VERSION
+        value: 20.18.1
+      - key: NEXT_PUBLIC_API_BASE_URL
+        value: https://ambrosia-api.onrender.com

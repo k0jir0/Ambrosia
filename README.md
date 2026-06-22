@@ -151,16 +151,18 @@ pnpm test:e2e
 pnpm test:api
 pnpm lint:api
 pnpm evals
+pnpm test:stack
 ```
 
 Current verification status:
 
 - Frontend build passes.
 - Frontend lint passes.
-- Playwright e2e passes, including generated-thesis and navigation-panel flows.
+- Playwright e2e passes, including generated-thesis, navigation-panel, decision-button, source-library, and dark-mode flows.
 - Backend tests pass.
 - Backend lint passes.
-- Eval fixture gate passes.
+- Eval fixture gate passes against the deterministic backend generator.
+- Stack contract tests pass.
 - VS Code diagnostics show no errors.
 
 ## GitHub

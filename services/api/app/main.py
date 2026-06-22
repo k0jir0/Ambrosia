@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -9,9 +11,16 @@ from .store import store
 
 app = FastAPI(title="Ambrosia Trade Review API", version="0.1.0")
 
+default_origins = ["http://localhost:3000", "http://127.0.0.1:3000"]
+configured_origins = [
+    origin.strip()
+    for origin in os.getenv("ALLOWED_ORIGINS", "").split(",")
+    if origin.strip()
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=[*default_origins, *configured_origins],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

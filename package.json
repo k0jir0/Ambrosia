@@ -11,7 +11,8 @@
     "dev:api": "cd services/api && uv run uvicorn app.main:app --reload --port 8000",
     "test:api": "cd services/api && uv run pytest",
     "lint:api": "cd services/api && uv run ruff check app tests",
-    "evals": "python packages/evals/run_evals.py"
+    "evals": "cd services/api && uv run python ../../packages/evals/run_evals.py",
+    "test:stack": "python -m unittest discover -s tests"
   },
   "packageManager": "pnpm@9.12.0",
   "engines": {

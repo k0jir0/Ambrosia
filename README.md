@@ -13,7 +13,6 @@ Deployment state:
 - Fresh Render web service is live from this repository on `main`.
 - Public URL: `https://ambrosia-5aec.onrender.com/`
 - Render service ID: `srv-d8s9ga6gvqtc73fuccb0`
-- The earlier Render project/service was deleted and recreated cleanly as a Node web service.
 
 Implemented frontend capabilities:
 

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Image from "next/image";
 import { Activity, AlertTriangle, BarChart3, BookOpen, CheckCircle2, ClipboardCheck, Database, FileSearch, History, ShieldCheck, Sparkles } from "lucide-react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
@@ -159,10 +160,10 @@ function LeftRail({ reviews, activeId, activeView, onSelect, onViewChange }: { r
   return (
     <Panel className="h-[calc(100vh-2.5rem)] overflow-hidden p-3 max-lg:h-auto">
       <div className="flex items-center gap-2 px-2 py-2">
-        <div className="grid h-9 w-9 place-items-center rounded-lg bg-teal text-fog">
-          <Sparkles size={18} />
+        <div className="grid h-11 w-11 shrink-0 place-items-center overflow-hidden rounded-lg border border-line bg-paper p-1">
+          <Image src="/logo.png" alt="Ambrosia" width={44} height={44} className="h-full w-full object-contain" priority />
         </div>
-        <div>
+        <div className="min-w-0">
           <p className="text-sm font-semibold">Ambrosia</p>
           <p className="text-xs text-slate-500">Trade Review</p>
         </div>
@@ -266,7 +267,7 @@ function ThesisIntake({ onSubmit, generationMode, generationError }: { onSubmit:
           {...form.register("thesis")}
         />
         {form.formState.errors.thesis?.message ? <FieldError message={form.formState.errors.thesis.message} /> : null}
-        <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-5">
           <Input label="Ticker / basket" placeholder="BTC miners" error={form.formState.errors.ticker?.message} {...form.register("ticker")} />
           <Input label="Asset class" placeholder="Equities" error={form.formState.errors.assetClass?.message} {...form.register("assetClass")} />
           <Input label="Time horizon" placeholder="1-4 weeks" error={form.formState.errors.timeHorizon?.message} {...form.register("timeHorizon")} />
@@ -297,9 +298,9 @@ function ThesisIntake({ onSubmit, generationMode, generationError }: { onSubmit:
 function Input(props: React.InputHTMLAttributes<HTMLInputElement> & { label: string; error?: string }) {
   const { label, error, ...inputProps } = props;
   return (
-    <label className="grid gap-1 text-xs font-medium text-slate-300">
-      {label}
-      <input className="focus-ring rounded-md border border-line bg-paper px-3 py-2 text-sm text-ink" {...inputProps} />
+    <label className="grid min-w-0 gap-1 text-xs font-medium text-slate-300">
+      <span className="truncate">{label}</span>
+      <input className="focus-ring min-w-0 rounded-md border border-line bg-paper px-3 py-2 text-sm text-ink" {...inputProps} />
       {error ? <FieldError message={error} /> : null}
     </label>
   );

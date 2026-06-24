@@ -664,6 +664,9 @@ function TopBar({ review }: { review: TradeReview }) {
       <div>
         <p className="text-xs font-semibold uppercase tracking-wide text-teal">Pre-trade adversarial review</p>
         <h1 className="mt-1 text-2xl font-semibold tracking-normal text-ink">{review.title}</h1>
+        <p className="mt-2 max-w-2xl text-sm leading-5 text-slate-400">
+          This is the active idea under review, with its current decision state and workflow version shown before any trade action is taken.
+        </p>
       </div>
       <div className="flex flex-wrap gap-2">
         <Badge tone="info">{review.schemaVersion}</Badge>
@@ -714,6 +717,9 @@ function ThesisIntake({ onSubmit, generationMode, generationError, seedRequestTo
         <SectionTitle eyebrow="New review" title="Run a thesis through Ambrosia" />
         <Badge tone={generationMode === "api" ? "good" : generationMode === "fallback" ? "warn" : "neutral"}>{generationMode === "api" ? "API-backed" : generationMode === "fallback" ? "Local fallback" : "Manual thesis intake first"}</Badge>
       </div>
+      <p className="mt-2 text-sm leading-5 text-slate-400">
+        Enter a market idea here and Ambrosia turns it into a structured review with critique, validation checks, sources, and a decision record.
+      </p>
       <form
         className="mt-4 grid gap-3"
         onSubmit={form.handleSubmit(async (value) => {
@@ -776,6 +782,9 @@ function StatusTimeline({ status }: { status: ReviewStatus }) {
   const activeIndex = steps.indexOf(status);
   return (
     <Panel className="p-4">
+      <p className="mb-3 text-sm leading-5 text-slate-400">
+        This timeline shows where the idea is in the review process, from intake through validation and final decision capture.
+      </p>
       <div className="grid grid-cols-2 gap-2 md:grid-cols-7">
         {steps.map((step, index) => {
           const complete = index <= activeIndex;
@@ -797,6 +806,9 @@ function ReviewArtifact({ review }: { review: TradeReview }) {
       <div className="grid gap-5">
         <div className="grid gap-3 border-b border-line pb-4">
           <SectionTitle eyebrow="Structured thesis" title={review.thesis} />
+          <p className="text-sm leading-5 text-slate-400">
+            This module turns the original idea into a decision packet: what is being considered, what could break it, and what must be checked first.
+          </p>
           <div className="flex flex-wrap gap-2">
             <Badge>{review.ticker}</Badge>
             <Badge>{review.assetClass}</Badge>
@@ -841,6 +853,9 @@ function ReviewArtifact({ review }: { review: TradeReview }) {
 
         <div>
           <h3 className="font-semibold">Claims and assumptions</h3>
+          <p className="mt-2 text-sm leading-5 text-slate-400">
+            These are the building blocks of the thesis, separated into evidence, assumptions, unknowns, and contradictions.
+          </p>
           <div className="mt-3 grid gap-3">
             {review.claims.map((claim) => <ClaimCard key={claim.id} claim={claim} />)}
           </div>
@@ -848,6 +863,9 @@ function ReviewArtifact({ review }: { review: TradeReview }) {
 
         <div>
           <h3 className="font-semibold">Tradeability checklist</h3>
+          <p className="mt-2 text-sm leading-5 text-slate-400">
+            This checklist asks whether the idea can actually be traded responsibly, including liquidity, costs, expression, and missing data.
+          </p>
           <div className="mt-3 grid gap-3 md:grid-cols-3">
             {review.tradeability.map((question) => (
               <div key={`${question.topic}-${question.question}`} className="rounded-lg border border-line bg-paper p-3">
@@ -892,6 +910,9 @@ function EvidencePanel({ review }: { review: TradeReview }) {
   return (
     <Panel className="p-4">
       <SectionTitle eyebrow="Evidence" title="Source pointers" />
+      <p className="mt-2 text-sm leading-5 text-slate-400">
+        This module lists the notes, prior reviews, or source references used to ground the current thesis.
+      </p>
       <div className="mt-3 space-y-3">
         {review.sources.map((source) => (
           <div key={source.id} className="rounded-lg border border-line bg-paper p-3">
@@ -916,6 +937,9 @@ function DecisionStrip({ review, onDecision }: { review: TradeReview; onDecision
   return (
     <Panel className="p-4">
       <SectionTitle eyebrow="Human authority" title="Decision state" />
+      <p className="mt-2 text-sm leading-5 text-slate-400">
+        This module records the human choice: pursue, watch, reject, or ask for more data. Ambrosia supports the decision; it does not make it for you.
+      </p>
       <div className="mt-3 grid grid-cols-2 gap-2">
         {(Object.keys(decisionLabels) as DecisionState[]).map((decision) => (
           <button
@@ -952,6 +976,9 @@ function DashboardPanel({ metrics, chartData }: { metrics: DashboardMetrics; cha
   return (
     <Panel className="p-4">
       <SectionTitle eyebrow="Decision memory" title="Calibration snapshot" />
+      <p className="mt-2 text-sm leading-5 text-slate-400">
+        This module summarizes how many ideas have been reviewed, how often they were deferred or rejected, and the average confidence level.
+      </p>
       <div className="mt-3 grid grid-cols-2 gap-2">
         <Metric label="Reviews" value={metrics.reviewsCreated} />
         <Metric label="Reject/defer" value={metrics.rejectedOrDeferred} />
@@ -977,6 +1004,9 @@ function DecisionMemoryPanel({ reviews, onSelectReview }: { reviews: TradeReview
   return (
     <Panel className="p-5">
       <SectionTitle eyebrow="Decision memory" title="Captured review decisions" />
+      <p className="mt-2 text-sm leading-5 text-slate-400">
+        This module keeps a record of prior reviews so past decisions can be revisited instead of disappearing after the meeting.
+      </p>
       <div className="mt-4 overflow-hidden rounded-lg border border-line bg-paper">
         <div className="grid grid-cols-[1.4fr_0.7fr_0.7fr_0.5fr] border-b border-line bg-fog px-3 py-2 text-xs font-semibold uppercase tracking-wide text-slate-500 max-md:hidden">
           <span>Review</span>
@@ -1004,6 +1034,9 @@ function CalibrationPanel({ metrics, chartData, reviews }: { metrics: DashboardM
   return (
     <Panel className="p-5">
       <SectionTitle eyebrow="Calibration" title="Decision discipline dashboard" />
+      <p className="mt-2 text-sm leading-5 text-slate-400">
+        This module helps compare decisions over time, showing whether the workflow is becoming more disciplined or simply producing more activity.
+      </p>
       <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-5">
         <Metric label="Reviews" value={metrics.reviewsCreated} />
         <Metric label="Reject/defer" value={metrics.rejectedOrDeferred} />
@@ -1041,6 +1074,9 @@ function SourceLibraryPanel({ sources, onSelectReview }: { sources: Array<Source
   return (
     <Panel className="p-5">
       <SectionTitle eyebrow="Source library" title="User-owned evidence and source pointers" />
+      <p className="mt-2 text-sm leading-5 text-slate-400">
+        This module gathers the evidence library behind the reviews, including user-owned notes and pointer-only references.
+      </p>
       <div className="mt-4 grid gap-3">
         {sources.map((source) => (
           <button key={`${source.reviewId}-${source.id}`} onClick={() => onSelectReview(source.reviewId)} className="focus-ring rounded-lg border border-line bg-paper p-4 text-left hover:border-teal/50">
@@ -1065,6 +1101,9 @@ function AuditPanel({ review }: { review: TradeReview }) {
   return (
     <Panel className="p-4">
       <SectionTitle eyebrow="Audit" title="Workflow trace" />
+      <p className="mt-2 text-sm leading-5 text-slate-400">
+        This module shows what Ambrosia did, when it did it, and why, so the workflow can be checked after the fact.
+      </p>
       <div className="mt-3 space-y-2">
         {review.audit.map((event) => (
           <div key={event.id} className="rounded-md border border-line bg-paper p-2 text-sm">

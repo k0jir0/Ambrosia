@@ -5,16 +5,27 @@ test("workbench opens directly into Trade Review", async ({ page }) => {
   await expect(page.getByText("Ambrosia", { exact: true })).toBeVisible();
   await expect(page.getByText("Pre-trade adversarial review")).toBeVisible();
   await expect(page.getByText("Strongest critique")).toBeVisible();
-  await expect(page.getByText("Decision state")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Decision state" })).toBeVisible();
 });
 
 test("generated thesis can seed and create a review", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("button", { name: "Generate thesis" }).click();
-  await expect(page.getByRole("textbox", { name: "Ticker / basket" })).not.toHaveValue("");
+  const tickerInput = page.getByRole("textbox", { name: "Ticker / basket" });
+  await expect(tickerInput).not.toHaveValue("");
+  await expect(tickerInput).toHaveValue(/^(MARA|IWM|SPCX|TLT)$/);
   await page.getByRole("button", { name: "Generate review" }).click();
   await expect(page.getByRole("heading", { name: /adversarial review/i })).toBeVisible();
   await expect(page.getByText(/signal is aborted/i)).toHaveCount(0);
+});
+
+test("market intelligence panel surfaces data provenance before actions", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "Price · technicals · sentiment" })).toBeVisible();
+  await expect(page.getByText("Every metric shows its data source, timestamp, and mode")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Refresh Metrics" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "View Technicals" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "View Sentiment" })).toBeVisible();
 });
 
 test("navigation panels switch to memory calibration and sources", async ({ page }) => {

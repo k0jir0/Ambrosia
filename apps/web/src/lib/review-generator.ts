@@ -6,7 +6,7 @@ export const thesisCandidates: ThesisInput[] = [
   {
     thesis:
       "Bitcoin miners may be lagging spot Bitcoin after a breakout, but the lag only matters if miner margins and liquidity confirm risk appetite rather than balance-sheet stress.",
-    ticker: "BTC miners",
+    ticker: "MARA",
     assetClass: "Crypto-linked equities",
     timeHorizon: "1-4 weeks",
     intendedExpression: "Long liquid miner basket versus BTC proxy hedge",
@@ -15,7 +15,7 @@ export const thesisCandidates: ThesisInput[] = [
   {
     thesis:
       "Extended overnight trading may increase realized volatility in small-cap equities if off-hours liquidity fragments and next-session reversals become more frequent.",
-    ticker: "IWM / small caps",
+    ticker: "IWM",
     assetClass: "Equities",
     timeHorizon: "4-12 weeks",
     intendedExpression: "Volatility screen before directional expression",
@@ -33,7 +33,7 @@ export const thesisCandidates: ThesisInput[] = [
   {
     thesis:
       "A policy communication shift may support a curve-steepening watch if front-end repricing persists beyond the first reaction window.",
-    ticker: "Rates curve",
+    ticker: "TLT",
     assetClass: "Rates",
     timeHorizon: "2-8 weeks",
     intendedExpression: "Paper review only until carry, roll, and liquidity are specified",

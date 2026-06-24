@@ -37,8 +37,8 @@ export function CommonActionsBar({
   disabled = false,
 }: CommonActionsProps) {
   return (
-    <div className="space-y-3 rounded-lg border border-secondary bg-surface-secondary p-4">
-      <div className="text-xs font-semibold uppercase tracking-wider text-tertiary">Common Actions</div>
+    <div className="space-y-3 rounded-lg border border-line bg-paper p-4">
+      <div className="text-xs font-semibold uppercase tracking-wider text-slate-300">Common Actions</div>
       
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
         {/* Core workflow */}
@@ -146,9 +146,9 @@ export function CommonActionsBar({
         />
       </div>
 
-      <div className="border-t border-secondary pt-3 text-xs text-tertiary">
-        <p className="font-semibold">Quant Workflow Agent</p>
-        <p className="mt-1">All decisions remain under human authority. Backtests are gated by eligibility rules. No live execution.</p>
+      <div className="border-t border-line pt-3 text-xs text-slate-300">
+        <p className="font-semibold text-ink">Quant Workflow Agent</p>
+        <p className="mt-1 text-slate-400">All decisions remain under human authority. Backtests are gated by eligibility rules. No live execution.</p>
       </div>
     </div>
   );
@@ -172,9 +172,9 @@ function ActionButton({
   tooltip,
 }: ActionButtonProps) {
   const variantClasses = {
-    primary: "bg-primary/10 hover:bg-primary/20 text-primary",
-    secondary: "bg-secondary/10 hover:bg-secondary/20 text-secondary",
-    accent: "bg-amber-500/10 hover:bg-amber-500/20 text-amber-600",
+    primary: "bg-teal/10 hover:bg-teal/20 text-teal",
+    secondary: "bg-violet/10 hover:bg-violet/20 text-violet",
+    accent: "bg-amber/10 hover:bg-amber/20 text-amber",
   };
 
   return (
@@ -182,14 +182,14 @@ function ActionButton({
       <button
         onClick={onClick}
         disabled={disabled}
-        className={`flex w-full flex-col items-center justify-center gap-1 rounded border border-secondary/50 px-2 py-2 text-center text-xs font-medium transition-colors ${variantClasses[variant]} disabled:opacity-50 disabled:cursor-not-allowed`}
+        className={`flex w-full flex-col items-center justify-center gap-1 rounded border border-line px-2 py-2 text-center text-xs font-medium transition-colors ${variantClasses[variant]} disabled:cursor-not-allowed disabled:opacity-50`}
         title={tooltip}
       >
         <Icon className="h-4 w-4" />
         <span className="line-clamp-2">{label}</span>
       </button>
       {tooltip && (
-        <div className="pointer-events-none absolute -top-8 left-1/2 -translate-x-1/2 rounded bg-surface px-2 py-1 text-xs text-tertiary opacity-0 transition-opacity group-hover:opacity-100 whitespace-nowrap z-10">
+        <div className="pointer-events-none absolute -top-10 left-1/2 z-20 -translate-x-1/2 whitespace-nowrap rounded border border-line bg-fog px-2 py-1 text-xs text-ink opacity-0 shadow-panel transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
           {tooltip}
         </div>
       )}

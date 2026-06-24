@@ -16,8 +16,8 @@ import type {
 } from "./types";
 
 const CONFIGURED_API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL?.trim();
-const DEFAULT_API_TIMEOUT_MS = 2500;
-const CREATE_REVIEW_TIMEOUT_MS = 8000;
+const DEFAULT_API_TIMEOUT_MS = 65000;
+const CREATE_REVIEW_TIMEOUT_MS = 65000;
 
 export class ApiUnavailableError extends Error {
   constructor(message = "Ambrosia API unavailable; using local deterministic fallback.") {
@@ -57,6 +57,10 @@ function getApiBaseUrl(): string | null {
   }
 
   return null;
+}
+
+function normalizeTickerForPath(ticker: string): string {
+  return ticker.replace(/\//g, " ").replace(/\s+/g, " ").trim();
 }
 
 async function fetchWithTimeout(input: RequestInfo | URL, init?: RequestInit, timeoutMs = DEFAULT_API_TIMEOUT_MS): Promise<Response> {
@@ -133,7 +137,8 @@ export async function getMarketSnapshot(ticker: string): Promise<MarketSnapshot>
     throw new ApiUnavailableError();
   }
 
-  const response = await fetchWithTimeout(`${apiBaseUrl}/market/${encodeURIComponent(ticker)}/snapshot`);
+  const safeTicker = normalizeTickerForPath(ticker);
+  const response = await fetchWithTimeout(`${apiBaseUrl}/market/${encodeURIComponent(safeTicker)}/snapshot`);
   return readJsonResponse<MarketSnapshot>(response);
 }
 
@@ -143,7 +148,8 @@ export async function getMarketTechnicals(ticker: string): Promise<TechnicalIndi
     throw new ApiUnavailableError();
   }
 
-  const response = await fetchWithTimeout(`${apiBaseUrl}/market/${encodeURIComponent(ticker)}/technicals`);
+  const safeTicker = normalizeTickerForPath(ticker);
+  const response = await fetchWithTimeout(`${apiBaseUrl}/market/${encodeURIComponent(safeTicker)}/technicals`);
   return readJsonResponse<TechnicalIndicators>(response);
 }
 
@@ -153,7 +159,8 @@ export async function getSentiment(ticker: string): Promise<SentimentData> {
     throw new ApiUnavailableError();
   }
 
-  const response = await fetchWithTimeout(`${apiBaseUrl}/sentiment/${encodeURIComponent(ticker)}`);
+  const safeTicker = normalizeTickerForPath(ticker);
+  const response = await fetchWithTimeout(`${apiBaseUrl}/sentiment/${encodeURIComponent(safeTicker)}`);
   return readJsonResponse<SentimentData>(response);
 }
 

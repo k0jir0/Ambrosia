@@ -32,6 +32,7 @@ import { Badge, Panel, SectionTitle, cn } from "./ui";
 import { CommonActionsBar } from "./common-actions";
 
 type NavView = "workbench" | "memory" | "calibration" | "sources";
+type ActionResult = "ok" | "fallback" | "skipped";
 
 const thesisSchema = z.object({
   thesis: z.string().min(16, "Enter a decision-relevant thesis."),
@@ -67,6 +68,8 @@ export function Workbench() {
   const [generationMode, setGenerationMode] = useState<"api" | "fallback" | "idle">("idle");
   const [generationError, setGenerationError] = useState<string | null>(null);
   const [seedRequestToken, setSeedRequestToken] = useState(0);
+  const [activeAction, setActiveAction] = useState<string | null>(null);
+  const [actionFeedback, setActionFeedback] = useState<{ tone: "neutral" | "good" | "warn"; message: string } | null>(null);
   const activeReview = reviews.find((review) => review.id === activeId) ?? reviews[0];
   const metrics = useMemo(() => computeDashboardMetrics(reviews), [reviews]);
   const decisionChartData = useMemo(() => buildDecisionChartData(reviews), [reviews]);
@@ -163,6 +166,40 @@ export function Workbench() {
     );
   }
 
+  async function runAction(label: string, action: () => Promise<ActionResult>) {
+    setActiveAction(label);
+    setActionFeedback({ tone: "neutral", message: `${label} running...` });
+    const result = await action();
+    if (result === "ok") {
+      setActionFeedback({ tone: "good", message: `${label} completed. Review workflow trace for details.` });
+    } else if (result === "fallback") {
+      setActionFeedback({ tone: "warn", message: `${label} ran in fallback mode because API endpoints were unavailable.` });
+    } else {
+      setActionFeedback({ tone: "warn", message: `${label} skipped. Required packet context was missing.` });
+    }
+    setActiveAction(null);
+  }
+
+  async function startNewPacketDraft(): Promise<ActionResult> {
+    setActiveView("workbench");
+    setSeedRequestToken((current) => current + 1);
+    appendAuditEvent("packet.new", "New packet draft opened and seeded with the next thesis candidate.");
+    if (typeof window !== "undefined") {
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+    return "ok";
+  }
+
+  async function ingestManualAlert(): Promise<ActionResult> {
+    if (!activeReview) {
+      appendAuditEvent("event_intake.manual.skipped", "Manual alert intake skipped because no active review is selected.");
+      return "skipped";
+    }
+
+    appendAuditEvent("event_intake.manual", `Manual alert intake opened from common actions for ${activeReview.ticker}.`);
+    return "ok";
+  }
+
   function syncReviewFromPacket(reviewId: string, packet: DecisionPacket) {
     setReviews((current) =>
       current.map((review) =>
@@ -240,10 +277,10 @@ export function Workbench() {
     }
   }
 
-  async function refreshMarketMetrics() {
+  async function refreshMarketMetrics(): Promise<ActionResult> {
     if (!activeReview?.ticker) {
       appendAuditEvent("metrics.refresh.skipped", "No ticker available for metrics refresh.");
-      return;
+      return "skipped";
     }
 
     try {
@@ -254,18 +291,20 @@ export function Workbench() {
         "metrics.refresh",
         `Packet metrics refreshed for ${activeReview.ticker} via ${packetId}.`
       );
+      return "ok";
     } catch {
       appendAuditEvent(
         "metrics.refresh.fallback",
         `Metrics refresh API unavailable for ${activeReview.ticker}; local workflow remains active.`
       );
+      return "fallback";
     }
   }
 
-  async function inspectSentiment() {
+  async function inspectSentiment(): Promise<ActionResult> {
     if (!activeReview?.ticker) {
       appendAuditEvent("view.sentiment.skipped", "No ticker available for sentiment inspection.");
-      return;
+      return "skipped";
     }
 
     try {
@@ -274,16 +313,21 @@ export function Workbench() {
         "view.sentiment",
         `Sentiment inspected for ${activeReview.ticker}: ${sentiment.sentiment} (${sentiment.overallScore}) from ${sentiment.sources.join(", ")}.`
       );
+      return "ok";
     } catch {
       appendAuditEvent(
         "view.sentiment.fallback",
         `Sentiment endpoint unavailable for ${activeReview.ticker}; deterministic review flow remains active.`
       );
+      return "fallback";
     }
   }
 
-  async function prepareBacktest() {
-    if (!activeReview) return;
+  async function prepareBacktest(): Promise<ActionResult> {
+    if (!activeReview) {
+      appendAuditEvent("backtest.prepare.skipped", "Backtest preparation skipped because no active review is selected.");
+      return "skipped";
+    }
     try {
       const { reviewId, packetId } = await ensurePacketForReview(activeReview);
       const packet = await preparePacketBacktest(packetId, {
@@ -293,25 +337,35 @@ export function Workbench() {
       });
       syncReviewFromPacket(reviewId, packet);
       appendAuditEvent("backtest.prepare", `Backtest plan prepared for ${activeReview.ticker} with status ${packet.backtestPlan?.status ?? "unknown"}.`);
+      return "ok";
     } catch {
       appendAuditEvent("backtest.prepare.fallback", "Backtest preparation endpoint unavailable; packet flow remains in local mode.");
+      return "fallback";
     }
   }
 
-  async function runBacktest() {
-    if (!activeReview) return;
+  async function runBacktest(): Promise<ActionResult> {
+    if (!activeReview) {
+      appendAuditEvent("backtest.run.skipped", "Backtest run skipped because no active review is selected.");
+      return "skipped";
+    }
     try {
       const { reviewId, packetId } = await ensurePacketForReview(activeReview);
       const packet = await runPacketBacktest(packetId, { forceRun: false });
       syncReviewFromPacket(reviewId, packet);
       appendAuditEvent("backtest.run", `Backtest run completed for ${activeReview.ticker} with validity ${packet.backtestResult?.validityScore ?? "unknown"}.`);
+      return "ok";
     } catch {
       appendAuditEvent("backtest.run.fallback", "Backtest run endpoint unavailable; no external backtest executed.");
+      return "fallback";
     }
   }
 
-  async function viewRisks() {
-    if (!activeReview) return;
+  async function viewRisks(): Promise<ActionResult> {
+    if (!activeReview) {
+      appendAuditEvent("view.risk.skipped", "Risk evaluation skipped because no active review is selected.");
+      return "skipped";
+    }
     try {
       const { reviewId, packetId } = await ensurePacketForReview(activeReview);
       const packet = await evaluatePacketRisk(packetId, {
@@ -320,13 +374,18 @@ export function Workbench() {
       });
       syncReviewFromPacket(reviewId, packet);
       appendAuditEvent("view.risk", `Risk evaluated for ${activeReview.ticker}: status ${packet.riskMonitor?.status ?? "unknown"}.`);
+      return "ok";
     } catch {
       appendAuditEvent("view.risk.fallback", "Risk evaluation endpoint unavailable; local advisory workflow remains active.");
+      return "fallback";
     }
   }
 
-  async function compareMarkets() {
-    if (!activeReview) return;
+  async function compareMarkets(): Promise<ActionResult> {
+    if (!activeReview) {
+      appendAuditEvent("view.inter_market.skipped", "Inter-market comparison skipped because no active review is selected.");
+      return "skipped";
+    }
     try {
       const { reviewId, packetId } = await ensurePacketForReview(activeReview);
       const retrieval = await retrievePacketContext(packetId, `${activeReview.ticker} ${activeReview.thesis}`, 4);
@@ -336,13 +395,18 @@ export function Workbench() {
         "view.inter_market",
         `Hybrid retrieval returned ${retrieval.results.length} hits; specialist coordinator completed for ${activeReview.ticker}.`
       );
+      return "ok";
     } catch {
       appendAuditEvent("view.inter_market.fallback", "Coordinator endpoint unavailable; inter-market comparison stayed local.");
+      return "fallback";
     }
   }
 
-  async function setFollowUpWithPortfolioUpdate() {
-    if (!activeReview) return;
+  async function setFollowUpWithPortfolioUpdate(): Promise<ActionResult> {
+    if (!activeReview) {
+      appendAuditEvent("follow_up.set.skipped", "Follow-up update skipped because no active review is selected.");
+      return "skipped";
+    }
     try {
       const { reviewId, packetId } = await ensurePacketForReview(activeReview);
       const packet = await updatePacketPortfolio(packetId, {
@@ -359,15 +423,17 @@ export function Workbench() {
       });
       syncReviewFromPacket(reviewId, packet);
       appendAuditEvent("follow_up.set", `Follow-up and portfolio context updated for ${activeReview.ticker}.`);
+      return "ok";
     } catch {
       appendAuditEvent("follow_up.set.fallback", `Follow-up reminder set for ${activeReview.followUpDate} (local mode).`);
+      return "fallback";
     }
   }
 
-  async function viewTechnicalsAndDeriveConfidence() {
+  async function viewTechnicalsAndDeriveConfidence(): Promise<ActionResult> {
     if (!activeReview?.ticker) {
       appendAuditEvent("view.technicals.skipped", "No ticker available for technicals inspection.");
-      return;
+      return "skipped";
     }
 
     try {
@@ -380,13 +446,18 @@ export function Workbench() {
       });
       syncReviewFromPacket(reviewId, packet);
       appendAuditEvent("view.technicals", `Technicals reviewed and confidence derived for ${activeReview.ticker}: ${packet.confidence}%.`);
+      return "ok";
     } catch {
       appendAuditEvent("view.technicals.fallback", "Technicals inspection endpoint unavailable; keeping deterministic local view.");
+      return "fallback";
     }
   }
 
-  async function recordOutcomeForDecision() {
-    if (!activeReview) return;
+  async function recordOutcomeForDecision(): Promise<ActionResult> {
+    if (!activeReview) {
+      appendAuditEvent("outcome.recorded.skipped", "Outcome attribution skipped because no active review is selected.");
+      return "skipped";
+    }
     try {
       const { reviewId, packetId } = await ensurePacketForReview(activeReview);
       const packet = await recordPacketOutcome(packetId, {
@@ -397,8 +468,10 @@ export function Workbench() {
       });
       syncReviewFromPacket(reviewId, packet);
       appendAuditEvent("outcome.recorded", `Outcome attribution recorded for ${activeReview.ticker}.`);
+      return "ok";
     } catch {
       appendAuditEvent("outcome.recorded.fallback", "Outcome attribution endpoint unavailable; local decision memory retained.");
+      return "fallback";
     }
   }
 
@@ -423,42 +496,49 @@ export function Workbench() {
           <TopBar review={activeReview} />
           {activeView === "workbench" ? (
             <>
+              {actionFeedback ? (
+                <div className={cn("rounded-lg border px-3 py-2 text-sm", actionFeedback.tone === "good" ? "border-teal/30 bg-teal/10 text-teal" : actionFeedback.tone === "warn" ? "border-amber/30 bg-amber/10 text-amber" : "border-line bg-paper text-slate-300")}>
+                  {actionFeedback.message}
+                </div>
+              ) : null}
               <CommonActionsBar
                 onNewPacket={() => {
-                  setActiveView("workbench");
-                  window.scrollTo({ top: 0, behavior: "smooth" });
+                  void runAction("New Packet", startNewPacketDraft);
                 }}
                 onGenerateThesis={() => setSeedRequestToken((current) => current + 1)}
-                onIngestAlert={() => appendAuditEvent("event_intake.manual", "Manual alert intake opened from common actions.")}
+                onIngestAlert={() => {
+                  void runAction("Ingest Alert", ingestManualAlert);
+                }}
                 onRefreshMetrics={() => {
-                  void refreshMarketMetrics();
+                  void runAction("Refresh Metrics", refreshMarketMetrics);
                 }}
                 onViewTechnicals={() => {
-                  void viewTechnicalsAndDeriveConfidence();
+                  void runAction("View Technicals", viewTechnicalsAndDeriveConfidence);
                 }}
                 onViewSentiment={() => {
-                  void inspectSentiment();
+                  void runAction("View Sentiment", inspectSentiment);
                 }}
                 onCompareMarkets={() => {
-                  void compareMarkets();
+                  void runAction("Compare Markets", compareMarkets);
                 }}
                 onPrepareBacktest={() => {
-                  void prepareBacktest();
+                  void runAction("Prepare Backtest", prepareBacktest);
                 }}
                 onRunBacktest={() => {
-                  void runBacktest();
+                  void runAction("Run Backtest", runBacktest);
                 }}
                 onRecordDecision={() => {
                   updateDecision(activeReview.decisionState ?? "watch");
-                  void recordOutcomeForDecision();
+                  void runAction("Record Decision", recordOutcomeForDecision);
                 }}
                 onSetFollowUp={() => {
-                  void setFollowUpWithPortfolioUpdate();
+                  void runAction("Set Follow-Up", setFollowUpWithPortfolioUpdate);
                 }}
                 onViewRisks={() => {
-                  void viewRisks();
+                  void runAction("View Risks", viewRisks);
                 }}
                 onExportReport={exportActiveReview}
+                disabled={Boolean(activeAction)}
               />
               <ThesisIntake onSubmit={addReview} generationMode={generationMode} generationError={generationError} seedRequestToken={seedRequestToken} />
               <StatusTimeline status={activeReview.status} />

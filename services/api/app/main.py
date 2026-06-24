@@ -1,11 +1,24 @@
 from __future__ import annotations
 
 import os
+from datetime import datetime
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
-from .models import DecisionUpdate, OutcomeUpdate, ThesisRequest, TradeReview
+from .models import (
+    AuditEvent,
+    AuditEventCreate,
+    DecisionPacket,
+    DecisionState,
+    DecisionUpdate,
+    OutcomeUpdate,
+    ThesisRequest,
+    TradeReview,
+    MarketSnapshot,
+    TechnicalIndicators,
+)
+from .market_data import build_market_snapshot, build_technicals
 from .review_engine import generate_review
 from .store import store
 
@@ -18,6 +31,10 @@ configured_origins = [
     if origin.strip()
 ]
 allowed_origin_regex = os.getenv("ALLOWED_ORIGIN_REGEX", r"https://.*\.onrender\.com")
+
+
+def _clock() -> str:
+    return datetime.now().strftime("%H:%M:%S")
 
 app.add_middleware(
     CORSMiddleware,
@@ -67,6 +84,84 @@ def record_outcome(review_id: str, update: OutcomeUpdate) -> TradeReview:
     if review is None:
         raise HTTPException(status_code=404, detail="Review not found")
     return review
+
+
+@app.post("/packets", response_model=DecisionPacket)
+def create_packet(packet: DecisionPacket) -> DecisionPacket:
+    return store.save_packet(packet)
+
+
+@app.get("/packets", response_model=list[DecisionPacket])
+def list_packets(
+    search: str | None = Query(default=None),
+    ticker: str | None = Query(default=None),
+    decision_state: DecisionState | None = Query(default=None),
+) -> list[DecisionPacket]:
+    return store.list_packets(search=search, ticker=ticker, decision_state=decision_state)
+
+
+@app.get("/packets/{packet_id}", response_model=DecisionPacket)
+def get_packet(packet_id: str) -> DecisionPacket:
+    packet = store.get_packet(packet_id)
+    if packet is None:
+        raise HTTPException(status_code=404, detail="Packet not found")
+    return packet
+
+
+@app.post("/packets/{packet_id}/audit", response_model=DecisionPacket)
+def record_packet_audit(packet_id: str, event: AuditEventCreate) -> DecisionPacket:
+    packet = store.add_packet_audit_event(packet_id, event)
+    if packet is None:
+        raise HTTPException(status_code=404, detail="Packet not found")
+    return packet
+
+
+@app.get("/packets/{packet_id}/audit", response_model=list[AuditEvent])
+def get_packet_audit(packet_id: str) -> list[AuditEvent]:
+    audit_events = store.get_packet_audit(packet_id)
+    if audit_events is None:
+        raise HTTPException(status_code=404, detail="Packet not found")
+    return audit_events
+
+
+@app.get("/market/{ticker}/snapshot", response_model=MarketSnapshot)
+def get_market_snapshot(ticker: str) -> MarketSnapshot:
+    return build_market_snapshot(ticker)
+
+
+@app.get("/market/{ticker}/technicals", response_model=TechnicalIndicators)
+def get_market_technicals(ticker: str) -> TechnicalIndicators:
+    return build_technicals(ticker)
+
+
+@app.post("/packets/{packet_id}/metrics/refresh", response_model=DecisionPacket)
+def refresh_packet_metrics(packet_id: str) -> DecisionPacket:
+    packet = store.get_packet(packet_id)
+    if packet is None:
+        raise HTTPException(status_code=404, detail="Packet not found")
+
+    snapshot = build_market_snapshot(packet.ticker)
+    technicals = build_technicals(packet.ticker)
+
+    updated_packet = packet.model_copy(
+        update={
+            "marketSnapshot": snapshot,
+            "technicals": technicals,
+            "audit": [
+                *packet.audit,
+                AuditEvent(
+                    id=f"packet-audit-{len(packet.audit) + 1}",
+                    timestamp=_clock(),
+                    eventType="metrics.refreshed",
+                    detail=f"Market snapshot and technicals refreshed for {packet.ticker}",
+                ),
+            ],
+        }
+    )
+    store.save_packet(updated_packet)
+    store.record_metric_snapshot(packet_id, "market_snapshot", snapshot.model_dump(mode="json"))
+    store.record_metric_snapshot(packet_id, "technicals", technicals.model_dump(mode="json"))
+    return updated_packet
 
 
 @app.post("/webhooks/tradingview", response_model=TradeReview)

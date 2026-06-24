@@ -1,20 +1,23 @@
 # Ambrosia
 
-Ambrosia is a pre-trade adversarial review product. It helps an investor pressure-test a thesis before acting by structuring the argument, challenging assumptions, surfacing disconfirming evidence, and recording the decision.
+Ambrosia is a quant workflow agent for pre-trade adversarial review. It structures and pressure-tests investment theses by integrating market data, technical analysis, sentiment, backtesting, and risk monitoring, all while keeping human decision authority explicit and auditable.
 
 ## What It Does
 
-Ambrosia turns a raw thesis into a structured review:
+Ambrosia turns a raw thesis into a decision packet:
 
-- normalizes claims and assumptions
-- generates a critique and disconfirming test
-- asks tradeability and validation questions
-- returns a decision state such as pursue, watch, reject, or needs more data
-- stores the review as decision memory
+- integrates market data, technicals, sentiment, and inter-market analysis
+- runs specialist agents (technical, fundamental, sentiment, risk, bear, bull) in parallel
+- generates structured critique and validation analysis
+- initiates controlled backtesting with eligibility gates
+- monitors portfolio context, concentration, and risk
+- derives multi-factor confidence scoring
+- records the complete decision audit trail
+- enables follow-up and outcome attribution
 
 ## Why It Matters
 
-Most investment workflows are optimized for idea generation, not idea rejection. Ambrosia is designed to make the decision process more disciplined, repeatable, and auditable before capital is committed.
+Most investment workflows are optimized for idea generation, not idea validation. Ambrosia structures the pre-trade decision process across multiple dimensions—technical, fundamental, sentiment, inter-market, and risk—then gates execution with backtesting and portfolio constraints. Every decision is audited and tied to outcomes, making investment discipline repeatable and data-driven.
 
 ## Current Status
 

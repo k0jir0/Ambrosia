@@ -1,4 +1,4 @@
-import type { ThesisInput, TradeReview } from "./types";
+import type { MarketSnapshot, TechnicalIndicators, ThesisInput, TradeReview } from "./types";
 
 const CONFIGURED_API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL?.trim();
 const DEFAULT_API_TIMEOUT_MS = 2500;
@@ -110,4 +110,24 @@ export async function recordDecision(reviewId: string, decisionState: string): P
   });
 
   return readJsonResponse<TradeReview>(response);
+}
+
+export async function getMarketSnapshot(ticker: string): Promise<MarketSnapshot> {
+  const apiBaseUrl = getApiBaseUrl();
+  if (!apiBaseUrl) {
+    throw new ApiUnavailableError();
+  }
+
+  const response = await fetchWithTimeout(`${apiBaseUrl}/market/${encodeURIComponent(ticker)}/snapshot`);
+  return readJsonResponse<MarketSnapshot>(response);
+}
+
+export async function getMarketTechnicals(ticker: string): Promise<TechnicalIndicators> {
+  const apiBaseUrl = getApiBaseUrl();
+  if (!apiBaseUrl) {
+    throw new ApiUnavailableError();
+  }
+
+  const response = await fetchWithTimeout(`${apiBaseUrl}/market/${encodeURIComponent(ticker)}/technicals`);
+  return readJsonResponse<TechnicalIndicators>(response);
 }

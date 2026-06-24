@@ -71,11 +71,188 @@ class AuditEvent(BaseModel):
     detail: str
 
 
+class AuditEventCreate(BaseModel):
+    eventType: str = Field(min_length=3)
+    detail: str = Field(min_length=3)
+
+
 class HistoricalAnalogue(BaseModel):
     title: str
     similarity: str
     differences: str
     resolution: str
+
+
+class MarketSnapshot(BaseModel):
+    timestamp: str
+    price: float
+    priceChange24h: float
+    volume24h: float
+    marketCap: float | None = None
+    dominance: float | None = None
+    dataSource: str
+    dataSourceConfidence: Literal["live", "fallback", "demo"]
+
+
+class TechnicalIndicators(BaseModel):
+    rsi: float | None = None
+    rsiPeriod: int = 14
+    macdLine: float | None = None
+    macdSignal: float | None = None
+    macdHistogram: float | None = None
+    movingAverage30: float | None = None
+    movingAverage50: float | None = None
+    movingAverage200: float | None = None
+    volatilityRealized: float | None = None
+    trend: Literal["uptrend", "downtrend", "sideways", "unknown"]
+    updateTime: str
+    dataQuality: Literal["verified", "estimated", "fallback"]
+
+
+class SentimentData(BaseModel):
+    overallScore: float = Field(ge=0, le=100)
+    sentiment: Literal["bullish", "neutral", "bearish"]
+    newsScore: float | None = None
+    socialScore: float | None = None
+    trendDirection: Literal["strengthening", "weakening", "stable"]
+    sources: list[str]
+    lastUpdated: str
+    sourceConfidence: Literal["verified", "demo"]
+
+
+class InterMarketContext(BaseModel):
+    correlationWithBenchmark: float | None = None
+    correlationWithCommodities: float | None = None
+    correlationWithBonds: float | None = None
+    correlationWithDollar: float | None = None
+    regimeState: Literal["risk_on", "risk_off", "mixed"]
+    spilloverRisk: Literal["high", "medium", "low"]
+    notes: str
+
+
+class FundamentalContext(BaseModel):
+    earningsYield: float | None = None
+    priceToBook: float | None = None
+    debtToEquity: float | None = None
+    roe: float | None = None
+    growthRate: float | None = None
+    qualityScore: float | None = None
+    lastUpdated: str
+
+
+class BacktestPlan(BaseModel):
+    status: Literal["not_requested", "requested", "eligible", "ineligible", "completed"]
+    entryRules: list[str]
+    exitRules: list[str]
+    assumptions: list[str]
+    lookbackPeriod: int
+    holdingPeriodDays: int
+    riskConstraints: list[str]
+    refusalReason: str | None = None
+
+
+class BacktestResult(BaseModel):
+    totalReturn: float | None = None
+    sharpeRatio: float | None = None
+    maxDrawdown: float | None = None
+    winRate: float | None = None
+    outOfSampleScore: float | None = None
+    samplePeriod: str
+    validityScore: Literal["high", "medium", "low", "refused"]
+    hygienIssues: list[str]
+
+
+class RiskMonitor(BaseModel):
+    activePositionSize: float
+    concentrationRisk: Literal["low", "medium", "high"]
+    correlationOverlap: list[str]
+    varAtRisk: float | None = None
+    maxDrawdownThreshold: float
+    followUpTriggers: list[str]
+    status: Literal["monitoring", "alert", "safe"]
+
+
+class PortfolioContext(BaseModel):
+    grossExposure: float
+    netExposure: float
+    longExposure: float
+    shortExposure: float
+    concentrationBySector: dict[str, float]
+    concentrationByFactor: dict[str, float]
+    relatedPositions: list[str]
+    factorOverlap: list[str]
+    riskBudgetRemaining: float
+    sizingConstraints: list[str]
+
+
+class ConfidenceComponents(BaseModel):
+    evidenceScore: int = Field(ge=0, le=100)
+    technicalScore: int = Field(ge=0, le=100)
+    sentimentScore: int = Field(ge=0, le=100)
+    interMarketScore: int = Field(ge=0, le=100)
+    validationScore: int = Field(ge=0, le=100)
+    tradeabilityScore: int = Field(ge=0, le=100)
+    riskAdjustedScore: int = Field(ge=0, le=100)
+    overallConfidence: int = Field(ge=0, le=100)
+    blockers: list[str]
+    sourceProxyPenalties: int
+
+
+class SpecialistAgentOutput(BaseModel):
+    role: str
+    summary: str
+    keyPoints: list[str]
+    score: int | None = None
+    timestamp: str
+    provider: str
+    fallbackUsed: bool
+
+
+class DecisionPacket(BaseModel):
+    id: str
+    schemaVersion: str = "packet.v1"
+    workflowVersion: str = "quant-agent.v1"
+    title: str
+    thesis: str
+    ticker: str
+    assetClass: str
+    timeHorizon: str
+    intendedExpression: str
+    status: ReviewStatus
+    decisionState: DecisionState | None
+    confidence: int = Field(ge=0, le=100)
+    trialCountImpact: int
+    followUpDate: str
+    createdAt: str
+    
+    # Base review fields
+    claims: list[Claim]
+    strongestCritique: str
+    disconfirmingTest: str
+    historicalAnalogue: HistoricalAnalogue
+    validation: ValidationSpec
+    tradeability: list[TradeabilityQuestion]
+    sources: list[SourcePointer]
+    audit: list[AuditEvent]
+    
+    # Quant workflow agent fields
+    marketSnapshot: MarketSnapshot | None = None
+    technicals: TechnicalIndicators | None = None
+    sentiment: SentimentData | None = None
+    interMarket: InterMarketContext | None = None
+    fundamentals: FundamentalContext | None = None
+    backtestPlan: BacktestPlan | None = None
+    backtestResult: BacktestResult | None = None
+    riskMonitor: RiskMonitor | None = None
+    portfolioContext: PortfolioContext | None = None
+    confidenceBreakdown: ConfidenceComponents | None = None
+    
+    # Agent specialist outputs
+    agentOutputs: dict[str, SpecialistAgentOutput | None] | None = None
+    
+    # Coordinator metadata
+    coordinatorVersion: str = "coordinator.v1"
+    providerInfo: dict | None = None
 
 
 class TradeReview(BaseModel):

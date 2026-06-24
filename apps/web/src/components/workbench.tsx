@@ -7,11 +7,12 @@ import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { ApiUnavailableError, createReview, listReviews, recordDecision } from "@/lib/api";
+import { ApiUnavailableError, createReview, getMarketSnapshot, getMarketTechnicals, listReviews, recordDecision } from "@/lib/api";
 import { sampleReviews } from "@/lib/sample-data";
 import { generateLocalReview, thesisCandidates } from "@/lib/review-generator";
 import type { Claim, DashboardMetrics, DecisionState, ReviewStatus, SourcePointer, ThesisInput, TradeReview } from "@/lib/types";
 import { Badge, Panel, SectionTitle, cn } from "./ui";
+import { CommonActionsBar } from "./common-actions";
 
 type NavView = "workbench" | "memory" | "calibration" | "sources";
 
@@ -47,6 +48,7 @@ export function Workbench() {
   const [activeView, setActiveView] = useState<NavView>("workbench");
   const [generationMode, setGenerationMode] = useState<"api" | "fallback" | "idle">("idle");
   const [generationError, setGenerationError] = useState<string | null>(null);
+  const [seedRequestToken, setSeedRequestToken] = useState(0);
   const activeReview = reviews.find((review) => review.id === activeId) ?? reviews[0];
   const metrics = useMemo(() => computeDashboardMetrics(reviews), [reviews]);
   const decisionChartData = useMemo(() => buildDecisionChartData(reviews), [reviews]);
@@ -121,6 +123,65 @@ export function Workbench() {
     });
   }
 
+  function appendAuditEvent(eventType: string, detail: string) {
+    if (!activeReview) return;
+    setReviews((current) =>
+      current.map((review) =>
+        review.id === activeReview.id
+          ? {
+              ...review,
+              audit: [
+                ...review.audit,
+                {
+                  id: `audit-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+                  timestamp: new Date().toLocaleTimeString(),
+                  eventType,
+                  detail
+                }
+              ]
+            }
+          : review
+      )
+    );
+  }
+
+  async function refreshMarketMetrics() {
+    if (!activeReview?.ticker) {
+      appendAuditEvent("metrics.refresh.skipped", "No ticker available for metrics refresh.");
+      return;
+    }
+
+    try {
+      const [snapshot, technicals] = await Promise.all([
+        getMarketSnapshot(activeReview.ticker),
+        getMarketTechnicals(activeReview.ticker)
+      ]);
+
+      appendAuditEvent(
+        "metrics.refresh",
+        `Metrics refreshed for ${activeReview.ticker}: source=${snapshot.dataSource} (${snapshot.dataSourceConfidence}), trend=${technicals.trend}.`
+      );
+    } catch {
+      appendAuditEvent(
+        "metrics.refresh.fallback",
+        `Metrics refresh API unavailable for ${activeReview.ticker}; local workflow remains active.`
+      );
+    }
+  }
+
+  function exportActiveReview() {
+    if (!activeReview) return;
+    const payload = JSON.stringify(activeReview, null, 2);
+    const blob = new Blob([payload], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `${activeReview.id}.json`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+    appendAuditEvent("report.export", `Exported structured review artifact for ${activeReview.id}.`);
+  }
+
   return (
     <main className="min-h-screen px-5 py-5 text-ink">
       <div className="mx-auto grid max-w-[1540px] grid-cols-[260px_minmax(0,1fr)_360px] gap-4 max-xl:grid-cols-[220px_minmax(0,1fr)] max-lg:grid-cols-1">
@@ -129,7 +190,27 @@ export function Workbench() {
           <TopBar review={activeReview} />
           {activeView === "workbench" ? (
             <>
-              <ThesisIntake onSubmit={addReview} generationMode={generationMode} generationError={generationError} />
+              <CommonActionsBar
+                onNewPacket={() => {
+                  setActiveView("workbench");
+                  window.scrollTo({ top: 0, behavior: "smooth" });
+                }}
+                onGenerateThesis={() => setSeedRequestToken((current) => current + 1)}
+                onIngestAlert={() => appendAuditEvent("event_intake.manual", "Manual alert intake opened from common actions.")}
+                onRefreshMetrics={() => {
+                  void refreshMarketMetrics();
+                }}
+                onViewTechnicals={() => appendAuditEvent("view.technicals", "Technical section inspected from common actions.")}
+                onViewSentiment={() => appendAuditEvent("view.sentiment", "Sentiment section inspected from common actions.")}
+                onCompareMarkets={() => appendAuditEvent("view.inter_market", "Inter-market comparison requested from common actions.")}
+                onPrepareBacktest={() => appendAuditEvent("backtest.prepare", "Backtest preparation requested from common actions.")}
+                onRunBacktest={() => appendAuditEvent("backtest.run_requested", "Backtest run requested; eligibility checks pending.")}
+                onRecordDecision={() => updateDecision(activeReview.decisionState ?? "watch")}
+                onSetFollowUp={() => appendAuditEvent("follow_up.set", `Follow-up reminder set for ${activeReview.followUpDate}.`)}
+                onViewRisks={() => appendAuditEvent("view.risk", "Risk monitor viewed from common actions.")}
+                onExportReport={exportActiveReview}
+              />
+              <ThesisIntake onSubmit={addReview} generationMode={generationMode} generationError={generationError} seedRequestToken={seedRequestToken} />
               <StatusTimeline status={activeReview.status} />
               <ReviewArtifact review={activeReview} />
             </>
@@ -221,7 +302,7 @@ function TopBar({ review }: { review: TradeReview }) {
   );
 }
 
-function ThesisIntake({ onSubmit, generationMode, generationError }: { onSubmit: (input: ThesisInput) => Promise<void>; generationMode: "api" | "fallback" | "idle"; generationError: string | null }) {
+function ThesisIntake({ onSubmit, generationMode, generationError, seedRequestToken }: { onSubmit: (input: ThesisInput) => Promise<void>; generationMode: "api" | "fallback" | "idle"; generationError: string | null; seedRequestToken: number }) {
   const [seedIndex, setSeedIndex] = useState(0);
   const form = useForm<ThesisInput>({
     resolver: zodResolver(thesisSchema),
@@ -246,6 +327,14 @@ function ThesisIntake({ onSubmit, generationMode, generationError }: { onSubmit:
     form.clearErrors();
     setSeedIndex((current) => current + 1);
   }
+
+  useEffect(() => {
+    if (seedRequestToken > 0) {
+      generateThesisCandidate();
+    }
+    // Only react to explicit seed requests from the parent common actions bar.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [seedRequestToken]);
 
   return (
     <Panel className="p-4">

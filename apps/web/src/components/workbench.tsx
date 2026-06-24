@@ -13,6 +13,8 @@ import {
   createReview,
   derivePacketConfidence,
   evaluatePacketRisk,
+  getMarketSnapshot,
+  getMarketTechnicals,
   getPacket,
   getSentiment,
   listReviews,
@@ -27,12 +29,20 @@ import {
 } from "@/lib/api";
 import { sampleReviews } from "@/lib/sample-data";
 import { generateLocalReview, thesisCandidates } from "@/lib/review-generator";
-import type { Claim, DashboardMetrics, DecisionPacket, DecisionState, ReviewStatus, SourcePointer, ThesisInput, TradeReview } from "@/lib/types";
+import type { Claim, DashboardMetrics, DecisionPacket, DecisionState, MarketSnapshot, ReviewStatus, SentimentData, SourcePointer, TechnicalIndicators, ThesisInput, TradeReview } from "@/lib/types";
 import { Badge, Panel, SectionTitle, cn } from "./ui";
 import { CommonActionsBar } from "./common-actions";
 
 type NavView = "workbench" | "memory" | "calibration" | "sources";
 type ActionResult = "ok" | "fallback" | "skipped";
+
+type LiveMarketData = {
+  snapshot: MarketSnapshot | null;
+  technicals: TechnicalIndicators | null;
+  sentiment: SentimentData | null;
+  ticker: string;
+  fetchedAt: string;
+};
 
 const thesisSchema = z.object({
   thesis: z.string().min(16, "Enter a decision-relevant thesis."),
@@ -70,6 +80,7 @@ export function Workbench() {
   const [seedRequestToken, setSeedRequestToken] = useState(0);
   const [activeAction, setActiveAction] = useState<string | null>(null);
   const [actionFeedback, setActionFeedback] = useState<{ tone: "neutral" | "good" | "warn"; message: string } | null>(null);
+  const [liveMarketData, setLiveMarketData] = useState<LiveMarketData | null>(null);
   const activeReview = reviews.find((review) => review.id === activeId) ?? reviews[0];
   const metrics = useMemo(() => computeDashboardMetrics(reviews), [reviews]);
   const decisionChartData = useMemo(() => buildDecisionChartData(reviews), [reviews]);
@@ -90,6 +101,10 @@ export function Workbench() {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    setLiveMarketData(null);
+  }, [activeId]);
 
   async function addReview(input: ThesisInput) {
     setGenerationError(null);
@@ -287,6 +302,13 @@ export function Workbench() {
       const { reviewId, packetId } = await ensurePacketForReview(activeReview);
       const packet = await refreshPacketMetrics(packetId);
       syncReviewFromPacket(reviewId, packet);
+      setLiveMarketData({
+        snapshot: packet.marketSnapshot ?? null,
+        technicals: packet.technicals ?? null,
+        sentiment: packet.sentiment ?? null,
+        ticker: activeReview.ticker,
+        fetchedAt: new Date().toISOString(),
+      });
       appendAuditEvent(
         "metrics.refresh",
         `Packet metrics refreshed for ${activeReview.ticker} via ${packetId}.`
@@ -309,6 +331,13 @@ export function Workbench() {
 
     try {
       const sentiment = await getSentiment(activeReview.ticker);
+      setLiveMarketData((prev) => ({
+        snapshot: prev?.ticker === activeReview.ticker ? (prev.snapshot ?? null) : null,
+        technicals: prev?.ticker === activeReview.ticker ? (prev.technicals ?? null) : null,
+        sentiment,
+        ticker: activeReview.ticker,
+        fetchedAt: new Date().toISOString(),
+      }));
       appendAuditEvent(
         "view.sentiment",
         `Sentiment inspected for ${activeReview.ticker}: ${sentiment.sentiment} (${sentiment.overallScore}) from ${sentiment.sources.join(", ")}.`
@@ -437,14 +466,22 @@ export function Workbench() {
     }
 
     try {
-      const sentiment = await getSentiment(activeReview.ticker);
+      const [sentimentResult, technicalsResult, snapshotResult] = await Promise.allSettled([
+        getSentiment(activeReview.ticker),
+        getMarketTechnicals(activeReview.ticker),
+        getMarketSnapshot(activeReview.ticker),
+      ]);
+      const sentiment = sentimentResult.status === "fulfilled" ? sentimentResult.value : null;
+      const technicals = technicalsResult.status === "fulfilled" ? technicalsResult.value : null;
+      const snapshot = snapshotResult.status === "fulfilled" ? snapshotResult.value : null;
       const { reviewId, packetId } = await ensurePacketForReview(activeReview);
       const packet = await derivePacketConfidence(packetId, {
-        technicalScore: 66,
-        sentimentScore: Math.round(sentiment.overallScore),
-        blockers: sentiment.sentiment === "bearish" ? ["Sentiment regime still bearish"] : [],
+        technicalScore: technicals?.rsi !== null && technicals?.rsi !== undefined ? Math.round(technicals.rsi) : 66,
+        sentimentScore: sentiment ? Math.round(sentiment.overallScore) : 50,
+        blockers: sentiment?.sentiment === "bearish" ? ["Sentiment regime still bearish"] : [],
       });
       syncReviewFromPacket(reviewId, packet);
+      setLiveMarketData({ snapshot, technicals, sentiment, ticker: activeReview.ticker, fetchedAt: new Date().toISOString() });
       appendAuditEvent("view.technicals", `Technicals reviewed and confidence derived for ${activeReview.ticker}: ${packet.confidence}%.`);
       return "ok";
     } catch {
@@ -540,6 +577,7 @@ export function Workbench() {
                 onExportReport={exportActiveReview}
                 disabled={Boolean(activeAction)}
               />
+              <MarketIntelligencePanel data={liveMarketData} ticker={activeReview.ticker} />
               <ThesisIntake onSubmit={addReview} generationMode={generationMode} generationError={generationError} seedRequestToken={seedRequestToken} />
               <StatusTimeline status={activeReview.status} />
               <ReviewArtifact review={activeReview} />
@@ -1082,4 +1120,113 @@ function mergeReviews(primary: TradeReview[], secondary: TradeReview[]): TradeRe
     }
   }
   return merged;
+}
+
+function fmtVol(v: number): string {
+  if (v >= 1_000_000_000) return `${(v / 1_000_000_000).toFixed(1)}B`;
+  if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(1)}M`;
+  if (v >= 1_000) return `${(v / 1_000).toFixed(1)}K`;
+  return v.toFixed(0);
+}
+
+function rsiTone(rsi: number | null): "up" | "down" | undefined {
+  if (rsi === null) return undefined;
+  if (rsi > 70) return "down";
+  if (rsi < 30) return "up";
+  return undefined;
+}
+
+function MIMetric({ label, value, tone, small }: { label: string; value: string; tone?: "up" | "down"; small?: boolean }) {
+  return (
+    <div className="rounded-md border border-line bg-paper p-2">
+      <p className="text-xs text-slate-500">{label}</p>
+      <p className={cn("mt-1 truncate font-semibold", small ? "text-xs" : "text-sm", tone === "up" ? "text-teal" : tone === "down" ? "text-coral" : "text-ink")}>
+        {value}
+      </p>
+    </div>
+  );
+}
+
+function MarketIntelligencePanel({ data, ticker }: { data: LiveMarketData | null; ticker: string }) {
+  if (!data) {
+    return (
+      <Panel className="p-5">
+        <SectionTitle eyebrow="Market intelligence" title="Price · technicals · sentiment" />
+        <p className="mt-3 text-sm leading-6 text-slate-300">
+          Ambrosia connects to market data adapters to fetch price, volume, technical indicators, and news sentiment for the instrument under review. Every metric shows its data source, timestamp, and mode — live, fallback, or demo. No metric is invented or hidden.
+        </p>
+        <p className="mt-2 text-sm leading-6 text-slate-400">
+          Click <span className="font-semibold text-teal">Refresh Metrics</span> to load a full snapshot for <span className="font-semibold text-ink">{ticker || "this instrument"}</span>, or use <span className="font-semibold text-teal">View Technicals</span> or <span className="font-semibold text-teal">View Sentiment</span> for individual modules.
+        </p>
+      </Panel>
+    );
+  }
+
+  const confidence = data.snapshot?.dataSourceConfidence ?? (data.technicals?.dataQuality === "verified" ? "live" : "fallback");
+  const confTone: "good" | "warn" | "neutral" = confidence === "live" ? "good" : confidence === "fallback" ? "warn" : "neutral";
+  const fetchedTime = new Date(data.fetchedAt).toLocaleTimeString();
+
+  return (
+    <Panel className="space-y-5 p-5">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <SectionTitle eyebrow="Market intelligence" title={data.ticker} />
+        <div className="flex items-center gap-2">
+          <Badge tone={confTone}>{confidence}</Badge>
+          <span className="text-xs text-slate-500">fetched {fetchedTime}</span>
+        </div>
+      </div>
+
+      {data.snapshot && (
+        <section>
+          <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-slate-400">Market snapshot</p>
+          <p className="mb-3 text-xs leading-5 text-slate-500">
+            Price and volume from market data adapter. Source: <span className="text-slate-300">{data.snapshot.dataSource}</span>. Ambrosia labels stale or proxy data explicitly.
+          </p>
+          <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
+            <MIMetric label="Price" value={`$${data.snapshot.price.toFixed(2)}`} />
+            <MIMetric label="24h change" value={`${data.snapshot.priceChange24h >= 0 ? "+" : ""}${data.snapshot.priceChange24h.toFixed(2)}%`} tone={data.snapshot.priceChange24h >= 0 ? "up" : "down"} />
+            <MIMetric label="Volume" value={fmtVol(data.snapshot.volume24h)} />
+            <MIMetric label="Data source" value={data.snapshot.dataSource.replace("Deterministic fallback", "Fallback")} small />
+          </div>
+        </section>
+      )}
+
+      {data.technicals && (
+        <section>
+          <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-slate-400">Technical indicators</p>
+          <p className="mb-3 text-xs leading-5 text-slate-500">
+            Computed from price history — not model opinion. RSI measures momentum relative to recent price range. Moving averages indicate trend regime. Realized volatility is annualized from daily log returns.
+          </p>
+          <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 md:grid-cols-5">
+            <MIMetric label="RSI (14)" value={data.technicals.rsi !== null ? data.technicals.rsi.toFixed(1) : "—"} tone={rsiTone(data.technicals.rsi)} />
+            <MIMetric label="Trend" value={data.technicals.trend} />
+            <MIMetric label="Volatility (ann.)" value={data.technicals.volatilityRealized !== null ? `${(data.technicals.volatilityRealized * 100).toFixed(1)}%` : "—"} />
+            <MIMetric label="MA 30d" value={data.technicals.movingAverage30 !== null ? `$${data.technicals.movingAverage30.toFixed(2)}` : "—"} />
+            <MIMetric label="MA 50d" value={data.technicals.movingAverage50 !== null ? `$${data.technicals.movingAverage50.toFixed(2)}` : "—"} />
+            <MIMetric label="MA 200d" value={data.technicals.movingAverage200 !== null ? `$${data.technicals.movingAverage200.toFixed(2)}` : "—"} />
+            <MIMetric label="MACD line" value={data.technicals.macdLine !== null ? data.technicals.macdLine.toFixed(4) : "—"} />
+            <MIMetric label="MACD signal" value={data.technicals.macdSignal !== null ? data.technicals.macdSignal.toFixed(4) : "—"} />
+            <MIMetric label="Histogram" value={data.technicals.macdHistogram !== null ? `${data.technicals.macdHistogram >= 0 ? "+" : ""}${data.technicals.macdHistogram.toFixed(4)}` : "—"} tone={data.technicals.macdHistogram !== null ? (data.technicals.macdHistogram >= 0 ? "up" : "down") : undefined} />
+          </div>
+          <p className="mt-2 text-xs text-slate-500">Quality: <span className="text-slate-300">{data.technicals.dataQuality}</span> · Updated {new Date(data.technicals.updateTime).toLocaleTimeString()}</p>
+        </section>
+      )}
+
+      {data.sentiment && (
+        <section>
+          <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-slate-400">Sentiment</p>
+          <p className="mb-3 text-xs leading-5 text-slate-500">
+            News sentiment scored 0–100 (50 = neutral) from keyword analysis of recent headlines. Social score is null when venue data is unavailable — never estimated. Source confidence mode is shown on every value.
+          </p>
+          <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
+            <MIMetric label="Overall" value={data.sentiment.overallScore.toFixed(1)} tone={data.sentiment.sentiment === "bullish" ? "up" : data.sentiment.sentiment === "bearish" ? "down" : undefined} />
+            <MIMetric label="Signal" value={data.sentiment.sentiment} />
+            <MIMetric label="Trend" value={data.sentiment.trendDirection} />
+            <MIMetric label="News score" value={data.sentiment.newsScore !== null ? data.sentiment.newsScore.toFixed(1) : "—"} />
+          </div>
+          <p className="mt-2 text-xs text-slate-500">Sources: <span className="text-slate-300">{data.sentiment.sources.join(", ")}</span> · Mode: <span className="text-slate-300">{data.sentiment.sourceConfidence}</span></p>
+        </section>
+      )}
+    </Panel>
+  );
 }

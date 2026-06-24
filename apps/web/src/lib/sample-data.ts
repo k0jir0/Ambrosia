@@ -8,7 +8,7 @@ export const sampleReviews: TradeReview[] = [
     title: "BTC miners lagging spot Bitcoin",
     thesis:
       "Bitcoin miners may be mispriced relative to spot Bitcoin after a sharp move in BTC that has not yet flowed through mining equities.",
-    ticker: "BTC / miners",
+    ticker: "MARA",
     assetClass: "Crypto-linked equities",
     timeHorizon: "1-4 weeks",
     intendedExpression: "Long basket of liquid BTC miners versus BTC proxy hedge",
@@ -101,7 +101,7 @@ export const sampleReviews: TradeReview[] = [
     title: "24/6 trading and small-cap volatility",
     thesis:
       "Extended overnight trading may increase volatility and gap risk in small-cap equities as liquidity fragments outside core hours.",
-    ticker: "IWM / small caps",
+    ticker: "IWM",
     assetClass: "Equities",
     timeHorizon: "1-3 months",
     intendedExpression: "Watchlist and volatility screen before directional trade",
@@ -152,7 +152,7 @@ export const sampleReviews: TradeReview[] = [
     workflowVersion: "adversarial-review.v1",
     title: "Curve steepener after policy shift",
     thesis: "A policy shift may make a curve-steepening expression attractive if front-end rates reprice faster than long-end growth expectations.",
-    ticker: "Rates curve",
+    ticker: "TLT",
     assetClass: "Rates",
     timeHorizon: "2-8 weeks",
     intendedExpression: "Paper review only; no execution in MVP",

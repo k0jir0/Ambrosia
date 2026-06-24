@@ -25,6 +25,7 @@ __pycache__/
 # logs
 *.log
 logs/
+.local/
 
 # local db/data
 *.sqlite3

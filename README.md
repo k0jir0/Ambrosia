@@ -72,14 +72,22 @@ uv sync
 ```
 
 ```powershell
-cd C:\Users\user\Desktop\ARC\Ambrosia\services\api
-uv run uvicorn app.main:app --reload --port 8000
+cd C:\Users\user\Desktop\ARC\Ambrosia
+pnpm local:serve
 ```
 
-```powershell
-cd C:\Users\user\Desktop\ARC\Ambrosia
-pnpm dev:web
-```
+Useful local commands:
+
+- `pnpm local:serve` runs the full stack in one terminal
+- `pnpm local:start` attempts a detached background launch
+- `pnpm local:stop` stops local services
+- `pnpm local:status` checks whether web and API are responding
+- `pnpm local:logs` tails stack logs from `.local/`
+
+If you want to run each service on its own:
+
+- `pnpm local:api:serve`
+- `pnpm local:web:serve`
 
 ## Render
 

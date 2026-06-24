@@ -580,6 +580,7 @@ export function Workbench() {
                 onExportReport={exportActiveReview}
                 disabled={Boolean(activeAction)}
               />
+              <ReportObjectTable review={activeReview} packet={activePacketData} marketData={liveMarketData} />
               <MarketIntelligencePanel data={liveMarketData} ticker={activeReview.ticker} />
               <PacketExecutionPanel packet={activePacketData} />
               <ThesisIntake onSubmit={addReview} generationMode={generationMode} generationError={generationError} seedRequestToken={seedRequestToken} />
@@ -795,6 +796,49 @@ function StatusTimeline({ status }: { status: ReviewStatus }) {
             </div>
           );
         })}
+      </div>
+    </Panel>
+  );
+}
+
+type ReportObjectValue = string | number | boolean | null;
+
+type ReportObjectRow = {
+  path: string;
+  value: ReportObjectValue;
+};
+
+function ReportObjectTable({ review, packet, marketData }: { review: TradeReview; packet: DecisionPacket | null; marketData: LiveMarketData | null }) {
+  const reportObject = {
+    review,
+    packet,
+    liveMarketData: marketData,
+  };
+  const rows = flattenReportObject(reportObject);
+
+  return (
+    <Panel className="p-4">
+      <SectionTitle eyebrow="Report object" title="Underlying review data" />
+      <p className="mt-2 text-sm leading-5 text-slate-400">
+        This table exposes the raw report data Ambrosia is using on screen, including the review, computed packet state, and loaded market data when available.
+      </p>
+      <div className="mt-4 max-h-96 overflow-auto rounded-lg border border-line bg-paper">
+        <table className="w-full min-w-[720px] border-collapse text-left text-xs">
+          <thead className="sticky top-0 bg-fog text-slate-400">
+            <tr>
+              <th className="border-b border-line px-3 py-2 font-semibold">Field</th>
+              <th className="border-b border-line px-3 py-2 font-semibold">Value</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => (
+              <tr key={row.path} className="border-b border-line last:border-b-0">
+                <td className="w-2/5 px-3 py-2 font-mono text-slate-400">{row.path}</td>
+                <td className="px-3 py-2 text-slate-200">{formatReportValue(row.value)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
     </Panel>
   );
@@ -1163,6 +1207,33 @@ function mergeReviews(primary: TradeReview[], secondary: TradeReview[]): TradeRe
     }
   }
   return merged;
+}
+
+function flattenReportObject(value: unknown, path = "report"): ReportObjectRow[] {
+  if (value === null || typeof value !== "object") {
+    return [{ path, value: normalizeReportValue(value) }];
+  }
+
+  if (Array.isArray(value)) {
+    if (value.length === 0) return [{ path, value: "[]" }];
+    return value.flatMap((item, index) => flattenReportObject(item, `${path}[${index}]`));
+  }
+
+  const entries = Object.entries(value as Record<string, unknown>);
+  if (entries.length === 0) return [{ path, value: "{}" }];
+  return entries.flatMap(([key, nestedValue]) => flattenReportObject(nestedValue, `${path}.${key}`));
+}
+
+function normalizeReportValue(value: unknown): ReportObjectValue {
+  if (value === null || value === undefined) return null;
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") return value;
+  return JSON.stringify(value);
+}
+
+function formatReportValue(value: ReportObjectValue): string {
+  if (value === null) return "null";
+  if (typeof value === "boolean") return value ? "true" : "false";
+  return String(value);
 }
 
 function fmtVol(v: number): string {

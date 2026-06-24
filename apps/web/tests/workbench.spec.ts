@@ -38,6 +38,15 @@ test("navigation panels switch to memory calibration and sources", async ({ page
   await expect(page.getByRole("heading", { name: "User-owned evidence and source pointers" })).toBeVisible();
 });
 
+test("report object table exposes the underlying review data", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "Underlying review data" })).toBeVisible();
+  await expect(page.getByText("report.review.id")).toBeVisible();
+  await expect(page.getByText("report.review.thesis")).toBeVisible();
+  await expect(page.getByText("report.packet")).toBeVisible();
+  await expect(page.getByText("report.liveMarketData")).toBeVisible();
+});
+
 test("empty form shows validation instead of silent submit", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("button", { name: "Generate review" }).click();

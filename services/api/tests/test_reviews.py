@@ -176,6 +176,56 @@ def test_packet_refresh_metrics_updates_artifact() -> None:
     assert any(event["eventType"] == "metrics.refreshed" for event in refreshed["audit"])
 
 
+def test_packet_retrieval_returns_relevant_prior_reviews_without_echoing_origin() -> None:
+    origin_review = client.post(
+        "/reviews",
+        json={
+            "thesis": "Semiconductor leadership may re-accelerate with improving breadth",
+            "ticker": "SOXX",
+            "asset_class": "ETF",
+            "time_horizon": "2-6 weeks",
+            "intended_expression": "Long ETF",
+            "source_pointer": "internal note",
+        },
+    ).json()
+    related_review = client.post(
+        "/reviews",
+        json={
+            "thesis": "Semiconductor breadth and relative strength are improving versus the broad market",
+            "ticker": "NVDA",
+            "asset_class": "Equity",
+            "time_horizon": "2-6 weeks",
+            "intended_expression": "Watchlist",
+            "source_pointer": "prior review",
+        },
+    ).json()
+
+    packet_payload = _build_packet_payload(f"pkt-{origin_review['id']}")
+    packet_payload["sources"] = [
+        {
+            "id": "src-retrieval-1",
+            "title": "Semiconductor breadth dashboard",
+            "sourceType": "internal",
+            "timestamp": "2026-06-24T09:55:00Z",
+            "permission": "user_owned",
+            "relevance": 0.95,
+        }
+    ]
+    create_response = client.post("/packets", json=packet_payload)
+    assert create_response.status_code == 200
+
+    retrieval_response = client.post(
+        f"/packets/{packet_payload['id']}/retrieve",
+        json={"query": "semiconductor breadth", "topK": 5},
+    )
+    assert retrieval_response.status_code == 200
+    payload = retrieval_response.json()
+
+    assert any(hit["kind"] == "packet_source" for hit in payload["results"])
+    assert any(hit["id"] == related_review["id"] for hit in payload["results"])
+    assert not any(hit["id"] == origin_review["id"] for hit in payload["results"])
+
+
 def test_sentiment_endpoint_returns_labeled_source() -> None:
     response = client.get("/sentiment/QQQ")
     assert response.status_code == 200

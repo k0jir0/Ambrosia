@@ -135,6 +135,10 @@ def _score_text_match(query: str, text: str) -> float:
     return min(1.0, overlap / len(query_terms))
 
 
+def _originating_review_id_from_packet_id(packet_id: str) -> str | None:
+    return packet_id[len("pkt-") :] if packet_id.startswith("pkt-") else None
+
+
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok", "service": "ambrosia-api"}
@@ -306,6 +310,12 @@ def run_packet_agents(packet_id: str, body: AgentRunRequest) -> DecisionPacket:
             ],
         }
     )
+    store.record_workflow_run(
+        _originating_review_id_from_packet_id(packet_id),
+        f"{packet_id}:agents.run:{selected_provider.name}:{datetime.now().isoformat()}",
+        "completed",
+        "coordinator.v1",
+    )
     return store.save_packet(updated_packet)
 
 
@@ -358,6 +368,13 @@ def run_packet_backtest(packet_id: str, body: BacktestRunRequest) -> DecisionPac
                 ),
             ],
         }
+    )
+    store.record_workflow_run(
+        _originating_review_id_from_packet_id(packet_id),
+        f"{packet_id}:backtest.run:{datetime.now().isoformat()}",
+        "completed" if result.validityScore != "refused" else "refused",
+        "backtest.v1",
+        None if result.validityScore != "refused" else "Backtest run refused by validation gates",
     )
     return store.save_packet(updated_packet)
 
@@ -447,6 +464,7 @@ def retrieve_packet_context(packet_id: str, body: RetrievalRequest) -> Retrieval
 
     hits: list[RetrievalHit] = []
     query = body.query.strip()
+    originating_review_id = packet.id[len("pkt-") :] if packet.id.startswith("pkt-") else None
 
     for source in packet.sources:
         source_text = f"{source.title} {source.sourceType}"
@@ -463,7 +481,7 @@ def retrieve_packet_context(packet_id: str, body: RetrievalRequest) -> Retrieval
             )
 
     for review in store.list_reviews():
-        if review.id == packet.id:
+        if review.id == packet.id or (originating_review_id is not None and review.id == originating_review_id):
             continue
         review_text = f"{review.title} {review.thesis} {review.ticker}"
         score = _score_text_match(query, review_text)
@@ -486,6 +504,12 @@ def retrieve_packet_context(packet_id: str, body: RetrievalRequest) -> Retrieval
         query,
         len(top_hits),
         {"k": body.topK, "hitKinds": [hit.kind for hit in top_hits]},
+    )
+    store.record_workflow_run(
+        originating_review_id,
+        f"{packet_id}:retrieve:{query}:{datetime.now().isoformat()}",
+        "completed",
+        "retrieval.v1",
     )
 
     updated_packet = packet.model_copy(

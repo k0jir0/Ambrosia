@@ -570,6 +570,8 @@ export const samplePackets: DecisionPacket[] = [
       name: "Deterministic Multi-Agent Workflow",
       type: "deterministic",
       fallbackChain: ["local_ollama", "hosted_model", "demo"],
+      fallbackUsed: false,
+      reason: "Deterministic demo path selected for MVP sample packet",
     },
   },
 ];

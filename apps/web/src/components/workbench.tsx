@@ -81,6 +81,7 @@ export function Workbench() {
   const [activeAction, setActiveAction] = useState<string | null>(null);
   const [actionFeedback, setActionFeedback] = useState<{ tone: "neutral" | "good" | "warn"; message: string } | null>(null);
   const [liveMarketData, setLiveMarketData] = useState<LiveMarketData | null>(null);
+  const [activePacketData, setActivePacketData] = useState<DecisionPacket | null>(null);
   const activeReview = reviews.find((review) => review.id === activeId) ?? reviews[0];
   const metrics = useMemo(() => computeDashboardMetrics(reviews), [reviews]);
   const decisionChartData = useMemo(() => buildDecisionChartData(reviews), [reviews]);
@@ -104,6 +105,7 @@ export function Workbench() {
 
   useEffect(() => {
     setLiveMarketData(null);
+    setActivePacketData(null);
   }, [activeId]);
 
   async function addReview(input: ThesisInput) {
@@ -216,6 +218,7 @@ export function Workbench() {
   }
 
   function syncReviewFromPacket(reviewId: string, packet: DecisionPacket) {
+    setActivePacketData(packet);
     setReviews((current) =>
       current.map((review) =>
         review.id === reviewId
@@ -578,6 +581,7 @@ export function Workbench() {
                 disabled={Boolean(activeAction)}
               />
               <MarketIntelligencePanel data={liveMarketData} ticker={activeReview.ticker} />
+              <PacketExecutionPanel packet={activePacketData} />
               <ThesisIntake onSubmit={addReview} generationMode={generationMode} generationError={generationError} seedRequestToken={seedRequestToken} />
               <StatusTimeline status={activeReview.status} />
               <ReviewArtifact review={activeReview} />
@@ -1227,6 +1231,140 @@ function MarketIntelligencePanel({ data, ticker }: { data: LiveMarketData | null
           <p className="mt-2 text-xs text-slate-500">Sources: <span className="text-slate-300">{data.sentiment.sources.join(", ")}</span> · Mode: <span className="text-slate-300">{data.sentiment.sourceConfidence}</span></p>
         </section>
       )}
+    </Panel>
+  );
+}
+
+function PacketExecutionPanel({ packet }: { packet: DecisionPacket | null }) {
+  if (!packet) {
+    return (
+      <Panel className="p-5">
+        <SectionTitle eyebrow="Execution state" title="Specialists · confidence · risk" />
+        <p className="mt-3 text-sm leading-6 text-slate-300">
+          Packet actions can produce structured specialist outputs, confidence derivation, backtest gates, risk state, and portfolio context. This panel shows those results only when the packet workflow has actually computed them.
+        </p>
+        <p className="mt-2 text-sm leading-6 text-slate-400">
+          Ambrosia should surface computed state plainly. If a module has not run yet, the absence is real and visible rather than silently filled with invented content.
+        </p>
+      </Panel>
+    );
+  }
+
+  const providerTone: "good" | "warn" | "neutral" = packet.providerInfo?.fallbackUsed ? "warn" : packet.providerInfo ? "good" : "neutral";
+  const confidence = packet.confidenceBreakdown;
+  const specialistOutputs = packet.agentOutputs
+    ? Object.values(packet.agentOutputs).filter((output): output is NonNullable<typeof output> => output !== null)
+    : [];
+
+  return (
+    <Panel className="space-y-5 p-5">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <SectionTitle eyebrow="Execution state" title="Packet-derived modules" />
+        {packet.providerInfo ? <Badge tone={providerTone}>{packet.providerInfo.fallbackUsed ? "fallback used" : "provider active"}</Badge> : <Badge tone="neutral">no provider metadata</Badge>}
+      </div>
+
+      {packet.providerInfo ? (
+        <section>
+          <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-slate-400">Provider provenance</p>
+          <p className="mb-3 text-xs leading-5 text-slate-500">
+            Model and coordinator runs should be labeled by runtime mode, not implied. This packet records which provider path was used and whether fallback execution was required.
+          </p>
+          <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
+            <MIMetric label="Provider" value={packet.providerInfo.name ?? "—"} />
+            <MIMetric label="Type" value={packet.providerInfo.type ?? "—"} />
+            <MIMetric label="Fallback" value={packet.providerInfo.fallbackUsed ? "yes" : "no"} />
+            <MIMetric label="Reason" value={packet.providerInfo.reason ?? "direct path"} small />
+          </div>
+        </section>
+      ) : null}
+
+      {confidence ? (
+        <section>
+          <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-slate-400">Confidence breakdown</p>
+          <p className="mb-3 text-xs leading-5 text-slate-500">
+            Confidence should decompose into evidence, technical, sentiment, validation, tradeability, and risk-adjusted components. This is operational state, not a single opaque model score.
+          </p>
+          <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
+            <MIMetric label="Evidence" value={`${confidence.evidenceScore}%`} />
+            <MIMetric label="Technical" value={`${confidence.technicalScore}%`} />
+            <MIMetric label="Sentiment" value={`${confidence.sentimentScore}%`} />
+            <MIMetric label="Inter-market" value={`${confidence.interMarketScore}%`} />
+            <MIMetric label="Validation" value={`${confidence.validationScore}%`} />
+            <MIMetric label="Tradeability" value={`${confidence.tradeabilityScore}%`} />
+            <MIMetric label="Risk-adjusted" value={`${confidence.riskAdjustedScore}%`} />
+            <MIMetric label="Overall" value={`${confidence.overallConfidence}%`} />
+          </div>
+          {confidence.blockers.length > 0 ? <p className="mt-2 text-xs text-amber">Blockers: {confidence.blockers.join(", ")}</p> : null}
+        </section>
+      ) : null}
+
+      {packet.backtestPlan || packet.backtestResult ? (
+        <section>
+          <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-slate-400">Backtest state</p>
+          <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
+            <MIMetric label="Plan status" value={packet.backtestPlan?.status ?? "—"} />
+            <MIMetric label="Validity" value={packet.backtestResult?.validityScore ?? "—"} />
+            <MIMetric label="Sharpe" value={packet.backtestResult?.sharpeRatio !== null && packet.backtestResult?.sharpeRatio !== undefined ? packet.backtestResult.sharpeRatio.toFixed(2) : "—"} />
+            <MIMetric label="Max drawdown" value={packet.backtestResult?.maxDrawdown !== null && packet.backtestResult?.maxDrawdown !== undefined ? `${(packet.backtestResult.maxDrawdown * 100).toFixed(1)}%` : "—"} />
+          </div>
+          {packet.backtestResult?.hygienIssues?.length ? <p className="mt-2 text-xs text-slate-500">Hygiene issues: {packet.backtestResult.hygienIssues.join(", ")}</p> : null}
+        </section>
+      ) : null}
+
+      {packet.riskMonitor ? (
+        <section>
+          <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-slate-400">Risk monitor</p>
+          <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
+            <MIMetric label="Status" value={packet.riskMonitor.status} tone={packet.riskMonitor.status === "safe" ? "up" : packet.riskMonitor.status === "alert" ? "down" : undefined} />
+            <MIMetric label="Position size" value={packet.riskMonitor.activePositionSize.toFixed(0)} />
+            <MIMetric label="Concentration" value={packet.riskMonitor.concentrationRisk} />
+            <MIMetric label="Max DD threshold" value={`${(packet.riskMonitor.maxDrawdownThreshold * 100).toFixed(1)}%`} />
+          </div>
+          {packet.riskMonitor.followUpTriggers.length > 0 ? <p className="mt-2 text-xs text-slate-500">Triggers: {packet.riskMonitor.followUpTriggers.join(", ")}</p> : null}
+        </section>
+      ) : null}
+
+      {packet.portfolioContext ? (
+        <section>
+          <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-slate-400">Portfolio context</p>
+          <div className="grid grid-cols-2 gap-2 md:grid-cols-5">
+            <MIMetric label="Gross" value={`${(packet.portfolioContext.grossExposure * 100).toFixed(0)}%`} />
+            <MIMetric label="Net" value={`${(packet.portfolioContext.netExposure * 100).toFixed(0)}%`} />
+            <MIMetric label="Long" value={`${(packet.portfolioContext.longExposure * 100).toFixed(0)}%`} />
+            <MIMetric label="Short" value={`${(packet.portfolioContext.shortExposure * 100).toFixed(0)}%`} />
+            <MIMetric label="Risk budget left" value={`${(packet.portfolioContext.riskBudgetRemaining * 100).toFixed(0)}%`} />
+          </div>
+          <p className="mt-2 text-xs text-slate-500">Constraints: {packet.portfolioContext.sizingConstraints.join(", ")}</p>
+        </section>
+      ) : null}
+
+      {specialistOutputs.length > 0 ? (
+        <section>
+          <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-slate-400">Specialist outputs</p>
+          <p className="mb-3 text-xs leading-5 text-slate-500">
+            These are the structured role outputs generated by the coordinator path. The provider used and any fallback are shown on each role output so the user can distinguish deterministic scaffolding from live model execution.
+          </p>
+          <div className="grid gap-3 lg:grid-cols-2">
+            {specialistOutputs.map((output) => (
+              <div key={`${output.role}-${output.timestamp}`} className="rounded-lg border border-line bg-paper p-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-sm font-semibold text-ink">{output.role}</p>
+                  <div className="flex items-center gap-2">
+                    <Badge tone={output.fallbackUsed ? "warn" : "good"}>{output.fallbackUsed ? "deterministic" : "provider"}</Badge>
+                    <span className="text-xs text-slate-500">{output.provider}</span>
+                  </div>
+                </div>
+                <p className="mt-2 text-sm text-slate-300">{output.summary}</p>
+                {output.keyPoints.length > 0 ? (
+                  <ul className="mt-2 grid gap-1 text-xs text-slate-500">
+                    {output.keyPoints.map((point) => <li key={point}>- {point}</li>)}
+                  </ul>
+                ) : null}
+              </div>
+            ))}
+          </div>
+        </section>
+      ) : null}
     </Panel>
   );
 }

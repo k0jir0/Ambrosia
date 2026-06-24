@@ -262,6 +262,8 @@ export interface DecisionPacket extends TradeReview {
     name: string;
     type: "deterministic" | "ollama" | "hosted" | "hybrid";
     fallbackChain: string[];
+    fallbackUsed: boolean;
+    reason: string;
   } | null;
 }
 

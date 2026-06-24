@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from datetime import datetime
+from uuid import NAMESPACE_URL, uuid5
 
 import psycopg
 from psycopg.rows import dict_row
 
-from .models import AuditEvent, AuditEventCreate, DecisionPacket, DecisionState
+from .models import AuditEvent, AuditEventCreate, DecisionPacket, DecisionState, ReviewStatus, TradeReview
 
 
 @dataclass
@@ -14,6 +16,209 @@ class PacketQuery:
     search: str | None = None
     ticker: str | None = None
     decision_state: DecisionState | None = None
+
+
+class PostgresReviewStore:
+    def __init__(self, database_url: str) -> None:
+        self.database_url = database_url
+
+    def _review_pk(self, review_id: str) -> str:
+        return str(uuid5(NAMESPACE_URL, f"ambrosia-review:{review_id}"))
+
+    def _connect(self) -> psycopg.Connection:
+        return psycopg.connect(self.database_url, row_factory=dict_row)
+
+    def healthcheck(self) -> None:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT 1")
+
+    def save_review(self, review: TradeReview) -> TradeReview:
+        payload = review.model_dump(mode="json")
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    INSERT INTO reviews (
+                        id,
+                        schema_version,
+                        workflow_version,
+                        title,
+                        thesis,
+                        ticker,
+                        asset_class,
+                        time_horizon,
+                        intended_expression,
+                        decision_state,
+                        confidence,
+                        trial_count_impact,
+                        follow_up_date,
+                        artifact,
+                        created_at
+                    )
+                    VALUES (%s::uuid, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s)
+                    ON CONFLICT (id)
+                    DO UPDATE SET
+                        schema_version = EXCLUDED.schema_version,
+                        workflow_version = EXCLUDED.workflow_version,
+                        title = EXCLUDED.title,
+                        thesis = EXCLUDED.thesis,
+                        ticker = EXCLUDED.ticker,
+                        asset_class = EXCLUDED.asset_class,
+                        time_horizon = EXCLUDED.time_horizon,
+                        intended_expression = EXCLUDED.intended_expression,
+                        decision_state = EXCLUDED.decision_state,
+                        confidence = EXCLUDED.confidence,
+                        trial_count_impact = EXCLUDED.trial_count_impact,
+                        follow_up_date = EXCLUDED.follow_up_date,
+                        artifact = EXCLUDED.artifact,
+                        updated_at = now()
+                    """,
+                    (
+                        self._review_pk(review.id),
+                        review.schemaVersion,
+                        review.workflowVersion,
+                        review.title,
+                        review.thesis,
+                        review.ticker,
+                        review.assetClass,
+                        review.timeHorizon,
+                        review.intendedExpression,
+                        review.decisionState.value if review.decisionState else None,
+                        review.confidence,
+                        review.trialCountImpact,
+                        review.followUpDate,
+                        json.dumps(payload),
+                        review.createdAt,
+                    ),
+                )
+        return review
+
+    def get_review(self, review_id: str) -> TradeReview | None:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT artifact FROM reviews WHERE id = %s::uuid", (self._review_pk(review_id),))
+                row = cursor.fetchone()
+        if row is None:
+            return None
+        return TradeReview.model_validate(row["artifact"])
+
+    def list_reviews(self) -> list[TradeReview]:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT artifact FROM reviews ORDER BY created_at DESC")
+                rows = cursor.fetchall()
+        return [TradeReview.model_validate(row["artifact"]) for row in rows]
+
+    def count_reviews(self) -> int:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT COUNT(*) AS count FROM reviews")
+                row = cursor.fetchone()
+        return int(row["count"] if row is not None else 0)
+
+    def record_decision(self, review_id: str, decision_state: DecisionState) -> TradeReview | None:
+        review = self.get_review(review_id)
+        if review is None:
+            return None
+
+        updated = review.model_copy(
+            update={
+                "decisionState": decision_state,
+                "status": ReviewStatus.decision_recorded,
+                "audit": [
+                    *review.audit,
+                    AuditEvent(
+                        id=f"audit-{len(review.audit) + 1}",
+                        timestamp=datetime.now().strftime("%H:%M:%S"),
+                        eventType="decision.recorded",
+                        detail=f"Human decision captured: {decision_state.value}",
+                    ),
+                ],
+            }
+        )
+
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    INSERT INTO audit_events (review_id, event_type, detail, payload)
+                    VALUES (%s::uuid, %s, %s, %s::jsonb)
+                    """,
+                    (
+                        self._review_pk(review_id),
+                        "decision.recorded",
+                        f"Human decision captured: {decision_state.value}",
+                        json.dumps({"source": "api"}),
+                    ),
+                )
+        return self.save_review(updated)
+
+    def record_outcome(self, review_id: str, outcome: str, outcome_date: str) -> TradeReview | None:
+        review = self.get_review(review_id)
+        if review is None:
+            return None
+
+        detail = f"{outcome_date}: {outcome}"
+        updated = review.model_copy(
+            update={
+                "audit": [
+                    *review.audit,
+                    AuditEvent(
+                        id=f"audit-{len(review.audit) + 1}",
+                        timestamp=datetime.now().strftime("%H:%M:%S"),
+                        eventType="outcome.recorded",
+                        detail=detail,
+                    ),
+                ]
+            }
+        )
+
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    INSERT INTO audit_events (review_id, event_type, detail, payload)
+                    VALUES (%s::uuid, %s, %s, %s::jsonb)
+                    """,
+                    (
+                        self._review_pk(review_id),
+                        "outcome.recorded",
+                        detail,
+                        json.dumps({"source": "api"}),
+                    ),
+                )
+        return self.save_review(updated)
+
+    def add_workflow_run(
+        self,
+        review_id: str,
+        idempotency_key: str,
+        status: str,
+        workflow_version: str,
+        error: str | None = None,
+    ) -> None:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    INSERT INTO workflow_runs (review_id, idempotency_key, status, workflow_version, completed_at, error)
+                    VALUES (%s::uuid, %s, %s, %s, now(), %s)
+                    ON CONFLICT (idempotency_key)
+                    DO UPDATE SET
+                        status = EXCLUDED.status,
+                        workflow_version = EXCLUDED.workflow_version,
+                        completed_at = EXCLUDED.completed_at,
+                        error = EXCLUDED.error
+                    """,
+                    (
+                        self._review_pk(review_id),
+                        idempotency_key,
+                        status,
+                        workflow_version,
+                        error,
+                    ),
+                )
 
 
 class PostgresPacketStore:
@@ -174,8 +379,14 @@ class PostgresPacketStore:
             with connection.cursor() as cursor:
                 cursor.execute(
                     """
-                    INSERT INTO retrieval_event (packet_id, query_text, result_count, payload)
-                    VALUES (%s, %s, %s, %s::jsonb)
+                    INSERT INTO retrieval_event (packet_id, source_type, source_ref, confidence, payload)
+                    VALUES (%s, %s, %s, %s, %s::jsonb)
                     """,
-                    (packet_id, query_text, result_count, json.dumps(payload)),
+                    (
+                        packet_id,
+                        "hybrid_query",
+                        query_text,
+                        float(result_count),
+                        json.dumps({"query": query_text, "resultCount": result_count, **payload}),
+                    ),
                 )

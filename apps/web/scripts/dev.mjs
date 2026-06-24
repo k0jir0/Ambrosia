@@ -6,7 +6,7 @@ rmSync(join(process.cwd(), ".next"), { recursive: true, force: true });
 
 const nextCli = join(process.cwd(), "node_modules", "next", "dist", "bin", "next");
 const port = process.env.PORT || "3000";
-const child = spawn(process.execPath, [nextCli, "dev", "--hostname", "0.0.0.0", "--port", port], { stdio: "inherit" });
+const child = spawn(process.execPath, [nextCli, "dev", "--port", "3000"], { stdio: "inherit" });
 
 function shutdown(signal) {
   if (process.platform === "win32" && child.pid) {

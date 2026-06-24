@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
 import { Activity, AlertTriangle, BarChart3, BookOpen, CheckCircle2, ClipboardCheck, Database, FileSearch, History, ShieldCheck, Sparkles } from "lucide-react";
 import { useForm } from "react-hook-form";
@@ -22,10 +22,7 @@ import {
   recordDecision,
   recordPacketOutcome,
   refreshPacketMetrics,
-  retrievePacketContext,
   runPacketAgents,
-  runPacketBacktest,
-  updatePacketPortfolio,
 } from "@/lib/api";
 import { sampleReviews } from "@/lib/sample-data";
 import { generateLocalReview, thesisCandidates } from "@/lib/review-generator";
@@ -82,6 +79,8 @@ export function Workbench() {
   const [actionFeedback, setActionFeedback] = useState<{ tone: "neutral" | "good" | "warn"; message: string } | null>(null);
   const [liveMarketData, setLiveMarketData] = useState<LiveMarketData | null>(null);
   const [activePacketData, setActivePacketData] = useState<DecisionPacket | null>(null);
+  const newReviewSectionRef = useRef<HTMLDivElement | null>(null);
+  const coreInformationSectionRef = useRef<HTMLDivElement | null>(null);
   const activeReview = reviews.find((review) => review.id === activeId) ?? reviews[0];
   const metrics = useMemo(() => computeDashboardMetrics(reviews), [reviews]);
   const decisionChartData = useMemo(() => buildDecisionChartData(reviews), [reviews]);
@@ -108,6 +107,14 @@ export function Workbench() {
     setActivePacketData(null);
   }, [activeId]);
 
+  function panToCoreInformation() {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        coreInformationSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      });
+    });
+  }
+
   async function addReview(input: ThesisInput) {
     setGenerationError(null);
     try {
@@ -116,6 +123,7 @@ export function Workbench() {
       setActiveId(review.id);
       setActiveView("workbench");
       setGenerationMode("api");
+      panToCoreInformation();
     } catch (error) {
       const review = generateLocalReview(input, metrics.activeTrialCount);
       review.audit = [
@@ -132,6 +140,7 @@ export function Workbench() {
       setActiveView("workbench");
       setGenerationMode("fallback");
       setGenerationError(error instanceof ApiUnavailableError ? null : "API review generation failed, so Ambrosia generated this review locally.");
+      panToCoreInformation();
     }
   }
 
@@ -201,19 +210,17 @@ export function Workbench() {
     setActiveView("workbench");
     setSeedRequestToken((current) => current + 1);
     appendAuditEvent("packet.new", "New packet draft opened and seeded with the next thesis candidate.");
-    if (typeof window !== "undefined") {
-      window.scrollTo({ top: 0, behavior: "smooth" });
-    }
+
+    requestAnimationFrame(() => {
+      newReviewSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+
     return "ok";
   }
 
-  async function ingestManualAlert(): Promise<ActionResult> {
-    if (!activeReview) {
-      appendAuditEvent("event_intake.manual.skipped", "Manual alert intake skipped because no active review is selected.");
-      return "skipped";
-    }
-
-    appendAuditEvent("event_intake.manual", `Manual alert intake opened from common actions for ${activeReview.ticker}.`);
+  async function openExistingReview(): Promise<ActionResult> {
+    setActiveView("memory");
+    appendAuditEvent("review.open_existing", "Opened existing review list from core actions.");
     return "ok";
   }
 
@@ -326,35 +333,6 @@ export function Workbench() {
     }
   }
 
-  async function inspectSentiment(): Promise<ActionResult> {
-    if (!activeReview?.ticker) {
-      appendAuditEvent("view.sentiment.skipped", "No ticker available for sentiment inspection.");
-      return "skipped";
-    }
-
-    try {
-      const sentiment = await getSentiment(activeReview.ticker);
-      setLiveMarketData((prev) => ({
-        snapshot: prev?.ticker === activeReview.ticker ? (prev.snapshot ?? null) : null,
-        technicals: prev?.ticker === activeReview.ticker ? (prev.technicals ?? null) : null,
-        sentiment,
-        ticker: activeReview.ticker,
-        fetchedAt: new Date().toISOString(),
-      }));
-      appendAuditEvent(
-        "view.sentiment",
-        `Sentiment inspected for ${activeReview.ticker}: ${sentiment.sentiment} (${sentiment.overallScore}) from ${sentiment.sources.join(", ")}.`
-      );
-      return "ok";
-    } catch {
-      appendAuditEvent(
-        "view.sentiment.fallback",
-        `Sentiment endpoint unavailable for ${activeReview.ticker}; deterministic review flow remains active.`
-      );
-      return "fallback";
-    }
-  }
-
   async function prepareBacktest(): Promise<ActionResult> {
     if (!activeReview) {
       appendAuditEvent("backtest.prepare.skipped", "Backtest preparation skipped because no active review is selected.");
@@ -372,23 +350,6 @@ export function Workbench() {
       return "ok";
     } catch {
       appendAuditEvent("backtest.prepare.fallback", "Backtest preparation endpoint unavailable; packet flow remains in local mode.");
-      return "fallback";
-    }
-  }
-
-  async function runBacktest(): Promise<ActionResult> {
-    if (!activeReview) {
-      appendAuditEvent("backtest.run.skipped", "Backtest run skipped because no active review is selected.");
-      return "skipped";
-    }
-    try {
-      const { reviewId, packetId } = await ensurePacketForReview(activeReview);
-      const packet = await runPacketBacktest(packetId, { forceRun: false });
-      syncReviewFromPacket(reviewId, packet);
-      appendAuditEvent("backtest.run", `Backtest run completed for ${activeReview.ticker} with validity ${packet.backtestResult?.validityScore ?? "unknown"}.`);
-      return "ok";
-    } catch {
-      appendAuditEvent("backtest.run.fallback", "Backtest run endpoint unavailable; no external backtest executed.");
       return "fallback";
     }
   }
@@ -413,51 +374,20 @@ export function Workbench() {
     }
   }
 
-  async function compareMarkets(): Promise<ActionResult> {
+  async function runAgentSwarm(): Promise<ActionResult> {
     if (!activeReview) {
-      appendAuditEvent("view.inter_market.skipped", "Inter-market comparison skipped because no active review is selected.");
+      appendAuditEvent("agents.run.skipped", "Agent swarm run skipped because no active review is selected.");
       return "skipped";
     }
-    try {
-      const { reviewId, packetId } = await ensurePacketForReview(activeReview);
-      const retrieval = await retrievePacketContext(packetId, `${activeReview.ticker} ${activeReview.thesis}`, 4);
-      const packet = await runPacketAgents(packetId, "deterministic");
-      syncReviewFromPacket(reviewId, packet);
-      appendAuditEvent(
-        "view.inter_market",
-        `Hybrid retrieval returned ${retrieval.results.length} hits; specialist coordinator completed for ${activeReview.ticker}.`
-      );
-      return "ok";
-    } catch {
-      appendAuditEvent("view.inter_market.fallback", "Coordinator endpoint unavailable; inter-market comparison stayed local.");
-      return "fallback";
-    }
-  }
 
-  async function setFollowUpWithPortfolioUpdate(): Promise<ActionResult> {
-    if (!activeReview) {
-      appendAuditEvent("follow_up.set.skipped", "Follow-up update skipped because no active review is selected.");
-      return "skipped";
-    }
     try {
       const { reviewId, packetId } = await ensurePacketForReview(activeReview);
-      const packet = await updatePacketPortfolio(packetId, {
-        grossExposure: 0.82,
-        netExposure: 0.19,
-        longExposure: 0.51,
-        shortExposure: 0.32,
-        concentrationBySector: { Technology: 0.34, Health: 0.16 },
-        concentrationByFactor: { Momentum: 0.22, Quality: 0.18 },
-        relatedPositions: [activeReview.ticker],
-        factorOverlap: ["Growth", "Beta"],
-        riskBudgetRemaining: 0.31,
-        sizingConstraints: ["Advisory mode only", "No live broker execution"],
-      });
+      const packet = await runPacketAgents(packetId, "hybrid");
       syncReviewFromPacket(reviewId, packet);
-      appendAuditEvent("follow_up.set", `Follow-up and portfolio context updated for ${activeReview.ticker}.`);
+      appendAuditEvent("agents.run", `Agent swarm completed for ${activeReview.ticker} using ${packet.providerInfo?.name ?? "unknown provider"}.`);
       return "ok";
     } catch {
-      appendAuditEvent("follow_up.set.fallback", `Follow-up reminder set for ${activeReview.followUpDate} (local mode).`);
+      appendAuditEvent("agents.run.fallback", "Agent swarm endpoint unavailable; keeping local workflow state.");
       return "fallback";
     }
   }
@@ -515,22 +445,9 @@ export function Workbench() {
     }
   }
 
-  function exportActiveReview() {
-    if (!activeReview) return;
-    const payload = JSON.stringify(activeReview, null, 2);
-    const blob = new Blob([payload], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = `${activeReview.id}.json`;
-    anchor.click();
-    URL.revokeObjectURL(url);
-    appendAuditEvent("report.export", `Exported structured review artifact for ${activeReview.id}.`);
-  }
-
   return (
     <main className="min-h-screen px-5 py-5 text-ink">
-      <div className="mx-auto grid max-w-[1540px] grid-cols-[260px_minmax(0,1fr)_360px] gap-4 max-xl:grid-cols-[220px_minmax(0,1fr)] max-lg:grid-cols-1">
+      <div className="mx-auto grid max-w-[1540px] grid-cols-[260px_minmax(0,1fr)] gap-4 max-xl:grid-cols-[220px_minmax(0,1fr)] max-lg:grid-cols-1">
         <LeftRail reviews={reviews} activeId={activeReview.id} activeView={activeView} onSelect={(reviewId) => { setActiveId(reviewId); setActiveView("workbench"); }} onViewChange={setActiveView} />
         <div className="space-y-4">
           <TopBar review={activeReview} />
@@ -542,62 +459,62 @@ export function Workbench() {
                 </div>
               ) : null}
               <CommonActionsBar
-                onNewPacket={() => {
-                  void runAction("New Packet", startNewPacketDraft);
+                onNewReview={() => {
+                  void runAction("New Review", startNewPacketDraft);
                 }}
-                onGenerateThesis={() => setSeedRequestToken((current) => current + 1)}
-                onIngestAlert={() => {
-                  void runAction("Ingest Alert", ingestManualAlert);
+                onOpenExistingReview={() => {
+                  void runAction("Open Existing", openExistingReview);
                 }}
                 onRefreshMetrics={() => {
                   void runAction("Refresh Metrics", refreshMarketMetrics);
                 }}
-                onViewTechnicals={() => {
-                  void runAction("View Technicals", viewTechnicalsAndDeriveConfidence);
-                }}
-                onViewSentiment={() => {
-                  void runAction("View Sentiment", inspectSentiment);
-                }}
-                onCompareMarkets={() => {
-                  void runAction("Compare Markets", compareMarkets);
+                onRunAgentSwarm={() => {
+                  void runAction("Run Agent Swarm", runAgentSwarm);
                 }}
                 onPrepareBacktest={() => {
                   void runAction("Prepare Backtest", prepareBacktest);
                 }}
-                onRunBacktest={() => {
-                  void runAction("Run Backtest", runBacktest);
+                onEvaluateRisk={() => {
+                  void runAction("Evaluate Risk", viewRisks);
+                }}
+                onDeriveConfidence={() => {
+                  void runAction("Derive Confidence", viewTechnicalsAndDeriveConfidence);
                 }}
                 onRecordDecision={() => {
                   updateDecision(activeReview.decisionState ?? "watch");
                   void runAction("Record Decision", recordOutcomeForDecision);
                 }}
-                onSetFollowUp={() => {
-                  void runAction("Set Follow-Up", setFollowUpWithPortfolioUpdate);
-                }}
-                onViewRisks={() => {
-                  void runAction("View Risks", viewRisks);
-                }}
-                onExportReport={exportActiveReview}
                 disabled={Boolean(activeAction)}
               />
-              <ReportObjectTable review={activeReview} packet={activePacketData} marketData={liveMarketData} />
+              <div ref={newReviewSectionRef}>
+                <ThesisIntake onSubmit={addReview} generationMode={generationMode} generationError={generationError} seedRequestToken={seedRequestToken} />
+              </div>
               <MarketIntelligencePanel data={liveMarketData} ticker={activeReview.ticker} />
-              <PacketExecutionPanel packet={activePacketData} />
-              <ThesisIntake onSubmit={addReview} generationMode={generationMode} generationError={generationError} seedRequestToken={seedRequestToken} />
-              <StatusTimeline status={activeReview.status} />
-              <ReviewArtifact review={activeReview} />
+              <div ref={coreInformationSectionRef}>
+                <CoreInformationPanel review={activeReview} packet={activePacketData} marketData={liveMarketData} />
+              </div>
+              <details className="rounded-lg border border-line bg-paper p-4">
+                <summary className="cursor-pointer text-sm font-semibold text-ink">Advanced Workflow Panels</summary>
+                <p className="mt-3 text-sm text-slate-300">
+                  Click Refresh Metrics to load a full snapshot for {activeReview.ticker}, then use Derive Confidence to synthesize the latest technical and sentiment state.
+                </p>
+                <div className="mt-4 space-y-4">
+                  <ReportObjectTable review={activeReview} packet={activePacketData} marketData={liveMarketData} />
+                  <PacketExecutionPanel packet={activePacketData} />
+                  <StatusTimeline status={activeReview.status} />
+                  <ReviewArtifact review={activeReview} />
+                  <EvidencePanel review={activeReview} />
+                  <DecisionStrip review={activeReview} onDecision={updateDecision} />
+                  <DashboardPanel metrics={metrics} chartData={decisionChartData} />
+                  <AuditPanel review={activeReview} />
+                </div>
+              </details>
             </>
           ) : null}
           {activeView === "memory" ? <DecisionMemoryPanel reviews={reviews} onSelectReview={(reviewId) => { setActiveId(reviewId); setActiveView("workbench"); }} /> : null}
           {activeView === "calibration" ? <CalibrationPanel metrics={metrics} chartData={decisionChartData} reviews={reviews} /> : null}
           {activeView === "sources" ? <SourceLibraryPanel sources={collectSources(reviews)} onSelectReview={(reviewId) => { setActiveId(reviewId); setActiveView("workbench"); }} /> : null}
         </div>
-        <aside className="space-y-4 max-xl:col-span-2 max-lg:col-span-1">
-          <EvidencePanel review={activeReview} />
-          <DecisionStrip review={activeReview} onDecision={updateDecision} />
-          <DashboardPanel metrics={metrics} chartData={decisionChartData} />
-          <AuditPanel review={activeReview} />
-        </aside>
       </div>
     </main>
   );
@@ -619,7 +536,7 @@ function LeftRail({ reviews, activeId, activeView, onSelect, onViewChange }: { r
         </div>
         <div className="min-w-0">
           <p className="text-sm font-semibold">Ambrosia</p>
-          <p className="text-xs text-slate-500">Trade Review</p>
+          <p className="text-xs text-slate-500">Agentic Quant Workflow</p>
         </div>
       </div>
       <nav className="mt-4 grid gap-1 text-sm">
@@ -673,6 +590,55 @@ function TopBar({ review }: { review: TradeReview }) {
         <Badge tone="info">{review.schemaVersion}</Badge>
         <Badge tone="neutral">{review.workflowVersion}</Badge>
         <Badge tone={review.decisionState ? "good" : "warn"}>{review.decisionState ? decisionLabels[review.decisionState] : "Decision pending"}</Badge>
+      </div>
+    </Panel>
+  );
+}
+
+function CoreInformationPanel({ review, packet, marketData }: { review: TradeReview; packet: DecisionPacket | null; marketData: LiveMarketData | null }) {
+  const technicals = marketData?.technicals ?? packet?.technicals ?? null;
+  const sentiment = marketData?.sentiment ?? packet?.sentiment ?? null;
+  const riskStatus = packet?.riskMonitor?.status ?? "not_evaluated";
+  const backtestStatus = packet?.backtestPlan?.status ?? "not_prepared";
+  const confidence = packet?.confidence ?? review.confidence;
+
+  return (
+    <Panel className="p-4">
+      <SectionTitle eyebrow="Core Information" title="First-minute decision context" />
+      <p className="mt-2 text-sm leading-5 text-slate-400">
+        This screen is intentionally condensed to the essentials: what the case is, what the signals say, and whether it is decision-ready.
+      </p>
+      <div className="mt-4 grid gap-3 md:grid-cols-3">
+        <Metric label="Ticker" value={review.ticker} />
+        <Metric label="Asset / Horizon" value={`${review.assetClass} / ${review.timeHorizon}`} />
+        <Metric label="Decision State" value={review.decisionState ? decisionLabels[review.decisionState] : "Pending"} />
+        <Metric label="Confidence" value={`${confidence}%`} />
+        <Metric
+          label="Technicals"
+          value={
+            technicals
+              ? `${technicals.trend} · RSI ${technicals.rsi === null ? "n/a" : Math.round(technicals.rsi)}`
+              : "Not loaded"
+          }
+        />
+        <Metric label="Sentiment" value={sentiment ? `${sentiment.sentiment} (${Math.round(sentiment.overallScore)})` : "Not loaded"} />
+        <Metric label="Risk State" value={riskStatus} />
+        <Metric label="Backtest State" value={backtestStatus} />
+        <Metric label="Follow-up" value={review.followUpDate} />
+      </div>
+      <div className="mt-4 grid gap-3 lg:grid-cols-2">
+        <div className="rounded-lg border border-line bg-paper p-3">
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Thesis</p>
+          <p className="mt-2 text-sm text-slate-200">{review.thesis}</p>
+        </div>
+        <div className="rounded-lg border border-line bg-paper p-3">
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Strongest Critique</p>
+          <p className="mt-2 text-sm text-slate-200">{review.strongestCritique}</p>
+        </div>
+      </div>
+      <div className="mt-3 rounded-lg border border-line bg-paper p-3">
+        <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Disconfirming Test</p>
+        <p className="mt-2 text-sm text-slate-200">{review.disconfirmingTest}</p>
       </div>
     </Panel>
   );
@@ -1045,28 +1011,121 @@ function DashboardPanel({ metrics, chartData }: { metrics: DashboardMetrics; cha
 }
 
 function DecisionMemoryPanel({ reviews, onSelectReview }: { reviews: TradeReview[]; onSelectReview: (reviewId: string) => void }) {
+  const [searchQuery, setSearchQuery] = useState("");
+  const [decisionFilter, setDecisionFilter] = useState<"all" | DecisionState | "pending">("all");
+  const [minimumConfidence, setMinimumConfidence] = useState("0");
+  const [fromDate, setFromDate] = useState("");
+
+  const filteredReviews = useMemo(() => {
+    const normalizedQuery = searchQuery.trim().toLowerCase();
+    const minConfidence = Number.parseInt(minimumConfidence || "0", 10);
+
+    return reviews.filter((review) => {
+      if (normalizedQuery) {
+        const haystack = `${review.title} ${review.thesis} ${review.ticker}`.toLowerCase();
+        if (!haystack.includes(normalizedQuery)) {
+          return false;
+        }
+      }
+
+      if (decisionFilter !== "all") {
+        if (decisionFilter === "pending") {
+          if (review.decisionState !== null) {
+            return false;
+          }
+        } else if (review.decisionState !== decisionFilter) {
+          return false;
+        }
+      }
+
+      if (!Number.isNaN(minConfidence) && review.confidence < minConfidence) {
+        return false;
+      }
+
+      if (fromDate) {
+        const reviewDate = review.createdAt.slice(0, 10);
+        if (reviewDate < fromDate) {
+          return false;
+        }
+      }
+
+      return true;
+    });
+  }, [reviews, searchQuery, decisionFilter, minimumConfidence, fromDate]);
+
   return (
     <Panel className="p-5">
       <SectionTitle eyebrow="Decision memory" title="Captured review decisions" />
       <p className="mt-2 text-sm leading-5 text-slate-400">
-        This module keeps a record of prior reviews so past decisions can be revisited instead of disappearing after the meeting.
+        Search and filter stored reports by ticker, thesis text, state, date, and confidence before reopening a case.
       </p>
+      <div className="mt-4 grid gap-3 rounded-lg border border-line bg-paper p-3 md:grid-cols-4">
+        <label className="grid gap-1 text-xs font-medium text-slate-300">
+          <span>Search ticker or thesis</span>
+          <input
+            className="focus-ring rounded-md border border-line bg-fog px-3 py-2 text-sm text-ink"
+            value={searchQuery}
+            onChange={(event) => setSearchQuery(event.target.value)}
+            placeholder="NVDA, semis, momentum..."
+          />
+        </label>
+        <label className="grid gap-1 text-xs font-medium text-slate-300">
+          <span>Decision state</span>
+          <select
+            className="focus-ring rounded-md border border-line bg-fog px-3 py-2 text-sm text-ink"
+            value={decisionFilter}
+            onChange={(event) => setDecisionFilter(event.target.value as "all" | DecisionState | "pending")}
+          >
+            <option value="all">All</option>
+            <option value="pending">Pending</option>
+            <option value="pursue">Pursue</option>
+            <option value="watch">Watch</option>
+            <option value="reject">Reject</option>
+            <option value="needs_more_data">Needs more data</option>
+          </select>
+        </label>
+        <label className="grid gap-1 text-xs font-medium text-slate-300">
+          <span>Minimum confidence</span>
+          <input
+            className="focus-ring rounded-md border border-line bg-fog px-3 py-2 text-sm text-ink"
+            type="number"
+            min={0}
+            max={100}
+            value={minimumConfidence}
+            onChange={(event) => setMinimumConfidence(event.target.value)}
+          />
+        </label>
+        <label className="grid gap-1 text-xs font-medium text-slate-300">
+          <span>Created on or after</span>
+          <input
+            className="focus-ring rounded-md border border-line bg-fog px-3 py-2 text-sm text-ink"
+            type="date"
+            value={fromDate}
+            onChange={(event) => setFromDate(event.target.value)}
+          />
+        </label>
+      </div>
       <div className="mt-4 overflow-hidden rounded-lg border border-line bg-paper">
-        <div className="grid grid-cols-[1.4fr_0.7fr_0.7fr_0.5fr] border-b border-line bg-fog px-3 py-2 text-xs font-semibold uppercase tracking-wide text-slate-500 max-md:hidden">
+        <div className="grid grid-cols-[1.6fr_0.8fr_0.7fr_0.6fr_0.6fr] border-b border-line bg-fog px-3 py-2 text-xs font-semibold uppercase tracking-wide text-slate-500 max-md:hidden">
           <span>Review</span>
           <span>Decision</span>
+          <span>Created</span>
           <span>Follow-up</span>
-          <span>Trial</span>
+          <span>Confidence</span>
         </div>
-        {reviews.map((review) => (
-          <button key={review.id} onClick={() => onSelectReview(review.id)} className="focus-ring grid w-full grid-cols-[1.4fr_0.7fr_0.7fr_0.5fr] gap-3 border-b border-line px-3 py-3 text-left text-sm last:border-b-0 hover:bg-teal/5 max-md:grid-cols-1">
+        {filteredReviews.length === 0 ? (
+          <div className="px-3 py-6 text-sm text-slate-400">No reports match the current filters.</div>
+        ) : null}
+        {filteredReviews.map((review) => (
+          <button key={review.id} onClick={() => onSelectReview(review.id)} className="focus-ring grid w-full grid-cols-[1.6fr_0.8fr_0.7fr_0.6fr_0.6fr] gap-3 border-b border-line px-3 py-3 text-left text-sm last:border-b-0 hover:bg-teal/5 max-md:grid-cols-1">
             <span>
               <span className="block font-medium text-ink">{review.title}</span>
               <span className="text-xs text-slate-500">{review.assetClass} · {review.timeHorizon}</span>
             </span>
             <span>{review.decisionState ? <Badge tone={review.decisionState === "reject" || review.decisionState === "needs_more_data" ? "warn" : "good"}>{decisionLabels[review.decisionState]}</Badge> : <Badge tone="neutral">Pending</Badge>}</span>
+            <span className="text-slate-300">{review.createdAt.slice(0, 10)}</span>
             <span className="text-slate-300">{review.followUpDate}</span>
-            <span className="font-semibold text-violet">+{review.trialCountImpact}</span>
+            <span className="font-semibold text-violet">{review.confidence}%</span>
           </button>
         ))}
       </div>

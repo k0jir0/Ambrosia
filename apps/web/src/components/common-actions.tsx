@@ -1,74 +1,53 @@
 "use client";
 
 import type { ComponentType } from "react";
-import { Activity, BarChart3, FileJson, RefreshCw, TrendingUp, AlertCircle, Plus, Sparkles, FileText, Clock, Shield, LogOut } from "lucide-react";
+import { BarChart3, FileJson, RefreshCw, BrainCircuit, Plus, FolderOpen, Shield, LogOut } from "lucide-react";
 
 interface CommonActionsProps {
-  onNewPacket: () => void;
-  onGenerateThesis: () => void;
-  onIngestAlert: () => void;
+  onNewReview: () => void;
+  onOpenExistingReview: () => void;
   onRefreshMetrics: () => void;
-  onViewTechnicals: () => void;
-  onViewSentiment: () => void;
-  onCompareMarkets: () => void;
+  onRunAgentSwarm: () => void;
   onPrepareBacktest: () => void;
-  onRunBacktest: () => void;
+  onEvaluateRisk: () => void;
+  onDeriveConfidence: () => void;
   onRecordDecision: () => void;
-  onSetFollowUp: () => void;
-  onViewRisks: () => void;
-  onExportReport: () => void;
   disabled?: boolean;
 }
 
 export function CommonActionsBar({
-  onNewPacket,
-  onGenerateThesis,
-  onIngestAlert,
+  onNewReview,
+  onOpenExistingReview,
   onRefreshMetrics,
-  onViewTechnicals,
-  onViewSentiment,
-  onCompareMarkets,
+  onRunAgentSwarm,
   onPrepareBacktest,
-  onRunBacktest,
+  onEvaluateRisk,
+  onDeriveConfidence,
   onRecordDecision,
-  onSetFollowUp,
-  onViewRisks,
-  onExportReport,
   disabled = false,
 }: CommonActionsProps) {
   return (
     <div className="space-y-3 rounded-lg border border-line bg-paper p-4">
-      <div className="text-xs font-semibold uppercase tracking-wider text-slate-300">Common Actions</div>
+      <div className="text-xs font-semibold uppercase tracking-wider text-slate-300">Core Actions</div>
       <p className="text-sm leading-5 text-slate-400">
-        These buttons run the daily workflow: create a packet, pull market context, check risk, prepare validation, and record the final human decision.
+        The first-minute operator workflow: open or start a case, enrich it, pressure-test it, and record the human decision.
       </p>
       
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
-        {/* Core workflow */}
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4">
         <ActionButton 
           icon={Plus} 
-          label="New Packet" 
-          onClick={onNewPacket}
+          label="New Review" 
+          onClick={onNewReview}
           disabled={disabled}
-          tooltip="Create a new decision packet"
+          tooltip="Create a new review case"
         />
         <ActionButton 
-          icon={Sparkles} 
-          label="Seed Thesis" 
-          onClick={onGenerateThesis}
+          icon={FolderOpen} 
+          label="Open Existing" 
+          onClick={onOpenExistingReview}
           disabled={disabled}
-          variant="secondary"
-          tooltip="AI-assisted thesis generation"
+          tooltip="Browse and open a stored review"
         />
-        <ActionButton 
-          icon={AlertCircle} 
-          label="Ingest Alert" 
-          onClick={onIngestAlert}
-          disabled={disabled}
-          tooltip="Intake TradingView or manual alert"
-        />
-
-        {/* Market & Technicals */}
         <ActionButton 
           icon={RefreshCw} 
           label="Refresh Metrics" 
@@ -77,45 +56,34 @@ export function CommonActionsBar({
           tooltip="Update market data and indicators"
         />
         <ActionButton 
-          icon={BarChart3} 
-          label="View Technicals" 
-          onClick={onViewTechnicals}
+          icon={BrainCircuit} 
+          label="Run Agent Swarm" 
+          onClick={onRunAgentSwarm}
           disabled={disabled}
-          tooltip="Display RSI, MACD, moving averages"
+          tooltip="Run specialist coordinator and synthesis"
         />
-        <ActionButton 
-          icon={TrendingUp} 
-          label="View Sentiment" 
-          onClick={onViewSentiment}
-          disabled={disabled}
-          tooltip="View market and news sentiment"
-        />
-        <ActionButton 
-          icon={Activity} 
-          label="Compare Markets" 
-          onClick={onCompareMarkets}
-          disabled={disabled}
-          tooltip="Analyze correlations and inter-market context"
-        />
-
-        {/* Backtesting & Validation */}
         <ActionButton 
           icon={FileJson} 
           label="Prepare Backtest" 
           onClick={onPrepareBacktest}
           disabled={disabled}
-          tooltip="Define backtest parameters and rules"
+          tooltip="Define validation and test gates"
         />
         <ActionButton 
-          icon={TrendingUp} 
-          label="Run Backtest" 
-          onClick={onRunBacktest}
+          icon={Shield} 
+          label="Evaluate Risk" 
+          onClick={onEvaluateRisk}
+          disabled={disabled}
+          tooltip="Run risk monitor against packet context"
+        />
+        <ActionButton 
+          icon={BarChart3} 
+          label="Derive Confidence" 
+          onClick={onDeriveConfidence}
           disabled={disabled}
           variant="secondary"
-          tooltip="Execute controlled backtest if eligible"
+          tooltip="Compute confidence from current evidence"
         />
-
-        {/* Decision & Risk */}
         <ActionButton 
           icon={LogOut} 
           label="Record Decision" 
@@ -123,29 +91,6 @@ export function CommonActionsBar({
           disabled={disabled}
           variant="accent"
           tooltip="Capture pursuit, watch, reject, or defer"
-        />
-        <ActionButton 
-          icon={Shield} 
-          label="View Risks" 
-          onClick={onViewRisks}
-          disabled={disabled}
-          tooltip="Monitor portfolio and position risks"
-        />
-
-        {/* Follow-up & Export */}
-        <ActionButton 
-          icon={Clock} 
-          label="Set Follow-Up" 
-          onClick={onSetFollowUp}
-          disabled={disabled}
-          tooltip="Schedule review or trigger reminder"
-        />
-        <ActionButton 
-          icon={FileText} 
-          label="Export Report" 
-          onClick={onExportReport}
-          disabled={disabled}
-          tooltip="Generate PDF or markdown report"
         />
       </div>
 

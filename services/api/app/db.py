@@ -157,3 +157,25 @@ class PostgresPacketStore:
                     """,
                     (packet_id, metric_type, json.dumps(metric_payload)),
                 )
+
+    def add_outcome_record(self, packet_id: str, outcome: str, outcome_date: str, payload: dict) -> None:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    INSERT INTO outcome_record (packet_id, outcome, outcome_date, payload)
+                    VALUES (%s, %s, %s, %s::jsonb)
+                    """,
+                    (packet_id, outcome, outcome_date, json.dumps(payload)),
+                )
+
+    def add_retrieval_event(self, packet_id: str, query_text: str, result_count: int, payload: dict) -> None:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    INSERT INTO retrieval_event (packet_id, query_text, result_count, payload)
+                    VALUES (%s, %s, %s, %s::jsonb)
+                    """,
+                    (packet_id, query_text, result_count, json.dumps(payload)),
+                )

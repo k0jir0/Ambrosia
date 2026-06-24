@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import os
 from datetime import datetime
+from uuid import uuid4
 
 from .models import (
     AuditEvent,
@@ -12,6 +13,7 @@ from .models import (
     OutcomeUpdate,
     ReviewStatus,
     TradeReview,
+    AlertQueueRecord,
 )
 from .db import PacketQuery, PostgresPacketStore
 
@@ -22,6 +24,7 @@ class ReviewStore:
     def __init__(self) -> None:
         self._reviews: dict[str, TradeReview] = {}
         self._packets: dict[str, DecisionPacket] = {}
+        self._alerts: list[AlertQueueRecord] = []
         self._trial_count = 0
         self._db_enabled = False
         self._packet_db: PostgresPacketStore | None = None
@@ -193,6 +196,46 @@ class ReviewStore:
                 self._packet_db.add_metric_snapshot(packet_id, metric_type, metric_payload)
             except Exception as exc:  # pragma: no cover - environment dependent
                 self._disable_db(exc)
+
+    def record_packet_outcome(self, packet_id: str, outcome: str, outcome_date: str, payload: dict) -> None:
+        if self._db_enabled and self._packet_db is not None:
+            try:
+                self._packet_db.add_outcome_record(packet_id, outcome, outcome_date, payload)
+            except Exception as exc:  # pragma: no cover - environment dependent
+                self._disable_db(exc)
+
+    def record_retrieval_event(self, packet_id: str, query_text: str, result_count: int, payload: dict) -> None:
+        if self._db_enabled and self._packet_db is not None:
+            try:
+                self._packet_db.add_retrieval_event(packet_id, query_text, result_count, payload)
+            except Exception as exc:  # pragma: no cover - environment dependent
+                self._disable_db(exc)
+
+    def enqueue_alert(
+        self,
+        source: str,
+        symbol: str,
+        message: str,
+        payload: dict[str, object],
+        signature_verified: bool,
+        prompt_injection_detected: bool,
+    ) -> AlertQueueRecord:
+        alert = AlertQueueRecord(
+            id=f"alert-{uuid4().hex[:10]}",
+            source=source,
+            symbol=symbol,
+            message=message,
+            receivedAt=datetime.now().isoformat(),
+            signatureVerified=signature_verified,
+            promptInjectionDetected=prompt_injection_detected,
+            payload=payload,
+        )
+        self._alerts.insert(0, alert)
+        self._alerts = self._alerts[:200]
+        return alert
+
+    def list_alerts(self) -> list[AlertQueueRecord]:
+        return list(self._alerts)
 
 
 store = ReviewStore()

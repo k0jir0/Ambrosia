@@ -288,3 +288,88 @@ class DecisionUpdate(BaseModel):
 class OutcomeUpdate(BaseModel):
     outcome: str
     outcome_date: str
+
+
+class AlertQueueRecord(BaseModel):
+    id: str
+    source: str
+    symbol: str
+    message: str
+    receivedAt: str
+    signatureVerified: bool
+    promptInjectionDetected: bool
+    payload: dict[str, object]
+
+
+class AgentRunRequest(BaseModel):
+    providerMode: Literal["deterministic", "ollama", "hosted", "hybrid"] = "deterministic"
+
+
+class ToolBoundary(BaseModel):
+    name: str
+    description: str
+    mode: Literal["internal", "mcp-compatible"]
+
+
+class BacktestPrepareRequest(BaseModel):
+    lookbackPeriod: int = 252
+    holdingPeriodDays: int = 10
+    riskConstraints: list[str] = []
+
+
+class BacktestRunRequest(BaseModel):
+    forceRun: bool = False
+
+
+class RiskEvaluateRequest(BaseModel):
+    activePositionSize: float = 0.0
+    maxDrawdownThreshold: float = 0.12
+
+
+class PacketOutcomeUpdate(BaseModel):
+    outcome: str
+    outcome_date: str
+    pnl: float | None = None
+    notes: str | None = None
+
+
+class PortfolioContextUpdate(BaseModel):
+    grossExposure: float
+    netExposure: float
+    longExposure: float
+    shortExposure: float
+    concentrationBySector: dict[str, float] = {}
+    concentrationByFactor: dict[str, float] = {}
+    relatedPositions: list[str] = []
+    factorOverlap: list[str] = []
+    riskBudgetRemaining: float = 0.0
+    sizingConstraints: list[str] = []
+
+
+class ConfidenceDeriveRequest(BaseModel):
+    evidenceScore: int | None = None
+    technicalScore: int | None = None
+    sentimentScore: int | None = None
+    interMarketScore: int | None = None
+    validationScore: int | None = None
+    tradeabilityScore: int | None = None
+    blockers: list[str] = []
+
+
+class RetrievalRequest(BaseModel):
+    query: str = Field(min_length=3)
+    topK: int = Field(default=5, ge=1, le=20)
+
+
+class RetrievalHit(BaseModel):
+    kind: Literal["prior_review", "packet_source"]
+    id: str
+    title: str
+    snippet: str
+    score: float = Field(ge=0, le=1)
+
+
+class RetrievalResponse(BaseModel):
+    packetId: str
+    query: str
+    results: list[RetrievalHit]

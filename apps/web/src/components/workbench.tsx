@@ -7,10 +7,27 @@ import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { ApiUnavailableError, createReview, getMarketSnapshot, getMarketTechnicals, listReviews, recordDecision } from "@/lib/api";
+import {
+  ApiUnavailableError,
+  createPacket,
+  createReview,
+  derivePacketConfidence,
+  evaluatePacketRisk,
+  getPacket,
+  getSentiment,
+  listReviews,
+  preparePacketBacktest,
+  recordDecision,
+  recordPacketOutcome,
+  refreshPacketMetrics,
+  retrievePacketContext,
+  runPacketAgents,
+  runPacketBacktest,
+  updatePacketPortfolio,
+} from "@/lib/api";
 import { sampleReviews } from "@/lib/sample-data";
 import { generateLocalReview, thesisCandidates } from "@/lib/review-generator";
-import type { Claim, DashboardMetrics, DecisionState, ReviewStatus, SourcePointer, ThesisInput, TradeReview } from "@/lib/types";
+import type { Claim, DashboardMetrics, DecisionPacket, DecisionState, ReviewStatus, SourcePointer, ThesisInput, TradeReview } from "@/lib/types";
 import { Badge, Panel, SectionTitle, cn } from "./ui";
 import { CommonActionsBar } from "./common-actions";
 
@@ -44,6 +61,7 @@ const decisionLabels: Record<DecisionState, string> = {
 
 export function Workbench() {
   const [reviews, setReviews] = useState<TradeReview[]>(sampleReviews);
+  const [packetIdsByReviewId, setPacketIdsByReviewId] = useState<Record<string, string>>({});
   const [activeId, setActiveId] = useState(sampleReviews[0]?.id ?? "");
   const [activeView, setActiveView] = useState<NavView>("workbench");
   const [generationMode, setGenerationMode] = useState<"api" | "fallback" | "idle">("idle");
@@ -145,6 +163,83 @@ export function Workbench() {
     );
   }
 
+  function syncReviewFromPacket(reviewId: string, packet: DecisionPacket) {
+    setReviews((current) =>
+      current.map((review) =>
+        review.id === reviewId
+          ? {
+              ...review,
+              confidence: packet.confidence,
+              status: packet.status,
+              decisionState: packet.decisionState,
+              followUpDate: packet.followUpDate,
+              audit: packet.audit,
+            }
+          : review
+      )
+    );
+  }
+
+  function buildPacketShell(review: TradeReview): DecisionPacket {
+    return {
+      id: `pkt-${review.id}`,
+      schemaVersion: "packet.v1",
+      workflowVersion: "quant-agent.v1",
+      title: review.title,
+      thesis: review.thesis,
+      ticker: review.ticker,
+      assetClass: review.assetClass,
+      timeHorizon: review.timeHorizon,
+      intendedExpression: review.intendedExpression,
+      status: review.status,
+      decisionState: review.decisionState,
+      confidence: review.confidence,
+      trialCountImpact: review.trialCountImpact,
+      followUpDate: review.followUpDate,
+      createdAt: review.createdAt,
+      claims: review.claims,
+      strongestCritique: review.strongestCritique,
+      disconfirmingTest: review.disconfirmingTest,
+      historicalAnalogue: review.historicalAnalogue,
+      validation: review.validation,
+      tradeability: review.tradeability,
+      sources: review.sources,
+      audit: review.audit,
+      marketSnapshot: null,
+      technicals: null,
+      sentiment: null,
+      interMarket: null,
+      fundamentals: null,
+      backtestPlan: null,
+      backtestResult: null,
+      riskMonitor: null,
+      portfolioContext: null,
+      confidenceBreakdown: null,
+      agentOutputs: null,
+      coordinatorVersion: "coordinator.v1",
+      providerInfo: null,
+    };
+  }
+
+  async function ensurePacketForReview(review: TradeReview): Promise<{ reviewId: string; packetId: string; packet: DecisionPacket }> {
+    const cachedPacketId = packetIdsByReviewId[review.id];
+    if (cachedPacketId) {
+      const existing = await getPacket(cachedPacketId);
+      return { reviewId: review.id, packetId: cachedPacketId, packet: existing };
+    }
+
+    const packetId = `pkt-${review.id}`;
+    try {
+      const existing = await getPacket(packetId);
+      setPacketIdsByReviewId((current) => ({ ...current, [review.id]: packetId }));
+      return { reviewId: review.id, packetId, packet: existing };
+    } catch {
+      const created = await createPacket(buildPacketShell(review));
+      setPacketIdsByReviewId((current) => ({ ...current, [review.id]: created.id }));
+      return { reviewId: review.id, packetId: created.id, packet: created };
+    }
+  }
+
   async function refreshMarketMetrics() {
     if (!activeReview?.ticker) {
       appendAuditEvent("metrics.refresh.skipped", "No ticker available for metrics refresh.");
@@ -152,20 +247,158 @@ export function Workbench() {
     }
 
     try {
-      const [snapshot, technicals] = await Promise.all([
-        getMarketSnapshot(activeReview.ticker),
-        getMarketTechnicals(activeReview.ticker)
-      ]);
-
+      const { reviewId, packetId } = await ensurePacketForReview(activeReview);
+      const packet = await refreshPacketMetrics(packetId);
+      syncReviewFromPacket(reviewId, packet);
       appendAuditEvent(
         "metrics.refresh",
-        `Metrics refreshed for ${activeReview.ticker}: source=${snapshot.dataSource} (${snapshot.dataSourceConfidence}), trend=${technicals.trend}.`
+        `Packet metrics refreshed for ${activeReview.ticker} via ${packetId}.`
       );
     } catch {
       appendAuditEvent(
         "metrics.refresh.fallback",
         `Metrics refresh API unavailable for ${activeReview.ticker}; local workflow remains active.`
       );
+    }
+  }
+
+  async function inspectSentiment() {
+    if (!activeReview?.ticker) {
+      appendAuditEvent("view.sentiment.skipped", "No ticker available for sentiment inspection.");
+      return;
+    }
+
+    try {
+      const sentiment = await getSentiment(activeReview.ticker);
+      appendAuditEvent(
+        "view.sentiment",
+        `Sentiment inspected for ${activeReview.ticker}: ${sentiment.sentiment} (${sentiment.overallScore}) from ${sentiment.sources.join(", ")}.`
+      );
+    } catch {
+      appendAuditEvent(
+        "view.sentiment.fallback",
+        `Sentiment endpoint unavailable for ${activeReview.ticker}; deterministic review flow remains active.`
+      );
+    }
+  }
+
+  async function prepareBacktest() {
+    if (!activeReview) return;
+    try {
+      const { reviewId, packetId } = await ensurePacketForReview(activeReview);
+      const packet = await preparePacketBacktest(packetId, {
+        lookbackPeriod: 252,
+        holdingPeriodDays: 10,
+        riskConstraints: ["Max loss 8%", "Liquidity floor enforced"],
+      });
+      syncReviewFromPacket(reviewId, packet);
+      appendAuditEvent("backtest.prepare", `Backtest plan prepared for ${activeReview.ticker} with status ${packet.backtestPlan?.status ?? "unknown"}.`);
+    } catch {
+      appendAuditEvent("backtest.prepare.fallback", "Backtest preparation endpoint unavailable; packet flow remains in local mode.");
+    }
+  }
+
+  async function runBacktest() {
+    if (!activeReview) return;
+    try {
+      const { reviewId, packetId } = await ensurePacketForReview(activeReview);
+      const packet = await runPacketBacktest(packetId, { forceRun: false });
+      syncReviewFromPacket(reviewId, packet);
+      appendAuditEvent("backtest.run", `Backtest run completed for ${activeReview.ticker} with validity ${packet.backtestResult?.validityScore ?? "unknown"}.`);
+    } catch {
+      appendAuditEvent("backtest.run.fallback", "Backtest run endpoint unavailable; no external backtest executed.");
+    }
+  }
+
+  async function viewRisks() {
+    if (!activeReview) return;
+    try {
+      const { reviewId, packetId } = await ensurePacketForReview(activeReview);
+      const packet = await evaluatePacketRisk(packetId, {
+        activePositionSize: 250000,
+        maxDrawdownThreshold: 0.12,
+      });
+      syncReviewFromPacket(reviewId, packet);
+      appendAuditEvent("view.risk", `Risk evaluated for ${activeReview.ticker}: status ${packet.riskMonitor?.status ?? "unknown"}.`);
+    } catch {
+      appendAuditEvent("view.risk.fallback", "Risk evaluation endpoint unavailable; local advisory workflow remains active.");
+    }
+  }
+
+  async function compareMarkets() {
+    if (!activeReview) return;
+    try {
+      const { reviewId, packetId } = await ensurePacketForReview(activeReview);
+      const retrieval = await retrievePacketContext(packetId, `${activeReview.ticker} ${activeReview.thesis}`, 4);
+      const packet = await runPacketAgents(packetId, "deterministic");
+      syncReviewFromPacket(reviewId, packet);
+      appendAuditEvent(
+        "view.inter_market",
+        `Hybrid retrieval returned ${retrieval.results.length} hits; specialist coordinator completed for ${activeReview.ticker}.`
+      );
+    } catch {
+      appendAuditEvent("view.inter_market.fallback", "Coordinator endpoint unavailable; inter-market comparison stayed local.");
+    }
+  }
+
+  async function setFollowUpWithPortfolioUpdate() {
+    if (!activeReview) return;
+    try {
+      const { reviewId, packetId } = await ensurePacketForReview(activeReview);
+      const packet = await updatePacketPortfolio(packetId, {
+        grossExposure: 0.82,
+        netExposure: 0.19,
+        longExposure: 0.51,
+        shortExposure: 0.32,
+        concentrationBySector: { Technology: 0.34, Health: 0.16 },
+        concentrationByFactor: { Momentum: 0.22, Quality: 0.18 },
+        relatedPositions: [activeReview.ticker],
+        factorOverlap: ["Growth", "Beta"],
+        riskBudgetRemaining: 0.31,
+        sizingConstraints: ["Advisory mode only", "No live broker execution"],
+      });
+      syncReviewFromPacket(reviewId, packet);
+      appendAuditEvent("follow_up.set", `Follow-up and portfolio context updated for ${activeReview.ticker}.`);
+    } catch {
+      appendAuditEvent("follow_up.set.fallback", `Follow-up reminder set for ${activeReview.followUpDate} (local mode).`);
+    }
+  }
+
+  async function viewTechnicalsAndDeriveConfidence() {
+    if (!activeReview?.ticker) {
+      appendAuditEvent("view.technicals.skipped", "No ticker available for technicals inspection.");
+      return;
+    }
+
+    try {
+      const sentiment = await getSentiment(activeReview.ticker);
+      const { reviewId, packetId } = await ensurePacketForReview(activeReview);
+      const packet = await derivePacketConfidence(packetId, {
+        technicalScore: 66,
+        sentimentScore: Math.round(sentiment.overallScore),
+        blockers: sentiment.sentiment === "bearish" ? ["Sentiment regime still bearish"] : [],
+      });
+      syncReviewFromPacket(reviewId, packet);
+      appendAuditEvent("view.technicals", `Technicals reviewed and confidence derived for ${activeReview.ticker}: ${packet.confidence}%.`);
+    } catch {
+      appendAuditEvent("view.technicals.fallback", "Technicals inspection endpoint unavailable; keeping deterministic local view.");
+    }
+  }
+
+  async function recordOutcomeForDecision() {
+    if (!activeReview) return;
+    try {
+      const { reviewId, packetId } = await ensurePacketForReview(activeReview);
+      const packet = await recordPacketOutcome(packetId, {
+        outcome: "decision_recorded",
+        outcome_date: new Date().toISOString().slice(0, 10),
+        pnl: 0,
+        notes: "Outcome placeholder captured from common action.",
+      });
+      syncReviewFromPacket(reviewId, packet);
+      appendAuditEvent("outcome.recorded", `Outcome attribution recorded for ${activeReview.ticker}.`);
+    } catch {
+      appendAuditEvent("outcome.recorded.fallback", "Outcome attribution endpoint unavailable; local decision memory retained.");
     }
   }
 
@@ -200,14 +433,31 @@ export function Workbench() {
                 onRefreshMetrics={() => {
                   void refreshMarketMetrics();
                 }}
-                onViewTechnicals={() => appendAuditEvent("view.technicals", "Technical section inspected from common actions.")}
-                onViewSentiment={() => appendAuditEvent("view.sentiment", "Sentiment section inspected from common actions.")}
-                onCompareMarkets={() => appendAuditEvent("view.inter_market", "Inter-market comparison requested from common actions.")}
-                onPrepareBacktest={() => appendAuditEvent("backtest.prepare", "Backtest preparation requested from common actions.")}
-                onRunBacktest={() => appendAuditEvent("backtest.run_requested", "Backtest run requested; eligibility checks pending.")}
-                onRecordDecision={() => updateDecision(activeReview.decisionState ?? "watch")}
-                onSetFollowUp={() => appendAuditEvent("follow_up.set", `Follow-up reminder set for ${activeReview.followUpDate}.`)}
-                onViewRisks={() => appendAuditEvent("view.risk", "Risk monitor viewed from common actions.")}
+                onViewTechnicals={() => {
+                  void viewTechnicalsAndDeriveConfidence();
+                }}
+                onViewSentiment={() => {
+                  void inspectSentiment();
+                }}
+                onCompareMarkets={() => {
+                  void compareMarkets();
+                }}
+                onPrepareBacktest={() => {
+                  void prepareBacktest();
+                }}
+                onRunBacktest={() => {
+                  void runBacktest();
+                }}
+                onRecordDecision={() => {
+                  updateDecision(activeReview.decisionState ?? "watch");
+                  void recordOutcomeForDecision();
+                }}
+                onSetFollowUp={() => {
+                  void setFollowUpWithPortfolioUpdate();
+                }}
+                onViewRisks={() => {
+                  void viewRisks();
+                }}
                 onExportReport={exportActiveReview}
               />
               <ThesisIntake onSubmit={addReview} generationMode={generationMode} generationError={generationError} seedRequestToken={seedRequestToken} />

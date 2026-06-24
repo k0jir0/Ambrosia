@@ -21,7 +21,7 @@ export function DecisionPacketUI({ packet }: DecisionPacketUIProps) {
               <Badge>{packet.ticker}</Badge>
               <Badge>{packet.assetClass}</Badge>
               <Badge>{packet.timeHorizon}</Badge>
-              <Badge variant="secondary">{packet.intendedExpression}</Badge>
+              <Badge tone="neutral">{packet.intendedExpression}</Badge>
             </div>
           </div>
           <div className="text-right">
@@ -219,7 +219,7 @@ export function DecisionPacketUI({ packet }: DecisionPacketUIProps) {
               <div className="space-y-2">
                 <div className="flex justify-between items-center">
                   <span className="text-sm text-secondary">Status</span>
-                  <Badge variant={packet.backtestPlan.status === 'eligible' ? 'primary' : 'secondary'}>
+                  <Badge tone={packet.backtestPlan.status === 'eligible' ? 'good' : 'neutral'}>
                     {packet.backtestPlan.status.toUpperCase()}
                   </Badge>
                 </div>

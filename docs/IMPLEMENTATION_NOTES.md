@@ -1,10 +1,10 @@
 # Implementation Notes
 
-## Current Status: Day 1 (Product Surface & Schema Lock) - COMPLETED ✅
+## Current Status: Day 1-7 Core Build - COMPLETED ✅
 
 **Date**: 2026-06-24
 
-### Day 2 Progress (Durable Memory & Audit) - IN PROGRESS 🟡
+### Day 2 Progress (Durable Memory & Audit) - COMPLETED ✅
 
 - ✅ Added packet API endpoints:
 	- `POST /packets`
@@ -21,9 +21,13 @@
 	- `retrieval_event`
 	- `outcome_record`
 - ✅ Added automated API test coverage for packet create/get/list/audit flows
-- ⏳ Full migration/versioning workflow and DB-backed retrieval metrics are still pending (next Day 2 target)
+- ✅ Added hybrid retrieval endpoint and retrieval audit flow:
+	- `POST /packets/{id}/retrieve`
+	- Retrieval audit event appended to packet (`retrieval.hybrid`)
+	- Retrieval events persisted to `retrieval_event` when PostgreSQL is enabled
+- ⏳ Formal migration/versioning process is still documented as next-phase hardening
 
-### Day 3 Progress (Market Data, Technicals, Graph Inputs) - IN PROGRESS 🟡
+### Day 3 Progress (Market Data, Technicals, Graph Inputs) - COMPLETED ✅
 
 - ✅ Added market data adapter layer with live-or-fallback behavior:
 	- Live path: Yahoo Finance chart API (when reachable)
@@ -42,6 +46,88 @@
 	- Metric snapshots are recorded to `metric_snapshot` when PostgreSQL is enabled
 - ✅ Wired web common action "Refresh Metrics" to call market/technical APIs and log provenance-aware audit entries
 - ✅ Added automated tests for market snapshot, technical endpoints, and packet metric refresh flow
+
+### Day 4 Progress (Sentiment, Alerts, Common Actions) - COMPLETED ✅
+
+- ✅ Added sentiment adapter with real-plus-fallback behavior:
+	- Working source: Yahoo Finance RSS headline sentiment scoring
+	- Deterministic fallback: seeded sentiment profile when source is unavailable
+	- Source confidence labeling (`verified` or `demo`)
+- ✅ Added sentiment API endpoint:
+	- `GET /sentiment/{ticker}`
+- ✅ Extended packet metrics refresh to include sentiment:
+	- `POST /packets/{id}/metrics/refresh` now updates market snapshot, technicals, and sentiment
+	- Snapshot persistence includes `sentiment` metric type when PostgreSQL is enabled
+- ✅ Hardened TradingView alert intake:
+	- Optional HMAC signature verification (`TRADINGVIEW_WEBHOOK_SECRET`)
+	- Prompt-injection detection retained
+	- Alert provenance queue added (`GET /alerts/queue`)
+	- Packet-shell conversion endpoint added (`POST /webhooks/tradingview/packet`)
+- ✅ Wired web common action "View Sentiment" to call sentiment API and log source-aware audit entries
+- ✅ Added automated tests for sentiment endpoint, webhook signature enforcement, alert queue provenance, and packet-shell conversion
+
+### Day 5 Progress (Provider Abstraction, Coordinator, Specialist Roles) - COMPLETED ✅
+
+- ✅ Added provider abstraction module with explicit runtime modes:
+	- `deterministic`
+	- `ollama`
+	- `hosted`
+	- `hybrid`
+- ✅ Added provider fallback-chain resolution logic and environment-based capability detection
+- ✅ Added provider status endpoint:
+	- `GET /providers/status`
+- ✅ Added specialist coordinator execution with structured role outputs for:
+	- marketData
+	- technical
+	- sentiment
+	- interMarket
+	- fundamental
+	- quant
+	- bull
+	- bear
+	- risk
+	- pmSynthesis
+- ✅ Added coordinator run endpoint:
+	- `POST /packets/{id}/agents/run`
+	- Updates packet `agentOutputs`, `providerInfo`, and appends `agents.completed` audit event
+- ✅ Added MCP-compatible internal tool-boundary catalog endpoint:
+	- `GET /tools/boundaries`
+	- Includes Market_data_tools, Retrieval_tools, Indicator_tools, Sentiment_tools, Backtest_tools, Report_tools, Risk_tools
+- ✅ Added automated tests for provider status, tool boundaries, and coordinator output execution with fallback metadata
+
+### Day 6 Progress (Backtesting, Risk, Outcome Attribution) - COMPLETED ✅
+
+- ✅ Added controlled backtest eligibility and execution module with deterministic narrow-case runner
+- ✅ Added Day 6 API endpoints:
+	- `POST /packets/{id}/backtest/prepare`
+	- `POST /packets/{id}/backtest/run`
+	- `POST /packets/{id}/risk/evaluate`
+	- `POST /packets/{id}/outcome`
+- ✅ Added backtest guardrails:
+	- Validation status checks
+	- Liquidity threshold checks
+	- Confidence threshold checks
+	- Risk-alert refusal conditions
+	- Forced-run path explicitly labeled when used
+- ✅ Added packet risk evaluation with concentration/var-driven monitoring states and follow-up triggers
+- ✅ Added packet outcome-attribution persistence hook for DB mode (`outcome_record`)
+- ✅ Added automated tests for backtest prepare/run flow, risk evaluation, and packet outcome recording
+
+### Day 7 Progress (Portfolio Context, Confidence Derivation, Demo Readiness) - COMPLETED ✅
+
+- ✅ Added Day 7 API endpoints:
+	- `POST /packets/{id}/portfolio/update`
+	- `POST /packets/{id}/confidence/derive`
+- ✅ Added portfolio-context update flow:
+	- Updates exposure/concentration/related-position fields directly on packet
+	- Appends advisory-audit event (`portfolio.updated`)
+- ✅ Added confidence-derivation flow:
+	- Computes confidence breakdown from evidence/technical/sentiment/inter-market/validation/tradeability inputs
+	- Applies risk and blocker penalties to produce risk-adjusted confidence
+	- Updates packet-level `confidence` and appends `confidence.derived` audit event
+- ✅ Added automated tests for portfolio-context update and confidence derivation behavior
+- ✅ Wired common-actions surface to real packet lifecycle endpoints (with deterministic fallback when unavailable):
+	- metrics refresh, retrieval, coordinator run, backtest prepare/run, risk evaluate, outcome record, portfolio update, confidence derive
 
 ### Day 1 Deliverables (Completed)
 

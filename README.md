@@ -1,6 +1,12 @@
 # Ambrosia
 
-Ambrosia is a quant workflow agent for pre-trade adversarial review. It structures and pressure-tests investment theses by integrating market data, technical analysis, sentiment, backtesting, and risk monitoring, all while keeping human decision authority explicit and auditable.
+Ambrosia is a quant workflow agent for investment decisioning. It structures and pressure-tests investment theses by integrating market data, technical analysis, sentiment, backtesting, and risk monitoring, all while keeping human decision authority explicit and auditable.
+
+Ambrosia is presented across three integrated product surfaces:
+
+- Decisions: agentic AI for investment trading decisions through structured decision packets
+- Swarm Private: specialist multi-agent collaboration with explicit coordinator routing
+- Enterprise Agentic Swarm Marketplace: governance and MCP-compatible tool-boundary scaffolding for serverized deployment
 
 ## What It Does
 
@@ -21,7 +27,7 @@ Most investment workflows are optimized for idea generation, not idea validation
 
 ## Current Status
 
-The MVP is live as a working monorepo with a Next.js workbench and a FastAPI backend. The frontend supports API-backed review creation and deterministic local fallback when the backend is unavailable.
+The seven-day core roadmap is implemented in a working monorepo with a Next.js workbench and a FastAPI backend. The frontend supports API-backed packet actions with deterministic local fallback when the backend is unavailable.
 
 Live deployment:
 
@@ -103,11 +109,11 @@ pnpm test:stack
 
 ## Roadmap
 
-1. Replace in-memory API storage with PostgreSQL persistence.
-2. Add pgvector retrieval over reviews, notes, and source pointers.
-3. Add workflow orchestration behind the existing API contract.
-4. Add model-provider integration for richer adversarial critique.
-5. Promote evals into CI.
+1. Formalize migration/versioning automation and pgvector ranking strategies.
+2. Add richer graph verification and investor-demo screenshot capture automation.
+3. Expand provider ablations and eval reporting in CI.
+4. Add multi-user governance and permission layers for enterprise rollout.
+5. Advance post-Day-7 roadmap: broker sandbox, advanced factor attribution, and mobile alerts.
 
 ## Repository
 

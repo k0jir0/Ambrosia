@@ -236,11 +236,11 @@ export interface DecisionPacket extends TradeReview {
   sentiment: SentimentData | null;
   interMarket: InterMarketContext | null;
   fundamentals: FundamentalContext | null;
-  backtestPlan: BacktestPlan;
+  backtestPlan: BacktestPlan | null;
   backtestResult: BacktestResult | null;
   riskMonitor: RiskMonitor | null;
   portfolioContext: PortfolioContext | null;
-  confidenceBreakdown: ConfidenceComponents;
+  confidenceBreakdown: ConfidenceComponents | null;
   
   // Agent specialist outputs
   agentOutputs: {
@@ -254,7 +254,7 @@ export interface DecisionPacket extends TradeReview {
     bear: SpecialistAgentOutput | null;
     risk: SpecialistAgentOutput | null;
     pmSynthesis: SpecialistAgentOutput | null;
-  };
+  } | null;
   
   // Coordinator metadata
   coordinatorVersion: string;
@@ -262,5 +262,66 @@ export interface DecisionPacket extends TradeReview {
     name: string;
     type: "deterministic" | "ollama" | "hosted" | "hybrid";
     fallbackChain: string[];
-  };
+  } | null;
+}
+
+export type ProviderMode = "deterministic" | "ollama" | "hosted" | "hybrid";
+
+export interface BacktestPrepareRequest {
+  lookbackPeriod: number;
+  holdingPeriodDays: number;
+  riskConstraints: string[];
+}
+
+export interface BacktestRunRequest {
+  forceRun: boolean;
+}
+
+export interface RiskEvaluateRequest {
+  activePositionSize: number;
+  maxDrawdownThreshold: number;
+}
+
+export interface PacketOutcomeUpdate {
+  outcome: string;
+  outcome_date: string;
+  pnl?: number;
+  notes?: string;
+}
+
+export interface PortfolioContextUpdate {
+  grossExposure: number;
+  netExposure: number;
+  longExposure: number;
+  shortExposure: number;
+  concentrationBySector: Record<string, number>;
+  concentrationByFactor: Record<string, number>;
+  relatedPositions: string[];
+  factorOverlap: string[];
+  riskBudgetRemaining: number;
+  sizingConstraints: string[];
+}
+
+export interface ConfidenceDeriveRequest {
+  evidenceScore?: number;
+  technicalScore?: number;
+  sentimentScore?: number;
+  interMarketScore?: number;
+  validationScore?: number;
+  tradeabilityScore?: number;
+  blockers?: string[];
+}
+
+export interface RetrievalHit {
+  kind: "prior_review" | "packet_source";
+  id: string;
+  title: string;
+  snippet: string;
+  score: number;
+}
+
+export interface RetrievalResponse {
+  packetId: string;
+  query: string;
+  results: RetrievalHit[];
 }

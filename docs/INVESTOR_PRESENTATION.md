@@ -1,18 +1,24 @@
 # Ambrosia Investor Presentation
 
-As of June 23, 2026
+As of June 24, 2026
 
 ## Opening
 
-Ambrosia is a pre-trade adversarial review product.
+Ambrosia is an agent-native quant workflow platform for investment decisioning.
 
-Its purpose is simple: before an investor commits capital, Ambrosia forces the thesis through structured skepticism. It turns a raw idea into claims, assumptions, disconfirming tests, tradeability questions, validation requirements, and a recorded decision.
+The live product is framed across three integrated surfaces:
+
+- Decisions: structured decision-packet workflow for investment trading decisions
+- Swarm Private: specialist agent routing and synthesis for private workflows
+- Enterprise Agentic Swarm Marketplace: governance and tool-boundary scaffolding for controlled enterprise extensibility
+
+Its purpose is simple: before an investor commits capital, Ambrosia forces the thesis through structured skepticism and quant validation. It turns a raw idea into claims, assumptions, disconfirming tests, tradeability questions, retrieval context, validation requirements, risk monitoring, and a recorded decision.
 
 Most investment tools help people find more ideas. Ambrosia helps investors decide which ideas should not be traded yet. That is the wedge.
 
 ## Current State
 
-Ambrosia is now a working MVP.
+Ambrosia is now a working seven-day core build.
 
 The product has a Next.js workbench, a FastAPI backend, a deterministic review engine, schema-backed review artifacts, and a live deployment path on Render. The current app is designed around one core workflow: enter a thesis, generate an adversarial review, inspect the critique, and record the human decision.
 

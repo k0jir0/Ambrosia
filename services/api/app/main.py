@@ -287,7 +287,7 @@ def run_packet_agents(packet_id: str, body: AgentRunRequest) -> DecisionPacket:
         raise HTTPException(status_code=404, detail="Packet not found")
 
     selected_provider = resolve_provider(body.providerMode)
-    specialist_outputs = run_specialists(packet, selected_provider)
+    specialist_outputs, runtime_fallback_used = run_specialists(packet, selected_provider)
 
     updated_packet = packet.model_copy(
         update={
@@ -296,7 +296,7 @@ def run_packet_agents(packet_id: str, body: AgentRunRequest) -> DecisionPacket:
                 "name": selected_provider.name,
                 "type": selected_provider.provider_type,
                 "fallbackChain": selected_provider.fallback_chain,
-                "fallbackUsed": selected_provider.fallback_used,
+                "fallbackUsed": runtime_fallback_used,
                 "reason": selected_provider.reason,
             },
             "audit": [

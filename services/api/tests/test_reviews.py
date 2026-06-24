@@ -3,6 +3,7 @@ import hashlib
 import hmac
 import os
 
+from app import coordinator
 from app.main import app
 
 
@@ -321,6 +322,47 @@ def test_packet_agents_run_populates_specialist_outputs_with_provider_fallback()
     assert packet["providerInfo"]["name"] is not None
     assert "fallbackUsed" in packet["providerInfo"]
     assert any(event["eventType"] == "agents.completed" for event in packet["audit"])
+
+
+def test_packet_agents_run_deterministic_mode_reports_no_runtime_fallback() -> None:
+    packet_id = "packet-agents-deterministic"
+    create_response = client.post("/packets", json=_build_packet_payload(packet_id))
+    assert create_response.status_code == 200
+
+    run_response = client.post(
+        f"/packets/{packet_id}/agents/run",
+        json={"providerMode": "deterministic"},
+    )
+    assert run_response.status_code == 200
+    packet = run_response.json()
+    assert packet["providerInfo"]["name"] == "deterministic-engine"
+    assert packet["providerInfo"]["fallbackUsed"] is False
+    assert packet["agentOutputs"]["technical"]["fallbackUsed"] is False
+
+
+def test_packet_agents_run_hosted_failure_discloses_fallback(monkeypatch) -> None:
+    packet_id = "packet-agents-hosted-fallback"
+    create_response = client.post("/packets", json=_build_packet_payload(packet_id))
+    assert create_response.status_code == 200
+
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+
+    def _raise_runtime_error(_: str) -> str:
+        raise RuntimeError("simulated provider outage")
+
+    monkeypatch.setattr(coordinator, "_call_openai", _raise_runtime_error)
+
+    run_response = client.post(
+        f"/packets/{packet_id}/agents/run",
+        json={"providerMode": "hosted"},
+    )
+    assert run_response.status_code == 200
+    packet = run_response.json()
+    assert packet["providerInfo"]["name"] == "hosted-llm"
+    assert packet["providerInfo"]["type"] == "hosted"
+    assert packet["providerInfo"]["fallbackUsed"] is True
+    assert packet["agentOutputs"]["technical"]["provider"] == "deterministic-engine"
+    assert packet["agentOutputs"]["technical"]["fallbackUsed"] is True
 
 
 def test_backtest_prepare_and_run_flow_with_gates() -> None:

@@ -109,6 +109,7 @@ pnpm evals
 pnpm evals:ablation
 pnpm evals:retrieval
 pnpm db:migrations:check
+pnpm scorecard:check
 python scripts/synthetic-monitor.py --base-url https://ambrosia-api.onrender.com
 pnpm test:stack
 ```

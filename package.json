@@ -38,6 +38,7 @@
     "evals:ablation": "cd services/api && uv run python ../../packages/evals/run_provider_ablation.py",
     "evals:retrieval": "cd services/api && uv run python ../../packages/evals/run_retrieval_benchmark.py",
     "db:migrations:check": "python scripts/verify-migrations.py",
+    "scorecard:check": "cd services/api && uv run python ../../scripts/verify-scorecard-runtime.py",
     "synthetic:monitor": "python scripts/synthetic-monitor.py",
     "test:stack": "python -m unittest discover -s tests",
     "smoke:test": "python scripts/deploy-smoke-test.py",

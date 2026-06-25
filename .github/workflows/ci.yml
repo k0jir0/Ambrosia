@@ -198,13 +198,46 @@ jobs:
         run: python scripts/verify-migrations.py
 
   # -------------------------------------------------------------------------
+  # Gate 8: Scorecard runtime verification
+  # Ensures /metrics, /scorecard, and /health/detailed are coherent and complete.
+  # -------------------------------------------------------------------------
+  scorecard-runtime:
+    name: Scorecard runtime verification
+    runs-on: ubuntu-latest
+    needs: [api-tests]
+    defaults:
+      run:
+        working-directory: services/api
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Verify scorecard runtime contracts
+        run: uv run python ../../scripts/verify-scorecard-runtime.py
+
+      - name: Upload scorecard runtime artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: scorecard-runtime-report
+          path: artifacts/scorecard-runtime.*
+          if-no-files-found: error
+
+  # -------------------------------------------------------------------------
   # Deploy to STAGING (branch: staging only)
   # Triggers after all gates pass. Uses Render deploy hooks stored as secrets.
   # -------------------------------------------------------------------------
   deploy-staging:
     name: Deploy → Staging
     runs-on: ubuntu-latest
-    needs: [api-tests, web-build, stack-contract, visibility-proof, provider-ablation, retrieval-benchmark, migration-check]
+    needs: [api-tests, web-build, stack-contract, visibility-proof, provider-ablation, retrieval-benchmark, migration-check, scorecard-runtime]
     if: github.ref == 'refs/heads/staging' && github.event_name == 'push'
 
     steps:
@@ -235,7 +268,7 @@ jobs:
   deploy-production:
     name: Deploy → Production
     runs-on: ubuntu-latest
-    needs: [api-tests, web-build, stack-contract, visibility-proof, provider-ablation, retrieval-benchmark, migration-check]
+    needs: [api-tests, web-build, stack-contract, visibility-proof, provider-ablation, retrieval-benchmark, migration-check, scorecard-runtime]
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
 
     steps:

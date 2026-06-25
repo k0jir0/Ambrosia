@@ -163,8 +163,12 @@ def _originating_review_id_from_packet_id(packet_id: str) -> str | None:
 
 
 @app.get("/health")
-def health() -> dict[str, str]:
-    return {"status": "ok", "service": "ambrosia-api"}
+def health() -> dict:
+    return {
+        "status": "ok",
+        "service": "ambrosia-api",
+        "timestamp": datetime.now().isoformat()
+    }
 
 
 @app.get("/metrics")

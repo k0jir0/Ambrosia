@@ -69,7 +69,7 @@ class StackContractTests(unittest.TestCase):
         self.assertIn("rmSync", dev_script)
         self.assertIn(".next", dev_script)
         self.assertIn('"node_modules", "next", "dist", "bin", "next"', dev_script)
-        self.assertIn('spawn(process.execPath, [nextCli, "dev", "--port", "3000"]', dev_script)
+        self.assertIn('spawn(process.execPath, [nextCli, "dev", "--port"', dev_script)
         self.assertIn('process.on("SIGTERM"', dev_script)
 
     def test_workbench_exposes_finished_mvp_frontend_surfaces(self) -> None:

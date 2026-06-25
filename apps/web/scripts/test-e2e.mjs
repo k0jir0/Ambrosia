@@ -3,13 +3,14 @@ import { rmSync } from "node:fs";
 import { join } from "node:path";
 
 const root = process.cwd();
-const url = "http://127.0.0.1:3000";
+const port = process.env.AMBROSIA_E2E_PORT ?? "3100";
+const url = `http://127.0.0.1:${port}`;
 const nextCli = join(root, "node_modules", "next", "dist", "bin", "next");
 const playwrightCli = join(root, "node_modules", "@playwright", "test", "cli.js");
 
 rmSync(join(root, ".next"), { recursive: true, force: true });
 
-const server = spawn(process.execPath, [nextCli, "dev", "--port", "3000"], {
+const server = spawn(process.execPath, [nextCli, "dev", "--port", port], {
   cwd: root,
   stdio: "inherit"
 });
@@ -43,7 +44,11 @@ try {
   const result = spawnSync(process.execPath, [playwrightCli, "test"], {
     cwd: root,
     stdio: "inherit",
-    env: { ...process.env, PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1" }
+    env: {
+      ...process.env,
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1",
+      PLAYWRIGHT_BASE_URL: url
+    }
   });
   killServer();
   process.exit(result.status ?? 1);

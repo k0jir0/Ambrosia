@@ -1,77 +1,56 @@
 import { expect, test } from "@playwright/test";
 
-test("workbench opens directly into Trade Review", async ({ page }) => {
+test("dashboard is the default entry point", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByText("Ambrosia", { exact: true })).toBeVisible();
-  await expect(page.getByText("Pre-trade adversarial review")).toBeVisible();
-  await expect(page.getByText("Strongest critique")).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Decision state" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: /Good morning\./i })).toBeVisible();
+  await expect(page.getByText("Needs Your Attention")).toBeVisible();
+  await expect(page.getByText("Recent Reviews", { exact: true })).toBeVisible();
 });
 
-test("generated thesis can seed and create a review", async ({ page }) => {
-  await page.goto("/");
-  await page.getByRole("button", { name: "Generate thesis" }).click();
-  const tickerInput = page.getByRole("textbox", { name: "Ticker / basket" });
-  await expect(tickerInput).not.toHaveValue("");
-  await expect(tickerInput).toHaveValue(/^(MARA|IWM|SPCX|TLT)$/);
-  await page.getByRole("button", { name: "Generate review" }).click();
-  await expect(page.getByRole("heading", { name: /adversarial review/i })).toBeVisible();
-  await expect(page.getByText(/signal is aborted/i)).toHaveCount(0);
+test("new review flow routes to ticker intelligence", async ({ page }) => {
+  await page.goto("/review/new");
+  await expect(page.getByRole("heading", { name: "Thesis intake workflow" })).toBeVisible();
+  await page.getByRole("button", { name: /Continue/i }).first().click();
+  await page.getByRole("button", { name: /Continue/i }).first().click();
+  await page.getByRole("button", { name: /Start Analysis/i }).click();
+  await expect(page).toHaveURL(/\/markets\/AAPL/);
+  await expect(page.getByRole("heading", { name: /AAPL intelligence/i })).toBeVisible();
 });
 
-test("market intelligence panel surfaces data provenance before actions", async ({ page }) => {
-  await page.goto("/");
-  await expect(page.getByRole("heading", { name: "Price · technicals · sentiment" })).toBeVisible();
-  await expect(page.getByText("Every metric shows its data source, timestamp, and mode")).toBeVisible();
-  await expect(page.getByRole("button", { name: "Refresh Metrics" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "View Technicals" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "View Sentiment" })).toBeVisible();
+test("markets route renders ticker-bound charting workspace", async ({ page }) => {
+  await page.goto("/markets/MSFT");
+  await expect(page.getByRole("heading", { name: /MSFT intelligence/i })).toBeVisible();
+  await expect(page.getByText("Line, Candlestick, and OHLC")).toBeVisible();
+  await page.getByRole("button", { name: "Analytics" }).click();
+  await expect(page.getByText("Efficient Frontier")).toBeVisible();
 });
 
-test("navigation panels switch to memory calibration and sources", async ({ page }) => {
+test("sidebar navigation reaches core routes", async ({ page }) => {
   await page.goto("/");
-  await page.getByRole("button", { name: "Decision memory" }).click();
-  await expect(page.getByRole("heading", { name: "Captured review decisions" })).toBeVisible();
-  await page.getByRole("button", { name: "Calibration" }).click();
-  await expect(page.getByRole("heading", { name: "Decision discipline dashboard" })).toBeVisible();
-  await page.getByRole("button", { name: "Source library" }).click();
-  await expect(page.getByRole("heading", { name: "User-owned evidence and source pointers" })).toBeVisible();
+  await page.getByRole("link", { name: "Decision History" }).click();
+  await expect(page).toHaveURL(/\/history/);
+  await expect(page.getByRole("heading", { name: /Archive/i })).toBeVisible();
+
+  await page.getByRole("link", { name: "Calibration" }).click();
+  await expect(page).toHaveURL(/\/calibration/);
+  await expect(page.getByRole("heading", { name: "Performance scorecard" })).toBeVisible();
 });
 
-test("report object table exposes the underlying review data", async ({ page }) => {
+test("command palette opens and routes ticker jump", async ({ page }) => {
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: "Underlying review data" })).toBeVisible();
-  await expect(page.getByText("report.review.id")).toBeVisible();
-  await expect(page.getByText("report.review.thesis")).toBeVisible();
-  await expect(page.getByText("report.packet")).toBeVisible();
-  await expect(page.getByText("report.liveMarketData")).toBeVisible();
+  await page.keyboard.press("Control+k");
+  const input = page.getByPlaceholder("Search actions or type ticker (AAPL)");
+  await expect(input).toBeVisible();
+  await input.fill("AAPL");
+  await page.getByRole("button", { name: /Open AAPL intelligence/i }).click();
+  await expect(page).toHaveURL(/\/markets\/AAPL/);
 });
 
-test("empty form shows validation instead of silent submit", async ({ page }) => {
-  await page.goto("/");
-  await page.getByRole("button", { name: "Generate review" }).click();
-  await expect(page.getByText("Enter a decision-relevant thesis.")).toBeVisible();
-});
-
-test("decision buttons update the active review state", async ({ page }) => {
-  await page.goto("/");
-  const pursueButton = page.locator("aside").getByRole("button", { name: "Pursue" });
-  const rejectButton = page.locator("aside").getByRole("button", { name: "Reject" });
-
-  await pursueButton.click();
-  await expect(page.getByText("Decision recorded", { exact: true })).toBeVisible();
-  await expect(pursueButton).toHaveClass(/bg-teal/);
-
-  await rejectButton.click();
-  await expect(rejectButton).toHaveClass(/bg-teal/);
-});
-
-test("source library entries navigate back to their review", async ({ page }) => {
-  await page.goto("/");
-  await page.getByRole("button", { name: "Source library" }).click();
-  await page.getByRole("button", { name: /User watchlist: BTC miners relative strength/ }).click();
-  await expect(page.getByRole("heading", { name: "BTC miners lagging spot Bitcoin" })).toBeVisible();
-  await expect(page.getByText("Strongest critique")).toBeVisible();
+test("markets compare mode displays peer symbols", async ({ page }) => {
+  await page.goto("/markets/AAPL?compare=MSFT,QQQ");
+  await expect(page.getByRole("heading", { name: /AAPL intelligence/i })).toBeVisible();
+  await expect(page.getByText("Compare: MSFT · QQQ")).toBeVisible();
 });
 
 test("dark mode is the default visual mode", async ({ page }) => {

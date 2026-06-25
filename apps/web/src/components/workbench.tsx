@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
+import Link from "next/link";
 import { Activity, AlertTriangle, BarChart3, BookOpen, CheckCircle2, ClipboardCheck, Database, FileSearch, History, ShieldCheck, Sparkles } from "lucide-react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
@@ -94,10 +95,10 @@ const decisionLabels: Record<DecisionState, string> = {
   needs_more_data: "Needs more data"
 };
 
-export function Workbench() {
+export function Workbench({ initialReviewId }: { initialReviewId?: string } = {}) {
   const [reviews, setReviews] = useState<TradeReview[]>(sampleReviews);
   const [packetIdsByReviewId, setPacketIdsByReviewId] = useState<Record<string, string>>({});
-  const [activeId, setActiveId] = useState(sampleReviews[0]?.id ?? "");
+  const [activeId, setActiveId] = useState(initialReviewId && sampleReviews.some((review) => review.id === initialReviewId) ? initialReviewId : sampleReviews[0]?.id ?? "");
   const [activeView, setActiveView] = useState<NavView>("workbench");
   const [generationMode, setGenerationMode] = useState<"api" | "fallback" | "idle">("idle");
   const [generationError, setGenerationError] = useState<string | null>(null);
@@ -133,6 +134,13 @@ export function Workbench() {
     setLiveMarketData(null);
     setActivePacketData(null);
   }, [activeId]);
+
+  useEffect(() => {
+    if (!initialReviewId) return;
+    if (reviews.some((review) => review.id === initialReviewId)) {
+      setActiveId(initialReviewId);
+    }
+  }, [initialReviewId, reviews]);
 
   function panToCoreInformation() {
     requestAnimationFrame(() => {
@@ -698,7 +706,13 @@ function TopBar({ review }: { review: TradeReview }) {
           This is the active idea under review, with its current decision state and workflow version shown before any trade action is taken.
         </p>
       </div>
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <Link
+          href={`/markets/${encodeURIComponent(review.ticker.toUpperCase())}`}
+          className="focus-ring inline-flex items-center rounded-md border border-line bg-paper px-3 py-1.5 text-xs font-semibold text-teal hover:border-teal/60"
+        >
+          Open {review.ticker.toUpperCase()} intelligence
+        </Link>
         <Badge tone="info">{review.schemaVersion}</Badge>
         <Badge tone="neutral">{review.workflowVersion}</Badge>
         <Badge tone={review.decisionState ? "good" : "warn"}>{review.decisionState ? decisionLabels[review.decisionState] : "Decision pending"}</Badge>

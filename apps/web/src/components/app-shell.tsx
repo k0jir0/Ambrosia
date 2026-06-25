@@ -1,0 +1,153 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import Link from "next/link";
+import { Activity, BarChart3, ClipboardPlus, Command, Gauge, History, Home, Settings, Users } from "lucide-react";
+import { cn } from "./ui";
+import { CommandPalette } from "./command-palette";
+
+type NavItem = {
+  href: string;
+  label: string;
+  icon: React.ComponentType<{ className?: string }>;
+  group: "top" | "middle" | "bottom";
+};
+
+const NAV_ITEMS: NavItem[] = [
+  { href: "/", label: "Dashboard", icon: Home, group: "top" },
+  { href: "/review/new", label: "New Review", icon: ClipboardPlus, group: "top" },
+  { href: "/markets/AAPL", label: "Market Intelligence", icon: Activity, group: "middle" },
+  { href: "/history", label: "Decision History", icon: History, group: "middle" },
+  { href: "/calibration", label: "Calibration", icon: BarChart3, group: "middle" },
+  { href: "/team", label: "Team", icon: Users, group: "bottom" },
+  { href: "/admin", label: "Admin", icon: Settings, group: "bottom" }
+];
+
+const MOBILE_ITEMS = [
+  { href: "/", label: "Dashboard", icon: Home },
+  { href: "/review/new", label: "New", icon: ClipboardPlus },
+  { href: "/markets/AAPL", label: "Markets", icon: Activity },
+  { href: "/history", label: "History", icon: History },
+  { href: "/calibration", label: "More", icon: Gauge }
+];
+
+function isActivePath(pathname: string | null, href: string) {
+  if (!pathname) return href === "/";
+  if (href === "/") return pathname === "/";
+  return pathname === href || pathname.startsWith(`${href}/`);
+}
+
+export function AppShell({ children }: { children: React.ReactNode }) {
+  const [pathname, setPathname] = useState<string>(typeof window === "undefined" ? "/" : window.location.pathname);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        setPaletteOpen(true);
+      }
+      if (event.key === "Escape") {
+        setPaletteOpen(false);
+      }
+    }
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
+
+  useEffect(() => {
+    function updatePath() {
+      setPathname(window.location.pathname);
+    }
+
+    updatePath();
+    window.addEventListener("popstate", updatePath);
+    window.addEventListener("hashchange", updatePath);
+
+    return () => {
+      window.removeEventListener("popstate", updatePath);
+      window.removeEventListener("hashchange", updatePath);
+    };
+  }, []);
+
+  const top = NAV_ITEMS.filter((item) => item.group === "top");
+  const middle = NAV_ITEMS.filter((item) => item.group === "middle");
+  const bottom = NAV_ITEMS.filter((item) => item.group === "bottom");
+
+  return (
+    <div className="min-h-screen bg-fog text-ink">
+      <div className="mx-auto flex w-full max-w-[1600px]">
+        <aside className="hidden min-h-screen w-64 shrink-0 border-r border-line/80 bg-paper/90 p-4 lg:block">
+          <div className="mb-4 flex items-center justify-between">
+            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-teal">Ambrosia</p>
+            <button
+              type="button"
+              onClick={() => setPaletteOpen(true)}
+              className="focus-ring inline-flex items-center gap-1 rounded border border-line px-2 py-1 text-[11px] text-ink/70"
+            >
+              <Command className="h-3.5 w-3.5" /> K
+            </button>
+          </div>
+          <div className="space-y-6">
+            <NavSection items={top} pathname={pathname} />
+            <NavSection items={middle} pathname={pathname} />
+            <NavSection items={bottom} pathname={pathname} />
+          </div>
+        </aside>
+
+        <main className="min-h-screen flex-1 p-4 pb-24 lg:p-8 lg:pb-8">{children}</main>
+      </div>
+
+      <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-line bg-paper/95 p-2 backdrop-blur lg:hidden">
+        <ul className="grid grid-cols-5 gap-1">
+          {MOBILE_ITEMS.map((item) => {
+            const active = isActivePath(pathname, item.href);
+            const Icon = item.icon;
+            return (
+              <li key={item.href}>
+                <Link
+                  href={item.href}
+                  className={cn(
+                    "focus-ring flex flex-col items-center gap-1 rounded-md px-2 py-2 text-[11px] font-medium transition",
+                    active ? "bg-teal/15 text-teal" : "text-ink/75 hover:bg-white/5"
+                  )}
+                >
+                  <Icon className="h-4 w-4" />
+                  <span>{item.label}</span>
+                </Link>
+              </li>
+            );
+          })}
+        </ul>
+      </nav>
+
+      <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
+    </div>
+  );
+}
+
+function NavSection({ items, pathname }: { items: NavItem[]; pathname: string }) {
+  return (
+    <ul className="space-y-1">
+      {items.map((item) => {
+        const active = isActivePath(pathname, item.href);
+        const Icon = item.icon;
+        return (
+          <li key={item.href}>
+            <Link
+              href={item.href}
+              className={cn(
+                "focus-ring flex items-center gap-3 rounded-md px-3 py-2 text-sm transition",
+                active ? "bg-teal/10 text-teal" : "text-ink/80 hover:bg-white/5 hover:text-ink"
+              )}
+            >
+              <Icon className="h-4 w-4" />
+              <span>{item.label}</span>
+            </Link>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}

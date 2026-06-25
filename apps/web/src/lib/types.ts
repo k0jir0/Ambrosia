@@ -113,6 +113,7 @@ export interface MarketSnapshot {
   dominance?: number;
   dataSource: string;
   dataSourceConfidence: "live" | "fallback" | "demo";
+  freshnessSeconds: number | null;
 }
 
 export interface TechnicalIndicators {
@@ -128,6 +129,7 @@ export interface TechnicalIndicators {
   trend: "uptrend" | "downtrend" | "sideways" | "unknown";
   updateTime: string;
   dataQuality: "verified" | "estimated" | "fallback";
+  dataMode: "live" | "fallback" | "demo";
 }
 
 export interface SentimentData {
@@ -139,6 +141,7 @@ export interface SentimentData {
   sources: string[];
   lastUpdated: string;
   sourceConfidence: "verified" | "demo";
+  dataMode: "live" | "fallback" | "demo";
 }
 
 export interface InterMarketContext {
@@ -277,6 +280,98 @@ export interface BacktestPrepareRequest {
 
 export interface BacktestRunRequest {
   forceRun: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// Scanner
+// ---------------------------------------------------------------------------
+
+export type ScannerSignal =
+  | "momentum_up"
+  | "momentum_down"
+  | "mean_reversion_up"
+  | "mean_reversion_down"
+  | "neutral";
+
+export interface ScannerCandidate {
+  ticker: string;
+  signal: ScannerSignal;
+  thesisSuggestion: string;
+  score: number;
+  price: number;
+  trend: string;
+  rsi: number | null;
+  volume24h: number;
+  dataSource: string;
+  dataMode: "live" | "fallback" | "demo";
+  scannedAt: string;
+}
+
+export interface ScannerResult {
+  candidates: ScannerCandidate[];
+  scannedAt: string;
+  universe: string[];
+  totalScanned: number;
+  dataMode: "live" | "fallback" | "demo";
+}
+
+export interface ScannerRunRequest {
+  universe?: string[];
+  maxCandidates?: number;
+  minVolume?: number;
+  signalFilter?: "momentum" | "mean_reversion" | "breadth" | "all";
+}
+
+// ---------------------------------------------------------------------------
+// Report
+// ---------------------------------------------------------------------------
+
+export interface ReportSection {
+  title: string;
+  content: string;
+}
+
+export interface ReportArtifact {
+  packetId: string;
+  ticker: string;
+  title: string;
+  createdAt: string;
+  sections: ReportSection[];
+  dataMode: "live" | "fallback" | "demo";
+  provenanceLabel: string;
+  marketDataSource: string | null;
+  marketDataFreshnessSeconds: number | null;
+}
+
+// ---------------------------------------------------------------------------
+// Job queue
+// ---------------------------------------------------------------------------
+
+export type JobState = "queued" | "running" | "completed" | "failed";
+
+export interface JobRecord {
+  id: string;
+  jobType: string;
+  state: JobState;
+  queuedAt: string;
+  startedAt: string | null;
+  completedAt: string | null;
+  inputSummary: string;
+  result: Record<string, unknown> | null;
+  error: string | null;
+}
+
+// ---------------------------------------------------------------------------
+// Market provider status
+// ---------------------------------------------------------------------------
+
+export interface MarketProviderStatus {
+  name: string;
+  type: "polygon" | "yahoo" | "demo";
+  fallbackChain: string[];
+  fallbackUsed: boolean;
+  reason: string;
+  polygonConfigured: boolean;
 }
 
 export interface RiskEvaluateRequest {

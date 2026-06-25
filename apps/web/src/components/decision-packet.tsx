@@ -74,11 +74,17 @@ export function DecisionPacketUI({ packet }: DecisionPacketUIProps) {
                     value={`$${(packet.marketSnapshot.marketCap / 1e9).toFixed(2)}B`}
                   />
                 )}
-                <div className="flex flex-col">
-                  <span className="text-xs text-tertiary">Data Source</span>
-                  <div className="mt-1 flex items-center gap-1">
-                    <span className={`inline-block h-2 w-2 rounded-full ${packet.marketSnapshot.dataSourceConfidence === 'live' ? 'bg-green-500' : 'bg-amber-500'}`} />
-                    <span className="text-sm text-ink">{packet.marketSnapshot.dataSource}</span>
+                <div className="flex flex-col col-span-2">
+                  <span className="text-xs text-tertiary mb-1">Data Provenance</span>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <ProvenanceBadge mode={packet.marketSnapshot.dataSourceConfidence} />
+                    <span className="text-xs text-ink">{packet.marketSnapshot.dataSource}</span>
+                    {packet.marketSnapshot.freshnessSeconds !== null && packet.marketSnapshot.freshnessSeconds !== undefined && (
+                      <span className="text-xs text-tertiary">· {packet.marketSnapshot.freshnessSeconds}s ago</span>
+                    )}
+                    {packet.marketSnapshot.freshnessSeconds === null && (
+                      <span className="text-xs text-tertiary">· deterministic</span>
+                    )}
                   </div>
                 </div>
               </div>
@@ -107,6 +113,10 @@ export function DecisionPacketUI({ packet }: DecisionPacketUIProps) {
                     {packet.technicals.trend.toUpperCase()}
                   </div>
                 </div>
+                <div className="col-span-2 flex items-center gap-2 pt-1">
+                  <ProvenanceBadge mode={packet.technicals.dataMode ?? packet.technicals.dataQuality === "verified" ? "live" : "fallback"} />
+                  <span className="text-xs text-tertiary">{packet.technicals.dataQuality}</span>
+                </div>
               </div>
             </PacketSection>
           )}
@@ -133,6 +143,10 @@ export function DecisionPacketUI({ packet }: DecisionPacketUIProps) {
                 <div className="flex justify-between">
                   <span className="text-xs text-tertiary">{packet.sentiment.sentiment.toUpperCase()}</span>
                   <span className="text-xs text-secondary">{packet.sentiment.trendDirection}</span>
+                </div>
+                <div className="flex items-center gap-2 pt-1">
+                  <ProvenanceBadge mode={packet.sentiment.dataMode ?? (packet.sentiment.sourceConfidence === "verified" ? "live" : "demo")} />
+                  <span className="text-xs text-tertiary">{packet.sentiment.sourceConfidence}</span>
                 </div>
               </div>
             </PacketSection>
@@ -426,4 +440,23 @@ function getSentimentBarColor(score: number): string {
   if (score >= 66) return "bg-green-500";
   if (score >= 34) return "bg-amber-500";
   return "bg-red-500";
+}
+
+interface ProvenanceBadgeProps {
+  mode: "live" | "fallback" | "demo" | string;
+}
+
+function ProvenanceBadge({ mode }: ProvenanceBadgeProps) {
+  const config: Record<string, { dot: string; label: string }> = {
+    live:     { dot: "bg-green-500", label: "LIVE" },
+    fallback: { dot: "bg-amber-500", label: "FALLBACK" },
+    demo:     { dot: "bg-secondary",  label: "DEMO" },
+  };
+  const c = config[mode] ?? { dot: "bg-secondary", label: mode.toUpperCase() };
+  return (
+    <span className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-bold tracking-wider bg-secondary/20">
+      <span className={`inline-block h-1.5 w-1.5 rounded-full ${c.dot}`} />
+      {c.label}
+    </span>
+  );
 }

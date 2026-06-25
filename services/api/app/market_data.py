@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import math
 import random
+import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -10,6 +11,10 @@ from datetime import UTC, datetime
 from statistics import stdev
 
 from .models import MarketSnapshot, TechnicalIndicators
+from .market_providers import fetch_polygon_series, resolve_market_provider
+
+_CACHE_TTL_SECONDS = 60
+_series_cache: dict[str, tuple[MarketSeries, float]] = {}
 
 
 @dataclass
@@ -141,8 +146,49 @@ def _build_fallback_series(ticker: str) -> MarketSeries:
 
 
 def get_market_series(ticker: str) -> MarketSeries:
+    """Return a MarketSeries, using TTL cache to avoid redundant fetches."""
+    now = time.monotonic()
+    if ticker in _series_cache:
+        cached_series, cached_at = _series_cache[ticker]
+        if now - cached_at < _CACHE_TTL_SECONDS:
+            return cached_series
+
+    series = _fetch_series_uncached(ticker)
+    _series_cache[ticker] = (series, now)
+    return series
+
+
+def _retry_yahoo(ticker: str, max_attempts: int = 2, base_delay: float = 0.3) -> MarketSeries:
+    """Call _fetch_yahoo_series with exponential back-off. Raises on exhaustion."""
+    last_exc: Exception = RuntimeError("no attempts made")
+    for attempt in range(max_attempts):
+        try:
+            return _fetch_yahoo_series(ticker)
+        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, ValueError) as exc:
+            last_exc = exc
+            if attempt < max_attempts - 1:
+                time.sleep(base_delay * (2 ** attempt))
+    raise last_exc
+
+
+def _fetch_series_uncached(ticker: str) -> MarketSeries:
+    """Fetch fresh market data: Polygon (if configured) → Yahoo (with retry) → deterministic fallback."""
+    provider = resolve_market_provider()
+
+    if provider.provider_type == "polygon":
+        try:
+            closes, volumes = fetch_polygon_series(ticker)
+            return MarketSeries(
+                closes=closes,
+                volumes=volumes,
+                source="Polygon.io",
+                source_confidence="live",
+            )
+        except (urllib.error.URLError, TimeoutError, ValueError, json.JSONDecodeError, KeyError):
+            pass  # fall through to Yahoo with retry
+
     try:
-        return _fetch_yahoo_series(ticker)
+        return _retry_yahoo(ticker)
     except (urllib.error.URLError, TimeoutError, ValueError, json.JSONDecodeError):
         return _build_fallback_series(ticker)
 
@@ -153,6 +199,9 @@ def build_market_snapshot(ticker: str) -> MarketSnapshot:
     previous_price = series.closes[-2] if len(series.closes) > 1 else latest_price
     pct_change = 0.0 if previous_price == 0 else ((latest_price - previous_price) / previous_price) * 100
 
+    # freshness: 0 for live (just fetched), None for deterministic fallback
+    freshness_seconds = 0 if series.source_confidence == "live" else None
+
     return MarketSnapshot(
         timestamp=_utc_timestamp(),
         price=round(latest_price, 4),
@@ -160,6 +209,7 @@ def build_market_snapshot(ticker: str) -> MarketSnapshot:
         volume24h=round(series.volumes[-1], 2),
         dataSource=series.source,
         dataSourceConfidence=series.source_confidence,
+        freshnessSeconds=freshness_seconds,
     )
 
 
@@ -197,4 +247,5 @@ def build_technicals(ticker: str) -> TechnicalIndicators:
         trend=_trend(ma30, ma50, latest_price),
         updateTime=_utc_timestamp(),
         dataQuality="verified" if series.source_confidence == "live" else "fallback",
+        dataMode=series.source_confidence,
     )

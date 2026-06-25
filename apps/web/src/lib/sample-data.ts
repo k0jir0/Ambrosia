@@ -341,6 +341,7 @@ export const samplePackets: DecisionPacket[] = [
       marketCap: 1850000000000,
       dataSource: "Yahoo Finance",
       dataSourceConfidence: "live",
+      freshnessSeconds: 0,
     },
     technicals: {
       rsi: 68,
@@ -355,6 +356,7 @@ export const samplePackets: DecisionPacket[] = [
       trend: "uptrend",
       updateTime: "2026-06-24T09:30:00Z",
       dataQuality: "verified",
+      dataMode: "live",
     },
     sentiment: {
       overallScore: 62,
@@ -365,6 +367,7 @@ export const samplePackets: DecisionPacket[] = [
       sources: ["NewsAPI", "Twitter Sentiment", "StockTwits"],
       lastUpdated: "2026-06-24T09:00:00Z",
       sourceConfidence: "verified",
+      dataMode: "live",
     },
     interMarket: {
       correlationWithBenchmark: 0.92,

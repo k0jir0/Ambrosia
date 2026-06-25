@@ -13,6 +13,13 @@ class DecisionState(str, Enum):
     needs_more_data = "needs_more_data"
 
 
+class JobState(str, Enum):
+    queued = "queued"
+    running = "running"
+    completed = "completed"
+    failed = "failed"
+
+
 class ReviewStatus(str, Enum):
     intake = "intake"
     retrieval = "retrieval"
@@ -92,6 +99,7 @@ class MarketSnapshot(BaseModel):
     dominance: float | None = None
     dataSource: str
     dataSourceConfidence: Literal["live", "fallback", "demo"]
+    freshnessSeconds: int | None = None
 
 
 class TechnicalIndicators(BaseModel):
@@ -107,6 +115,7 @@ class TechnicalIndicators(BaseModel):
     trend: Literal["uptrend", "downtrend", "sideways", "unknown"]
     updateTime: str
     dataQuality: Literal["verified", "estimated", "fallback"]
+    dataMode: Literal["live", "fallback", "demo"] = "fallback"
 
 
 class SentimentData(BaseModel):
@@ -118,6 +127,7 @@ class SentimentData(BaseModel):
     sources: list[str]
     lastUpdated: str
     sourceConfidence: Literal["verified", "demo"]
+    dataMode: Literal["live", "fallback", "demo"] = "demo"
 
 
 class InterMarketContext(BaseModel):
@@ -373,3 +383,188 @@ class RetrievalResponse(BaseModel):
     packetId: str
     query: str
     results: list[RetrievalHit]
+
+
+class ScannerRunRequest(BaseModel):
+    universe: list[str] | None = None
+    maxCandidates: int = Field(default=10, ge=1, le=50)
+    minVolume: float = 1_000_000.0
+    signalFilter: Literal["momentum", "mean_reversion", "breadth", "all"] = "all"
+
+
+class ScannerCandidate(BaseModel):
+    ticker: str
+    signal: Literal["momentum_up", "momentum_down", "mean_reversion_up", "mean_reversion_down", "neutral"]
+    thesisSuggestion: str
+    score: float = Field(ge=0.0, le=1.0)
+    price: float
+    trend: str
+    rsi: float | None
+    volume24h: float
+    dataSource: str
+    dataMode: Literal["live", "fallback", "demo"]
+    scannedAt: str
+
+
+class ScannerResult(BaseModel):
+    candidates: list[ScannerCandidate]
+    scannedAt: str
+    universe: list[str]
+    totalScanned: int
+    dataMode: Literal["live", "fallback", "demo"]
+
+
+class ReportSection(BaseModel):
+    title: str
+    content: str
+
+
+class ReportArtifact(BaseModel):
+    packetId: str
+    ticker: str
+    title: str
+    createdAt: str
+    sections: list[ReportSection]
+    dataMode: Literal["live", "fallback", "demo"]
+    provenanceLabel: str
+    marketDataSource: str | None = None
+    marketDataFreshnessSeconds: int | None = None
+
+
+class JobRecord(BaseModel):
+    id: str
+    jobType: str
+    state: JobState
+    queuedAt: str
+    startedAt: str | None = None
+    completedAt: str | None = None
+    inputSummary: str
+    result: dict | None = None
+    error: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# Phase 4: Collaboration layer
+# ---------------------------------------------------------------------------
+
+class WorkspaceMemberRole(str, Enum):
+    owner = "owner"
+    analyst = "analyst"
+    reviewer = "reviewer"
+    viewer = "viewer"
+
+
+class WorkspaceMember(BaseModel):
+    userId: str
+    role: WorkspaceMemberRole
+    addedAt: str
+
+
+class WorkspaceRecord(BaseModel):
+    id: str
+    name: str
+    description: str
+    createdAt: str
+    ownerId: str
+    members: list[WorkspaceMember]
+    packetIds: list[str]
+
+
+class WorkspaceCreateRequest(BaseModel):
+    name: str = Field(min_length=3)
+    description: str = ""
+    ownerId: str = Field(min_length=1)
+
+
+class WorkspaceAddPacketRequest(BaseModel):
+    packetId: str = Field(min_length=1)
+
+
+class PacketCommentType(str, Enum):
+    general = "general"
+    critique = "critique"
+    approval_note = "approval_note"
+    risk_flag = "risk_flag"
+
+
+class PacketComment(BaseModel):
+    id: str
+    packetId: str
+    authorId: str
+    content: str
+    createdAt: str
+    commentType: PacketCommentType
+
+
+class PacketCommentCreate(BaseModel):
+    authorId: str = Field(min_length=1)
+    content: str = Field(min_length=3)
+    commentType: PacketCommentType = PacketCommentType.general
+
+
+class PacketApprovalDecision(str, Enum):
+    approved = "approved"
+    rejected = "rejected"
+    needs_revision = "needs_revision"
+
+
+class PacketApproval(BaseModel):
+    id: str
+    packetId: str
+    reviewerId: str
+    decision: PacketApprovalDecision
+    note: str
+    decidedAt: str
+
+
+class PacketApprovalCreate(BaseModel):
+    reviewerId: str = Field(min_length=1)
+    decision: PacketApprovalDecision
+    note: str = ""
+
+
+# ---------------------------------------------------------------------------
+# Phase 5: Workflow templates (enterprise/marketplace layer)
+# ---------------------------------------------------------------------------
+
+class WorkflowTemplateStatus(str, Enum):
+    draft = "draft"
+    published = "published"
+    archived = "archived"
+
+
+class WorkflowTemplateCategory(str, Enum):
+    equity_review = "equity_review"
+    momentum_scan = "momentum_scan"
+    risk_assessment = "risk_assessment"
+    custom = "custom"
+
+
+class WorkflowStep(BaseModel):
+    stepId: str
+    name: str
+    action: str
+    params: dict = {}
+    humanGate: bool = False
+
+
+class WorkflowTemplate(BaseModel):
+    id: str
+    name: str
+    version: str
+    description: str
+    category: WorkflowTemplateCategory
+    steps: list[WorkflowStep]
+    createdAt: str
+    publishedAt: str | None = None
+    status: WorkflowTemplateStatus
+    authorId: str
+
+
+class WorkflowTemplateCreate(BaseModel):
+    name: str = Field(min_length=3)
+    version: str = "1.0.0"
+    description: str = ""
+    category: WorkflowTemplateCategory = WorkflowTemplateCategory.custom
+    steps: list[WorkflowStep] = []
+    authorId: str = Field(min_length=1)

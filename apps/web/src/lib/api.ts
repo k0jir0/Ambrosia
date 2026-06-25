@@ -3,12 +3,17 @@ import type {
   BacktestRunRequest,
   ConfidenceDeriveRequest,
   DecisionPacket,
+  JobRecord,
+  MarketProviderStatus,
   PacketOutcomeUpdate,
   MarketSnapshot,
   PortfolioContextUpdate,
   ProviderMode,
+  ReportArtifact,
   RetrievalResponse,
   RiskEvaluateRequest,
+  ScannerResult,
+  ScannerRunRequest,
   SentimentData,
   TechnicalIndicators,
   ThesisInput,
@@ -257,4 +262,80 @@ export async function retrievePacketContext(packetId: string, query: string, top
   });
 
   return readJsonResponse<RetrievalResponse>(response);
+}
+
+// ---------------------------------------------------------------------------
+// Scanner
+// ---------------------------------------------------------------------------
+
+export async function runScanner(body: ScannerRunRequest = {}): Promise<ScannerResult> {
+  const apiBaseUrl = getApiBaseUrl();
+  if (!apiBaseUrl) throw new ApiUnavailableError();
+  const response = await fetchWithTimeout(`${apiBaseUrl}/scanner/run`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  return readJsonResponse<ScannerResult>(response);
+}
+
+export async function runScannerAsync(body: ScannerRunRequest = {}): Promise<JobRecord> {
+  const apiBaseUrl = getApiBaseUrl();
+  if (!apiBaseUrl) throw new ApiUnavailableError();
+  const response = await fetchWithTimeout(`${apiBaseUrl}/scanner/run/async`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  return readJsonResponse<JobRecord>(response);
+}
+
+// ---------------------------------------------------------------------------
+// Job queue
+// ---------------------------------------------------------------------------
+
+export async function getJobStatus(jobId: string): Promise<JobRecord> {
+  const apiBaseUrl = getApiBaseUrl();
+  if (!apiBaseUrl) throw new ApiUnavailableError();
+  const response = await fetchWithTimeout(`${apiBaseUrl}/jobs/${encodeURIComponent(jobId)}`);
+  return readJsonResponse<JobRecord>(response);
+}
+
+export async function listJobs(): Promise<JobRecord[]> {
+  const apiBaseUrl = getApiBaseUrl();
+  if (!apiBaseUrl) throw new ApiUnavailableError();
+  const response = await fetchWithTimeout(`${apiBaseUrl}/jobs`);
+  return readJsonResponse<JobRecord[]>(response);
+}
+
+// ---------------------------------------------------------------------------
+// Report
+// ---------------------------------------------------------------------------
+
+export async function generateReport(packetId: string): Promise<ReportArtifact> {
+  const apiBaseUrl = getApiBaseUrl();
+  if (!apiBaseUrl) throw new ApiUnavailableError();
+  const response = await fetchWithTimeout(
+    `${apiBaseUrl}/packets/${encodeURIComponent(packetId)}/report`,
+    { method: "POST" },
+  );
+  return readJsonResponse<ReportArtifact>(response);
+}
+
+// ---------------------------------------------------------------------------
+// Market provider status & health
+// ---------------------------------------------------------------------------
+
+export async function getMarketProviderStatus(): Promise<MarketProviderStatus> {
+  const apiBaseUrl = getApiBaseUrl();
+  if (!apiBaseUrl) throw new ApiUnavailableError();
+  const response = await fetchWithTimeout(`${apiBaseUrl}/market/providers/status`);
+  return readJsonResponse<MarketProviderStatus>(response);
+}
+
+export async function getHealthDetailed(): Promise<Record<string, unknown>> {
+  const apiBaseUrl = getApiBaseUrl();
+  if (!apiBaseUrl) throw new ApiUnavailableError();
+  const response = await fetchWithTimeout(`${apiBaseUrl}/health/detailed`);
+  return readJsonResponse<Record<string, unknown>>(response);
 }

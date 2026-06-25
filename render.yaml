@@ -1,3 +1,27 @@
+# Ambrosia Render Deployment Configuration
+# 
+# Deployment Strategy (Zero-Downtime Restarts):
+# -----------------------------------------------
+# 1. Render uses rolling restarts with health check gating for automatic recovery
+# 2. Health check path (/health) must respond 200 OK within timeout
+# 3. Old instances drain existing requests before shutdown (graceful termination)
+# 4. New instances only receive traffic after passing health check
+# 5. Both services (API + Web) restart independently; no cascading failures
+# 6. Deploy smoke tests run immediately post-deployment to validate gates
+# 7. Manual rollback via Render dashboard: revert to previous Git commit and redeploy
+#
+# Health Check Behavior:
+# - Path: /health (basic) and /health/detailed (comprehensive)
+# - Interval: 60 seconds (Render default)
+# - Timeout: 30 seconds (Render default; must be < 65s to avoid false fallback on cold start)
+# - Failure threshold: 3 consecutive failures trigger auto-restart
+# - Success resets failure counter
+#
+# Graceful Shutdown:
+# - Uvicorn (API) waits for in-flight requests up to OS signal timeout (~30s)
+# - Node (Web) receives SIGTERM and closes HTTP server before exit
+# - Long-running jobs (>30s) must be async/queue-backed to survive restarts
+
 services:
   - type: web
     name: ambrosia-trade-review-api
@@ -5,8 +29,10 @@ services:
     rootDir: services/api
     plan: free
     buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT --timeout-grace-period 30 --timeout-keep-alive 30
     healthCheckPath: /health
+    healthCheckStartFailureThreshold: 10
+    preDeployCommand: python scripts/validate-schema.py
     envVars:
       - key: PYTHON_VERSION
         value: 3.12.10

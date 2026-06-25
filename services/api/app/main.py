@@ -4,6 +4,7 @@ import hashlib
 import hmac
 import json
 import os
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from uuid import uuid4
 
@@ -18,32 +19,51 @@ from .models import (
     AuditEventCreate,
     BacktestPrepareRequest,
     BacktestRunRequest,
+    PacketApproval,
+    PacketApprovalCreate,
+    PacketComment,
+    PacketCommentCreate,
     PacketOutcomeUpdate,
     PortfolioContextUpdate,
     ConfidenceDeriveRequest,
     DecisionPacket,
     DecisionState,
     DecisionUpdate,
+    JobRecord,
     MarketSnapshot,
     OutcomeUpdate,
     RiskEvaluateRequest,
+    ReportArtifact,
     RetrievalHit,
     RetrievalRequest,
     RetrievalResponse,
+    ScannerRunRequest,
+    ScannerResult,
     SentimentData,
     TechnicalIndicators,
     ThesisRequest,
     TradeReview,
     ToolBoundary,
+    WorkspaceAddPacketRequest,
+    WorkspaceCreateRequest,
+    WorkspaceRecord,
+    WorkflowTemplate,
+    WorkflowTemplateCreate,
 )
 from .day6 import evaluate_risk, prepare_backtest_plan, run_controlled_backtest
 from .day7 import build_portfolio_context, derive_confidence
 from .coordinator import run_specialists
+from .feedback_api import feedback_router
+from .market_providers import market_provider_status
 from .providers import provider_status, resolve_provider
+from .report import generate_report
 from .review_engine import detects_prompt_injection, generate_review
+from .scanner import run_scanner
 from .sentiment import build_sentiment
 from .store import store
 from .tool_boundaries import list_tool_boundaries
+
+_executor = ThreadPoolExecutor(max_workers=4)
 
 app = FastAPI(title="Ambrosia Trade Review API", version="0.1.0")
 
@@ -64,6 +84,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Include feedback router for calibration queries and feedback recording
+app.include_router(feedback_router)
 
 
 def _clock() -> str:
@@ -142,6 +165,20 @@ def _originating_review_id_from_packet_id(packet_id: str) -> str | None:
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok", "service": "ambrosia-api"}
+
+
+@app.get("/metrics")
+def get_metrics():
+    """Get detailed calibration metrics board."""
+    metrics_board = store.get_calibration_metrics()
+    return metrics_board.model_dump()
+
+
+@app.get("/scorecard")
+def get_operational_scorecard():
+    """Get Index39 operational certification scorecard."""
+    scorecard = store.get_operational_scorecard()
+    return scorecard.model_dump()
 
 
 @app.get("/reviews", response_model=list[TradeReview])
@@ -348,7 +385,6 @@ def run_packet_backtest(packet_id: str, body: BacktestRunRequest) -> DecisionPac
     packet = store.get_packet(packet_id)
     if packet is None:
         raise HTTPException(status_code=404, detail="Packet not found")
-
     result = run_controlled_backtest(packet, force_run=body.forceRun)
     plan = packet.backtestPlan.model_copy() if packet.backtestPlan else None
     if plan is not None:
@@ -379,6 +415,51 @@ def run_packet_backtest(packet_id: str, body: BacktestRunRequest) -> DecisionPac
     return store.save_packet(updated_packet)
 
 
+@app.post("/packets/{packet_id}/backtest/run/async", response_model=JobRecord)
+def run_packet_backtest_async(packet_id: str, body: BacktestRunRequest) -> JobRecord:
+    if store.get_packet(packet_id) is None:
+        raise HTTPException(status_code=404, detail="Packet not found")
+
+    job = store.enqueue_job(
+        "backtest.run",
+        f"packet={packet_id};forceRun={body.forceRun}",
+    )
+
+    def _execute() -> None:
+        store.start_job(job.id)
+        try:
+            pkt = store.get_packet(packet_id)
+            if pkt is None:
+                store.fail_job(job.id, "Packet no longer found")
+                return
+            bt_result = run_controlled_backtest(pkt, force_run=body.forceRun)
+            bt_plan = pkt.backtestPlan.model_copy() if pkt.backtestPlan else None
+            if bt_plan is not None:
+                bt_plan.status = "completed" if bt_result.validityScore != "refused" else "ineligible"
+            updated = pkt.model_copy(
+                update={
+                    "backtestPlan": bt_plan,
+                    "backtestResult": bt_result,
+                    "audit": [
+                        *pkt.audit,
+                        AuditEvent(
+                            id=f"packet-audit-{len(pkt.audit) + 1}",
+                            timestamp=_clock(),
+                            eventType="backtest.completed" if bt_result.validityScore != "refused" else "backtest.refused",
+                            detail=f"Async backtest finished with validity {bt_result.validityScore}",
+                        ),
+                    ],
+                }
+            )
+            store.save_packet(updated)
+            store.complete_job(job.id, bt_result.model_dump(mode="json"))
+        except Exception as exc:  # pragma: no cover
+            store.fail_job(job.id, str(exc))
+
+    _executor.submit(_execute)
+    return store.get_job(job.id) or job
+
+
 @app.post("/packets/{packet_id}/risk/evaluate", response_model=DecisionPacket)
 def evaluate_packet_risk(packet_id: str, body: RiskEvaluateRequest) -> DecisionPacket:
     packet = store.get_packet(packet_id)
@@ -405,6 +486,8 @@ def evaluate_packet_risk(packet_id: str, body: RiskEvaluateRequest) -> DecisionP
 
 @app.post("/packets/{packet_id}/outcome", response_model=DecisionPacket)
 def record_packet_outcome(packet_id: str, body: PacketOutcomeUpdate) -> DecisionPacket:
+    from .feedback import FeedbackRecord, OutcomeResult
+    
     packet = store.get_packet(packet_id)
     if packet is None:
         raise HTTPException(status_code=404, detail="Packet not found")
@@ -415,6 +498,55 @@ def record_packet_outcome(packet_id: str, body: PacketOutcomeUpdate) -> Decision
         body.outcome_date,
         {"pnl": body.pnl, "notes": body.notes},
     )
+
+    # Create and save feedback record for calibration tracking
+    try:
+        # Map outcome string to OutcomeResult enum (try common variations)
+        outcome_lower = body.outcome.lower().strip()
+        outcome_mapping = {
+            "won": OutcomeResult.won,
+            "win": OutcomeResult.won,
+            "correct": OutcomeResult.won,
+            "lost": OutcomeResult.lost,
+            "loss": OutcomeResult.lost,
+            "wrong": OutcomeResult.lost,
+            "whipsaw": OutcomeResult.whipsaw,
+            "invalidated": OutcomeResult.invalidated,
+            "invalid": OutcomeResult.invalidated,
+            "no_setup": OutcomeResult.no_setup,
+            "no setup": OutcomeResult.no_setup,
+            "partial": OutcomeResult.partial,
+            "half": OutcomeResult.partial,
+        }
+        
+        outcome_enum = outcome_mapping.get(outcome_lower, OutcomeResult.no_setup)
+        
+        feedback = FeedbackRecord(
+            packet_id=packet_id,
+            decision_state=packet.decisionState.value if packet.decisionState else "unknown",
+            confidence=packet.confidence,
+            ticker=packet.ticker,
+            asset_class=packet.assetClass,
+            time_horizon=packet.timeHorizon,
+            outcome_date=body.outcome_date,
+            outcome=outcome_enum,
+            pnl=body.pnl,
+            notes=body.notes or "",
+            recorded_by="system",  # TODO: Use authenticated user ID when available
+        )
+        
+        store.save_feedback_record(feedback)
+        
+        # Recompute cohort calibration
+        store.recompute_cohort_calibration(
+            packet.ticker,
+            packet.assetClass,
+            packet.timeHorizon,
+        )
+    except Exception as exc:
+        # Log but don't fail the outcome recording
+        logger = __import__("logging").getLogger(__name__)
+        logger.warning("Failed to record feedback for packet %s: %s", packet_id, exc)
 
     updated_packet = packet.model_copy(
         update={
@@ -621,3 +753,321 @@ def metrics() -> dict[str, int]:
             1 for review in reviews if review.decisionState in {"reject", "needs_more_data"}
         ),
     }
+
+
+@app.post("/scanner/run", response_model=ScannerResult)
+def scanner_run(body: ScannerRunRequest) -> ScannerResult:
+    return run_scanner(body)
+
+
+@app.post("/scanner/run/async", response_model=JobRecord)
+def scanner_run_async(body: ScannerRunRequest) -> JobRecord:
+    universe_label = ",".join(body.universe) if body.universe else "default-nyse"
+    job = store.enqueue_job(
+        "scanner.run",
+        f"universe={universe_label[:80]};filter={body.signalFilter};maxCandidates={body.maxCandidates}",
+    )
+
+    def _execute() -> None:
+        store.start_job(job.id)
+        try:
+            result = run_scanner(body)
+            store.complete_job(job.id, result.model_dump(mode="json"))
+        except Exception as exc:  # pragma: no cover - runtime failure
+            store.fail_job(job.id, str(exc))
+
+    _executor.submit(_execute)
+    # re-fetch so caller gets the latest state (may already be running)
+    return store.get_job(job.id) or job
+
+
+@app.get("/jobs", response_model=list[JobRecord])
+def list_jobs() -> list[JobRecord]:
+    return store.list_jobs()
+
+
+@app.get("/jobs/{job_id}", response_model=JobRecord)
+def get_job_status(job_id: str) -> JobRecord:
+    job = store.get_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return job
+
+
+@app.get("/market/providers/status")
+def get_market_provider_status() -> dict:
+    return market_provider_status()
+
+
+@app.get("/health/detailed")
+def health_detailed() -> dict:
+    reviews = store.list_reviews()
+    packets = store.list_packets()
+    jobs = store.list_jobs()
+    mkt_status = market_provider_status()
+    
+    # Get calibration health info
+    cal_summary = store.get_calibration_summary()
+    cal_alerts = store.list_calibration_alerts(severity="critical")
+    
+    # Get all calibration metrics
+    metrics_board = store.get_calibration_metrics()
+
+    alerts: list[str] = []
+    failed_jobs = [j for j in jobs if j.state.value == "failed"]
+    if failed_jobs:
+        alerts.append(f"{len(failed_jobs)} job(s) in failed state — check GET /jobs")
+    if not mkt_status.get("polygonConfigured"):
+        alerts.append("Licensed NYSE data path not configured; market data using Yahoo Finance fallback")
+    if cal_alerts:
+        alerts.append(f"{len(cal_alerts)} critical calibration alert(s) — check GET /feedback/calibration/alerts")
+    if metrics_board.overall_status == "critical":
+        alerts.append(f"Critical metrics detected: {metrics_board.overall_status.upper()}")
+    if metrics_board.overall_status == "warning":
+        alerts.append(f"Warning: Some metrics below target")
+
+    overall = "degraded" if (alerts or metrics_board.overall_status != "ok") else "ok"
+
+    return {
+        "status": overall,
+        "service": "ambrosia-api",
+        "checks": {
+            "store": "ok",
+            "marketData": mkt_status,
+            "llmProviders": provider_status(),
+            "calibrationMetrics": {
+                "reviewValidity": {
+                    "conversionRate": metrics_board.review_validity.conversion_rate,
+                    "target": metrics_board.review_validity.target,
+                    "status": metrics_board.review_validity.status,
+                },
+                "decisionConsistency": {
+                    "avgScore": metrics_board.decision_consistency_avg,
+                    "target": 1.0,
+                    "status": "ok" if metrics_board.decision_consistency_avg >= 0.7 else "warning",
+                },
+                "packetIntegrity": {
+                    "integrityScore": metrics_board.packet_integrity.integrity_score,
+                    "target": metrics_board.packet_integrity.target,
+                    "status": metrics_board.packet_integrity.status,
+                },
+                "dataQuality": {
+                    "qualityScore": metrics_board.data_quality.quality_score,
+                    "target": metrics_board.data_quality.target,
+                    "status": metrics_board.data_quality.status,
+                },
+                "agentConsensus": {
+                    "consensusScore": metrics_board.agent_consensus.avg_consensus_score,
+                    "target": metrics_board.agent_consensus.target,
+                    "status": metrics_board.agent_consensus.status,
+                },
+                "backtestValidity": {
+                    "correlation": metrics_board.backtest_validity.avg_correlation,
+                    "target": metrics_board.backtest_validity.target,
+                    "status": metrics_board.backtest_validity.status,
+                },
+                "riskEstimate": {
+                    "accuracy": metrics_board.risk_estimate.estimate_accuracy,
+                    "target": metrics_board.risk_estimate.target,
+                    "status": metrics_board.risk_estimate.status,
+                },
+                "confidenceCalibration": {
+                    "calibrationScore": metrics_board.confidence_calibration.calibration_score,
+                    "target": metrics_board.confidence_calibration.target,
+                    "status": metrics_board.confidence_calibration.status,
+                },
+            },
+            "feedbackSystem": {
+                "totalDecisions": cal_summary.total_decisions,
+                "overallAccuracy": round(cal_summary.overall_accuracy, 3),
+                "wellCalibratedBands": cal_summary.well_calibrated_count,
+                "overConfidentBands": cal_summary.over_confident_count,
+                "underConfidentBands": cal_summary.under_confident_count,
+                "totalAlerts": cal_summary.total_alerts,
+            },
+        },
+        "slo": {
+            "reviewsCreated": len(reviews),
+            "packetsCreated": len(packets),
+            "jobsQueued": sum(1 for j in jobs if j.state.value == "queued"),
+            "jobsRunning": sum(1 for j in jobs if j.state.value == "running"),
+            "jobsCompleted": sum(1 for j in jobs if j.state.value == "completed"),
+            "jobsFailed": sum(1 for j in jobs if j.state.value == "failed"),
+        },
+        "metrics": {
+            "overallStatus": metrics_board.overall_status,
+            "computedAt": metrics_board.computed_at,
+        },
+        "alerts": alerts,
+    }
+
+
+@app.post("/packets/{packet_id}/report", response_model=ReportArtifact)
+def generate_packet_report(packet_id: str) -> ReportArtifact:
+    packet = store.get_packet(packet_id)
+    if packet is None:
+        raise HTTPException(status_code=404, detail="Packet not found")
+
+    report = generate_report(packet)
+
+    store.add_packet_audit_event(
+        packet_id,
+        AuditEventCreate(
+            eventType="report.generated",
+            detail=f"Report generated; mode={report.dataMode}; provenance={report.provenanceLabel}",
+        ),
+    )
+    return report
+
+
+@app.post("/packets/{packet_id}/report/async", response_model=JobRecord)
+def generate_packet_report_async(packet_id: str) -> JobRecord:
+    if store.get_packet(packet_id) is None:
+        raise HTTPException(status_code=404, detail="Packet not found")
+
+    job = store.enqueue_job("report.generate", f"packet={packet_id}")
+
+    def _execute() -> None:
+        store.start_job(job.id)
+        try:
+            pkt = store.get_packet(packet_id)
+            if pkt is None:
+                store.fail_job(job.id, "Packet no longer found")
+                return
+            rpt = generate_report(pkt)
+            store.add_packet_audit_event(
+                packet_id,
+                AuditEventCreate(
+                    eventType="report.generated",
+                    detail=f"Async report generated; mode={rpt.dataMode}",
+                ),
+            )
+            store.complete_job(job.id, rpt.model_dump(mode="json"))
+        except Exception as exc:  # pragma: no cover
+            store.fail_job(job.id, str(exc))
+
+    _executor.submit(_execute)
+    return store.get_job(job.id) or job
+
+
+# ---------------------------------------------------------------------------
+# Phase 4: Collaboration — workspaces
+# ---------------------------------------------------------------------------
+
+@app.post("/workspaces", response_model=WorkspaceRecord)
+def create_workspace(body: WorkspaceCreateRequest) -> WorkspaceRecord:
+    return store.create_workspace(body)
+
+
+@app.get("/workspaces", response_model=list[WorkspaceRecord])
+def list_workspaces(owner_id: str | None = Query(default=None)) -> list[WorkspaceRecord]:
+    return store.list_workspaces(owner_id=owner_id)
+
+
+@app.get("/workspaces/{workspace_id}", response_model=WorkspaceRecord)
+def get_workspace(workspace_id: str) -> WorkspaceRecord:
+    ws = store.get_workspace(workspace_id)
+    if ws is None:
+        raise HTTPException(status_code=404, detail="Workspace not found")
+    return ws
+
+
+@app.post("/workspaces/{workspace_id}/packets", response_model=WorkspaceRecord)
+def add_packet_to_workspace(workspace_id: str, body: WorkspaceAddPacketRequest) -> WorkspaceRecord:
+    ws = store.add_packet_to_workspace(workspace_id, body.packetId)
+    if ws is None:
+        raise HTTPException(status_code=404, detail="Workspace not found")
+    return ws
+
+
+# ---------------------------------------------------------------------------
+# Phase 4: Collaboration — packet comments
+# ---------------------------------------------------------------------------
+
+@app.post("/packets/{packet_id}/comments", response_model=PacketComment)
+def add_packet_comment(packet_id: str, body: PacketCommentCreate) -> PacketComment:
+    if store.get_packet(packet_id) is None:
+        raise HTTPException(status_code=404, detail="Packet not found")
+    comment = store.add_packet_comment(packet_id, body)
+    store.add_packet_audit_event(
+        packet_id,
+        AuditEventCreate(
+            eventType="comment.added",
+            detail=f"{body.commentType.value} comment from {body.authorId}",
+        ),
+    )
+    return comment
+
+
+@app.get("/packets/{packet_id}/comments", response_model=list[PacketComment])
+def list_packet_comments(packet_id: str) -> list[PacketComment]:
+    if store.get_packet(packet_id) is None:
+        raise HTTPException(status_code=404, detail="Packet not found")
+    return store.list_packet_comments(packet_id)
+
+
+# ---------------------------------------------------------------------------
+# Phase 4: Collaboration — approval flows
+# ---------------------------------------------------------------------------
+
+@app.post("/packets/{packet_id}/approval", response_model=PacketApproval)
+def set_packet_approval(packet_id: str, body: PacketApprovalCreate) -> PacketApproval:
+    if store.get_packet(packet_id) is None:
+        raise HTTPException(status_code=404, detail="Packet not found")
+    approval = store.set_packet_approval(packet_id, body)
+    store.add_packet_audit_event(
+        packet_id,
+        AuditEventCreate(
+            eventType="approval.recorded",
+            detail=f"Approval decision '{approval.decision.value}' by {body.reviewerId}",
+        ),
+    )
+    return approval
+
+
+@app.get("/packets/{packet_id}/approval", response_model=PacketApproval)
+def get_packet_approval(packet_id: str) -> PacketApproval:
+    if store.get_packet(packet_id) is None:
+        raise HTTPException(status_code=404, detail="Packet not found")
+    approval = store.get_packet_approval(packet_id)
+    if approval is None:
+        raise HTTPException(status_code=404, detail="No approval recorded for this packet")
+    return approval
+
+
+# ---------------------------------------------------------------------------
+# Phase 5: Workflow templates (enterprise / marketplace layer)
+# ---------------------------------------------------------------------------
+
+@app.post("/workflows/templates", response_model=WorkflowTemplate)
+def create_workflow_template(body: WorkflowTemplateCreate) -> WorkflowTemplate:
+    return store.create_workflow_template(body)
+
+
+@app.get("/workflows/templates", response_model=list[WorkflowTemplate])
+def list_workflow_templates(status: str | None = Query(default=None)) -> list[WorkflowTemplate]:
+    return store.list_workflow_templates(status=status)
+
+
+@app.get("/workflows/templates/{template_id}", response_model=WorkflowTemplate)
+def get_workflow_template(template_id: str) -> WorkflowTemplate:
+    t = store.get_workflow_template(template_id)
+    if t is None:
+        raise HTTPException(status_code=404, detail="Workflow template not found")
+    return t
+
+
+@app.post("/workflows/templates/{template_id}/publish", response_model=WorkflowTemplate)
+def publish_workflow_template(template_id: str) -> WorkflowTemplate:
+    t = store.publish_workflow_template(template_id)
+    if t is None:
+        raise HTTPException(status_code=404, detail="Workflow template not found")
+    return t
+
+
+@app.post("/workflows/templates/{template_id}/archive", response_model=WorkflowTemplate)
+def archive_workflow_template(template_id: str) -> WorkflowTemplate:
+    t = store.archive_workflow_template(template_id)
+    if t is None:
+        raise HTTPException(status_code=404, detail="Workflow template not found")
+    return t

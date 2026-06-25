@@ -11,7 +11,6 @@ Ambrosia is organized around three product surfaces:
 ## What It Does
 
 Ambrosia packages the repeated work of trading and investment decisioning into one auditable workflow:
-
 - generates a review from a thesis or alert
 - enriches the case with market data, technicals, sentiment, and related context
 - runs specialist agents for market data, technicals, sentiment, fundamentals, inter-market, quant validation, bull case, bear case, risk, and PM synthesis

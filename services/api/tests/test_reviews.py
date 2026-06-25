@@ -2,6 +2,7 @@ from fastapi.testclient import TestClient
 import hashlib
 import hmac
 import os
+import time as time_module
 
 from app import coordinator
 from app.main import app
@@ -486,3 +487,182 @@ def test_packet_hybrid_retrieval_returns_hits_and_audit() -> None:
     assert packet_response.status_code == 200
     packet = packet_response.json()
     assert any(event["eventType"] == "retrieval.hybrid" for event in packet["audit"])
+
+
+def test_scanner_run_returns_candidates_with_data_provenance() -> None:
+    response = client.post(
+        "/scanner/run",
+        json={"maxCandidates": 5, "minVolume": 100_000.0, "signalFilter": "all"},
+    )
+    assert response.status_code == 200
+    result = response.json()
+    assert result["dataMode"] in {"live", "fallback", "demo"}
+    assert result["totalScanned"] > 0
+    assert len(result["candidates"]) <= 5
+
+    for candidate in result["candidates"]:
+        assert candidate["ticker"] != ""
+        assert candidate["signal"] in {
+            "momentum_up", "momentum_down",
+            "mean_reversion_up", "mean_reversion_down", "neutral",
+        }
+        assert candidate["dataMode"] in {"live", "fallback", "demo"}
+        assert candidate["dataSource"] != ""
+        assert candidate["price"] > 0
+        assert candidate["thesisSuggestion"] != ""
+        assert 0.0 <= candidate["score"] <= 1.0
+
+
+def test_scanner_run_custom_universe_and_momentum_filter() -> None:
+    response = client.post(
+        "/scanner/run",
+        json={
+            "universe": ["AAPL", "MSFT", "NVDA", "QQQ", "SPY"],
+            "maxCandidates": 3,
+            "minVolume": 1.0,
+            "signalFilter": "momentum",
+        },
+    )
+    assert response.status_code == 200
+    result = response.json()
+    for candidate in result["candidates"]:
+        assert candidate["signal"] in {"momentum_up", "momentum_down"}
+
+
+def test_market_snapshot_freshness_field_is_present() -> None:
+    response = client.get("/market/AAPL/snapshot")
+    assert response.status_code == 200
+    snapshot = response.json()
+    # freshnessSeconds is None for fallback, 0 for live — field must exist in schema
+    assert "freshnessSeconds" in snapshot
+    assert snapshot["dataSourceConfidence"] in {"live", "fallback", "demo"}
+
+
+def test_technicals_data_mode_field_is_present() -> None:
+    response = client.get("/market/AAPL/technicals")
+    assert response.status_code == 200
+    technicals = response.json()
+    assert "dataMode" in technicals
+    assert technicals["dataMode"] in {"live", "fallback", "demo"}
+    # dataMode must be consistent with dataQuality
+    if technicals["dataQuality"] == "verified":
+        assert technicals["dataMode"] == "live"
+
+
+def test_report_generation_produces_artifact_with_provenance() -> None:
+    packet_id = "packet-report-1"
+    create_response = client.post("/packets", json=_build_packet_payload(packet_id))
+    assert create_response.status_code == 200
+
+    # Refresh metrics so the report has market data
+    client.post(f"/packets/{packet_id}/metrics/refresh")
+
+    report_response = client.post(f"/packets/{packet_id}/report")
+    assert report_response.status_code == 200
+    report = report_response.json()
+
+    assert report["packetId"] == packet_id
+    assert report["ticker"] == "SOXX"
+    assert report["title"].startswith("Investment Decision Report")
+    assert report["dataMode"] in {"live", "fallback", "demo"}
+    assert report["provenanceLabel"] != ""
+    assert len(report["sections"]) >= 4
+
+    section_titles = {s["title"] for s in report["sections"]}
+    assert "Executive Summary" in section_titles
+    assert "Market Context" in section_titles
+    assert "Validation Specification" in section_titles
+
+    # audit event must be appended to the packet
+    packet_response = client.get(f"/packets/{packet_id}")
+    assert packet_response.status_code == 200
+    assert any(e["eventType"] == "report.generated" for e in packet_response.json()["audit"])
+
+
+def test_report_generation_404_for_missing_packet() -> None:
+    response = client.post("/packets/does-not-exist/report")
+    assert response.status_code == 404
+
+
+def test_market_provider_status_endpoint() -> None:
+    response = client.get("/market/providers/status")
+    assert response.status_code == 200
+    status = response.json()
+    assert "name" in status
+    assert "type" in status
+    assert status["type"] in {"polygon", "yahoo", "demo"}
+    assert "fallbackChain" in status
+    assert isinstance(status["fallbackChain"], list)
+    assert "polygonConfigured" in status
+    assert isinstance(status["polygonConfigured"], bool)
+    # without POLYGON_API_KEY set, must use yahoo path
+    if not os.environ.get("POLYGON_API_KEY"):
+        assert status["type"] == "yahoo"
+        assert status["polygonConfigured"] is False
+
+
+def test_health_detailed_endpoint() -> None:
+    response = client.get("/health/detailed")
+    assert response.status_code == 200
+    health = response.json()
+    assert health["status"] in {"ok", "degraded"}  # degraded when Polygon not configured
+    assert health["service"] == "ambrosia-api"
+    assert "checks" in health
+    assert "store" in health["checks"]
+    assert "marketData" in health["checks"]
+    assert "llmProviders" in health["checks"]
+    assert "slo" in health
+    assert "alerts" in health
+    slo = health["slo"]
+    assert "reviewsCreated" in slo
+    assert "packetsCreated" in slo
+    assert "jobsQueued" in slo
+    assert "jobsCompleted" in slo
+    assert "jobsFailed" in slo
+
+
+def test_scanner_async_job_enqueues_and_completes() -> None:
+    response = client.post(
+        "/scanner/run/async",
+        json={"universe": ["AAPL", "MSFT"], "maxCandidates": 2, "minVolume": 1.0, "signalFilter": "all"},
+    )
+    assert response.status_code == 200
+    job = response.json()
+    assert job["id"].startswith("job-")
+    assert job["jobType"] == "scanner.run"
+    assert job["state"] in {"queued", "running", "completed"}
+
+    # Poll until completed (max 30s)
+    deadline = time_module.time() + 30
+    while time_module.time() < deadline:
+        poll = client.get(f"/jobs/{job['id']}")
+        assert poll.status_code == 200
+        j = poll.json()
+        if j["state"] == "completed":
+            assert j["result"] is not None
+            assert "candidates" in j["result"]
+            assert j["completedAt"] is not None
+            return
+        if j["state"] == "failed":
+            raise AssertionError(f"Job failed: {j.get('error')}")
+        time_module.sleep(0.5)
+    raise AssertionError("Async scanner job did not complete within 30s")
+
+
+def test_jobs_list_endpoint() -> None:
+    # Enqueue a job so the list is non-empty
+    client.post(
+        "/scanner/run/async",
+        json={"universe": ["QQQ"], "maxCandidates": 1, "minVolume": 1.0},
+    )
+    response = client.get("/jobs")
+    assert response.status_code == 200
+    jobs = response.json()
+    assert isinstance(jobs, list)
+    assert len(jobs) >= 1
+    assert all("id" in j and "state" in j and "jobType" in j for j in jobs)
+
+
+def test_job_404_for_missing_id() -> None:
+    response = client.get("/jobs/does-not-exist")
+    assert response.status_code == 404

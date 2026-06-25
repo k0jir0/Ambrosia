@@ -1,0 +1,44 @@
+[
+  {
+    "id": "scanner-all-core-universe",
+    "request": {
+      "universe": ["AAPL", "MSFT", "NVDA", "QQQ", "SPY", "IWM"],
+      "maxCandidates": 5,
+      "minVolume": 1.0,
+      "signalFilter": "all"
+    },
+    "expect": {
+      "minCandidates": 1,
+      "maxCandidates": 5,
+      "allowedSignals": ["momentum_up", "momentum_down", "mean_reversion_up", "mean_reversion_down", "neutral"]
+    }
+  },
+  {
+    "id": "scanner-momentum-filter",
+    "request": {
+      "universe": ["AAPL", "MSFT", "NVDA", "QQQ", "SPY"],
+      "maxCandidates": 5,
+      "minVolume": 1.0,
+      "signalFilter": "momentum"
+    },
+    "expect": {
+      "minCandidates": 0,
+      "maxCandidates": 5,
+      "allowedSignals": ["momentum_up", "momentum_down"]
+    }
+  },
+  {
+    "id": "scanner-mean-reversion-filter",
+    "request": {
+      "universe": ["TSLA", "NVDA", "META", "QQQ", "SPY"],
+      "maxCandidates": 5,
+      "minVolume": 1.0,
+      "signalFilter": "mean_reversion"
+    },
+    "expect": {
+      "minCandidates": 0,
+      "maxCandidates": 5,
+      "allowedSignals": ["mean_reversion_up", "mean_reversion_down"]
+    }
+  }
+]

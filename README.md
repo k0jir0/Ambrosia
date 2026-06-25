@@ -108,6 +108,7 @@ pnpm lint:api
 pnpm evals
 pnpm evals:ablation
 pnpm evals:retrieval
+pnpm evals:scanner
 pnpm db:migrations:check
 pnpm scorecard:check
 pnpm m1:readiness

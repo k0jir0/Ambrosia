@@ -263,13 +263,46 @@ jobs:
           if-no-files-found: error
 
   # -------------------------------------------------------------------------
+  # Gate 10: Scanner discovery benchmark
+  # Validates scanner candidate discovery quality and provenance drift bounds.
+  # -------------------------------------------------------------------------
+  scanner-benchmark:
+    name: Scanner benchmark report
+    runs-on: ubuntu-latest
+    needs: [api-tests]
+    defaults:
+      run:
+        working-directory: services/api
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Generate scanner benchmark artifacts
+        run: uv run python ../../packages/evals/run_scanner_benchmark.py
+
+      - name: Upload scanner benchmark artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: scanner-benchmark-report
+          path: artifacts/scanner-benchmark.*
+          if-no-files-found: error
+
+  # -------------------------------------------------------------------------
   # Deploy to STAGING (branch: staging only)
   # Triggers after all gates pass. Uses Render deploy hooks stored as secrets.
   # -------------------------------------------------------------------------
   deploy-staging:
     name: Deploy → Staging
     runs-on: ubuntu-latest
-    needs: [api-tests, web-build, stack-contract, visibility-proof, provider-ablation, retrieval-benchmark, migration-check, scorecard-runtime, m1-readiness]
+    needs: [api-tests, web-build, stack-contract, visibility-proof, provider-ablation, retrieval-benchmark, migration-check, scorecard-runtime, m1-readiness, scanner-benchmark]
     if: github.ref == 'refs/heads/staging' && github.event_name == 'push'
 
     steps:
@@ -300,7 +333,7 @@ jobs:
   deploy-production:
     name: Deploy → Production
     runs-on: ubuntu-latest
-    needs: [api-tests, web-build, stack-contract, visibility-proof, provider-ablation, retrieval-benchmark, migration-check, scorecard-runtime, m1-readiness]
+    needs: [api-tests, web-build, stack-contract, visibility-proof, provider-ablation, retrieval-benchmark, migration-check, scorecard-runtime, m1-readiness, scanner-benchmark]
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
 
     steps:

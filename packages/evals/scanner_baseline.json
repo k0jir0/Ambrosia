@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "generatedAt": "2026-06-25T23:27:51.142265+00:00",
+  "metrics": {
+    "passRate": 1.0,
+    "avgCandidates": 1.6667,
+    "avgTopScore": 0.3,
+    "provenanceRate": 1.0
+  },
+  "thresholds": {
+    "passRate": 1.0,
+    "avgCandidatesDropPct": 0.3,
+    "avgTopScoreDropPct": 0.25,
+    "provenanceRate": 1.0
+  }
+}

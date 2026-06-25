@@ -53,3 +53,28 @@ Generated report artifacts:
 
 - `artifacts/retrieval-benchmark.json`
 - `artifacts/retrieval-benchmark.md`
+
+## Scanner Benchmark + Drift Gate
+
+Run scanner discovery benchmark against fixture scenarios:
+
+```powershell
+pnpm evals:scanner
+```
+
+To refresh scanner baseline when scanner behavior intentionally changes:
+
+```powershell
+cd services/api
+uv run python ../../packages/evals/run_scanner_benchmark.py --update-baseline
+```
+
+Tracked scanner inputs and baseline:
+
+- `packages/evals/scanner_fixtures.json`
+- `packages/evals/scanner_baseline.json`
+
+Generated scanner artifacts:
+
+- `artifacts/scanner-benchmark.json`
+- `artifacts/scanner-benchmark.md`

@@ -35,8 +35,12 @@
     "test:api": "cd services/api && uv run pytest",
     "lint:api": "cd services/api && uv run ruff check app tests",
     "evals": "cd services/api && uv run python ../../packages/evals/run_evals.py",
+    "evals:ablation": "cd services/api && uv run python ../../packages/evals/run_provider_ablation.py",
+    "synthetic:monitor": "python scripts/synthetic-monitor.py",
     "test:stack": "python -m unittest discover -s tests",
-    "smoke:test": "python scripts/deploy-smoke-test.py"
+    "smoke:test": "python scripts/deploy-smoke-test.py",
+    "visibility:sync": "python scripts/verify-visibility-matrix.py --write-artifacts",
+    "visibility:check": "python scripts/verify-visibility-matrix.py"
   },
   "packageManager": "pnpm@9.12.0",
   "engines": {

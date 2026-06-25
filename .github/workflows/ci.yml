@@ -104,13 +104,60 @@ jobs:
         continue-on-error: true
 
   # -------------------------------------------------------------------------
+  # Gate 4: Function registry + frontend visibility matrix
+  # Ensures all non-internal backend functions are mapped to frontend surfaces.
+  # -------------------------------------------------------------------------
+  visibility-proof:
+    name: Visibility proof gate
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify function registry and visibility matrix
+        run: python scripts/verify-visibility-matrix.py
+
+  # -------------------------------------------------------------------------
+  # Gate 5: Provider ablation evidence artifact
+  # Generates cost/latency/quality tradeoff report for release evidence.
+  # -------------------------------------------------------------------------
+  provider-ablation:
+    name: Provider ablation report
+    runs-on: ubuntu-latest
+    needs: [api-tests]
+    defaults:
+      run:
+        working-directory: services/api
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Generate provider ablation artifacts
+        run: uv run python ../../packages/evals/run_provider_ablation.py
+
+      - name: Upload provider ablation artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: provider-ablation-report
+          path: artifacts/provider-ablation.*
+          if-no-files-found: error
+
+  # -------------------------------------------------------------------------
   # Deploy to STAGING (branch: staging only)
   # Triggers after all gates pass. Uses Render deploy hooks stored as secrets.
   # -------------------------------------------------------------------------
   deploy-staging:
     name: Deploy → Staging
     runs-on: ubuntu-latest
-    needs: [api-tests, web-build, stack-contract]
+    needs: [api-tests, web-build, stack-contract, visibility-proof, provider-ablation]
     if: github.ref == 'refs/heads/staging' && github.event_name == 'push'
 
     steps:
@@ -141,7 +188,7 @@ jobs:
   deploy-production:
     name: Deploy → Production
     runs-on: ubuntu-latest
-    needs: [api-tests, web-build, stack-contract]
+    needs: [api-tests, web-build, stack-contract, visibility-proof, provider-ablation]
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
 
     steps:

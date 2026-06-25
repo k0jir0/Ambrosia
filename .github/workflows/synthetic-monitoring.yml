@@ -1,0 +1,36 @@
+name: Synthetic Monitoring
+
+on:
+  schedule:
+    - cron: "0 */6 * * *"
+  workflow_dispatch:
+
+jobs:
+  synthetic-probes:
+    name: Production synthetic probes
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run synthetic monitor probes
+        env:
+          AMBROSIA_API_BASE_URL: ${{ vars.AMBROSIA_SYNTHETIC_API_BASE_URL }}
+        run: |
+          python scripts/synthetic-monitor.py \
+            --base-url "${AMBROSIA_API_BASE_URL:-https://ambrosia-api.onrender.com}" \
+            --output-json artifacts/synthetic-monitor.json \
+            --output-md artifacts/synthetic-monitor.md
+
+      - name: Upload synthetic monitor artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: synthetic-monitor-report
+          path: artifacts/synthetic-monitor.*
+          if-no-files-found: warn

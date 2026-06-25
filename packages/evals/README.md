@@ -12,3 +12,18 @@ Eval categories:
 - Structured schema validity
 
 The JSONL fixtures here are intentionally small and human-readable.
+
+## Provider Ablation Matrix
+
+Run a cost/latency/quality tradeoff comparison across provider modes:
+
+```powershell
+pnpm evals:ablation
+```
+
+By default this generates:
+
+- `artifacts/provider-ablation.json`
+- `artifacts/provider-ablation.md`
+
+CI uploads these artifacts on every run as the `provider-ablation-report` evidence bundle.

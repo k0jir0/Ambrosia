@@ -106,8 +106,12 @@ pnpm test:e2e
 pnpm test:api
 pnpm lint:api
 pnpm evals
+pnpm evals:ablation
+python scripts/synthetic-monitor.py --base-url https://ambrosia-api.onrender.com
 pnpm test:stack
 ```
+
+Synthetic monitoring also runs every 6 hours in GitHub Actions via `.github/workflows/synthetic-monitoring.yml` and uploads `synthetic-monitor-report` artifacts.
 
 ## Roadmap
 

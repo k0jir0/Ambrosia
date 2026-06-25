@@ -29,6 +29,33 @@ import { generateLocalReview, thesisCandidates } from "@/lib/review-generator";
 import type { Claim, DashboardMetrics, DecisionPacket, DecisionState, MarketSnapshot, ReviewStatus, SentimentData, SourcePointer, TechnicalIndicators, ThesisInput, TradeReview } from "@/lib/types";
 import { Badge, Panel, SectionTitle, cn } from "./ui";
 import { CommonActionsBar } from "./common-actions";
+import {
+  CalibrableBandPanel,
+  CalibrableCohortPanel,
+  CalibrationHealthPanel,
+  CalibrationAlertsPanel,
+  FeedbackRecordPanel,
+  FeedbackHistoryPanel,
+  CalibrableDetailPanel,
+  WorkspaceManagerPanel,
+  PacketSharingPanel,
+  CommentsPanel,
+  ApprovalWorkflowPanel,
+  TemplateLibraryPanel,
+  TemplateCreatePanel,
+  TemplatePublishPanel,
+  SystemHealthPanel,
+  MetricsScoreboardPanel,
+  CertificationPanel,
+  AlertQueuePanel,
+  ProviderStatusPanel,
+  ToolBoundariesPanel,
+  AsyncJobQueuePanel,
+  JobDetailsPanel,
+  ScannerLaunchPanel,
+  PacketLibraryPanel,
+  ReviewArchivePanel,
+} from "./advanced-panels";
 
 type NavView = "workbench" | "memory" | "calibration" | "sources";
 type ActionResult = "ok" | "fallback" | "skipped";
@@ -496,17 +523,102 @@ export function Workbench() {
               <details className="rounded-lg border border-line bg-paper p-4">
                 <summary className="cursor-pointer text-sm font-semibold text-ink">Advanced Workflow Panels</summary>
                 <p className="mt-3 text-sm text-slate-300">
-                  Click Refresh Metrics to load a full snapshot for {activeReview.ticker}, then use Derive Confidence to synthesize the latest technical and sentiment state.
+                  Enterprise-grade decision management: Calibration, collaboration, monitoring, and historical analysis.
                 </p>
-                <div className="mt-4 space-y-4">
-                  <ReportObjectTable review={activeReview} packet={activePacketData} marketData={liveMarketData} />
-                  <PacketExecutionPanel packet={activePacketData} />
-                  <StatusTimeline status={activeReview.status} />
-                  <ReviewArtifact review={activeReview} />
-                  <EvidencePanel review={activeReview} />
-                  <DecisionStrip review={activeReview} onDecision={updateDecision} />
-                  <DashboardPanel metrics={metrics} chartData={decisionChartData} />
-                  <AuditPanel review={activeReview} />
+                <div className="mt-4 space-y-6">
+                  {/* Core Execution Panels */}
+                  <div>
+                    <h3 className="text-xs font-semibold uppercase text-slate-400 mb-3">Core Execution & Results</h3>
+                    <div className="space-y-4">
+                      <ReportObjectTable review={activeReview} packet={activePacketData} marketData={liveMarketData} />
+                      <PacketExecutionPanel packet={activePacketData} />
+                      <StatusTimeline status={activeReview.status} />
+                      <ReviewArtifact review={activeReview} />
+                      <EvidencePanel review={activeReview} />
+                      <DecisionStrip review={activeReview} onDecision={updateDecision} />
+                      <DashboardPanel metrics={metrics} chartData={decisionChartData} />
+                      <AuditPanel review={activeReview} />
+                    </div>
+                  </div>
+
+                  {/* SECTION 1: Calibration & Feedback */}
+                  <details className="rounded border border-slate-700 p-3">
+                    <summary className="cursor-pointer text-xs font-semibold uppercase text-slate-300">
+                      📊 Calibration & Feedback (7 panels)
+                    </summary>
+                    <div className="mt-3 space-y-4">
+                      <CalibrableBandPanel />
+                      <CalibrableCohortPanel />
+                      <CalibrationHealthPanel />
+                      <CalibrationAlertsPanel />
+                      <FeedbackRecordPanel />
+                      <FeedbackHistoryPanel />
+                      <CalibrableDetailPanel />
+                    </div>
+                  </details>
+
+                  {/* SECTION 2: Team Collaboration */}
+                  <details className="rounded border border-slate-700 p-3">
+                    <summary className="cursor-pointer text-xs font-semibold uppercase text-slate-300">
+                      👥 Team Collaboration (4 panels)
+                    </summary>
+                    <div className="mt-3 space-y-4">
+                      <WorkspaceManagerPanel />
+                      <PacketSharingPanel />
+                      <CommentsPanel />
+                      <ApprovalWorkflowPanel />
+                    </div>
+                  </details>
+
+                  {/* SECTION 3: Workflow Templates */}
+                  <details className="rounded border border-slate-700 p-3">
+                    <summary className="cursor-pointer text-xs font-semibold uppercase text-slate-300">
+                      📋 Workflow Templates (3 panels)
+                    </summary>
+                    <div className="mt-3 space-y-4">
+                      <TemplateLibraryPanel />
+                      <TemplateCreatePanel />
+                      <TemplatePublishPanel />
+                    </div>
+                  </details>
+
+                  {/* SECTION 4: Admin & Monitoring */}
+                  <details className="rounded border border-slate-700 p-3">
+                    <summary className="cursor-pointer text-xs font-semibold uppercase text-slate-300">
+                      ⚙️ Admin & Monitoring (6 panels)
+                    </summary>
+                    <div className="mt-3 space-y-4">
+                      <SystemHealthPanel />
+                      <MetricsScoreboardPanel />
+                      <CertificationPanel />
+                      <AlertQueuePanel />
+                      <ProviderStatusPanel />
+                      <ToolBoundariesPanel />
+                    </div>
+                  </details>
+
+                  {/* SECTION 5: Async Jobs */}
+                  <details className="rounded border border-slate-700 p-3">
+                    <summary className="cursor-pointer text-xs font-semibold uppercase text-slate-300">
+                      ⚡ Async Jobs (3 panels)
+                    </summary>
+                    <div className="mt-3 space-y-4">
+                      <AsyncJobQueuePanel />
+                      <JobDetailsPanel />
+                      <ScannerLaunchPanel />
+                    </div>
+                  </details>
+
+                  {/* SECTION 6: Archive & Search */}
+                  <details className="rounded border border-slate-700 p-3">
+                    <summary className="cursor-pointer text-xs font-semibold uppercase text-slate-300">
+                      🔍 Archive & Search (2 panels)
+                    </summary>
+                    <div className="mt-3 space-y-4">
+                      <PacketLibraryPanel />
+                      <ReviewArchivePanel />
+                    </div>
+                  </details>
                 </div>
               </details>
             </>

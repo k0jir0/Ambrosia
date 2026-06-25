@@ -107,6 +107,7 @@ pnpm test:api
 pnpm lint:api
 pnpm evals
 pnpm evals:ablation
+pnpm evals:retrieval
 python scripts/synthetic-monitor.py --base-url https://ambrosia-api.onrender.com
 pnpm test:stack
 ```

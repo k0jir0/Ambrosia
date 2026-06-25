@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "generatedAt": "2026-06-25T23:09:22.317729+00:00",
+  "metrics": {
+    "retrievalRecallRate": 1.0,
+    "avgResults": 2.0,
+    "avgTopScore": 1.0
+  },
+  "thresholds": {
+    "retrievalRecallRate": 0.9,
+    "avgResultsDropPct": 0.25,
+    "avgTopScoreDropPct": 0.3
+  }
+}

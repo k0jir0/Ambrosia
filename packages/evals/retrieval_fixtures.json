@@ -1,0 +1,72 @@
+[
+  {
+    "id": "retrieval-semiconductor",
+    "query": "semiconductor breadth",
+    "topK": 5,
+    "originReview": {
+      "thesis": "Semiconductor leadership may re-accelerate with improving breadth",
+      "ticker": "SOXX",
+      "asset_class": "ETF",
+      "time_horizon": "2-6 weeks",
+      "intended_expression": "Long ETF",
+      "source_pointer": "eval fixture origin"
+    },
+    "relatedReviews": [
+      {
+        "thesis": "Semiconductor breadth and relative strength are improving versus the broad market",
+        "ticker": "NVDA",
+        "asset_class": "Equity",
+        "time_horizon": "2-6 weeks",
+        "intended_expression": "Watchlist",
+        "source_pointer": "eval fixture related"
+      }
+    ],
+    "packet": {
+      "ticker": "SOXX",
+      "assetClass": "ETF",
+      "timeHorizon": "2-6 weeks",
+      "sourceTitle": "Semiconductor breadth dashboard",
+      "sourceType": "internal"
+    },
+    "expect": {
+      "minResults": 2,
+      "requiredKinds": ["packet_source", "prior_review"],
+      "requireRelatedReviewMatch": true
+    }
+  },
+  {
+    "id": "retrieval-energy",
+    "query": "energy drawdown risk",
+    "topK": 5,
+    "originReview": {
+      "thesis": "Energy equities may underperform if crude momentum weakens",
+      "ticker": "XLE",
+      "asset_class": "ETF",
+      "time_horizon": "2-6 weeks",
+      "intended_expression": "Watch",
+      "source_pointer": "eval fixture origin"
+    },
+    "relatedReviews": [
+      {
+        "thesis": "Energy drawdown risk rises when crude volatility spikes",
+        "ticker": "CVX",
+        "asset_class": "Equity",
+        "time_horizon": "1-4 weeks",
+        "intended_expression": "Hedge",
+        "source_pointer": "eval fixture related"
+      }
+    ],
+    "packet": {
+      "ticker": "XLE",
+      "assetClass": "ETF",
+      "timeHorizon": "2-6 weeks",
+      "sourceTitle": "Energy risk dashboard",
+      "sourceType": "internal"
+    },
+    "expect": {
+      "minResults": 2,
+      "requiredKinds": ["packet_source", "prior_review"],
+      "requireRelatedReviewMatch": true
+    }
+  }
+]

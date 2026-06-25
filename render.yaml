@@ -28,7 +28,7 @@ services:
   # ============================================================
 
   - type: web
-    name: ambrosia-trade-review-api
+    name: ambrosia-api
     runtime: python
     rootDir: services/api
     branch: main
@@ -46,10 +46,10 @@ services:
       - key: LOG_LEVEL
         value: warning
       - key: ALLOWED_ORIGIN_REGEX
-        value: https://ambrosia-5aec\.onrender\.com
+        value: https://ambrosia-web\.onrender\.com
 
   - type: web
-    name: ambrosia-trade-review-web
+    name: ambrosia-web
     runtime: node
     rootDir: .
     branch: main
@@ -62,14 +62,14 @@ services:
       - key: NEXT_PUBLIC_ENV
         value: production
       - key: NEXT_PUBLIC_API_URL
-        value: https://ambrosia-trade-review-api.onrender.com
+        value: https://ambrosia-api.onrender.com
 
   # ============================================================
   # STAGING SERVICES (branch: staging)
   # ============================================================
 
   - type: web
-    name: ambrosia-trade-review-api-staging
+    name: ambrosia-api-staging
     runtime: python
     rootDir: services/api
     branch: staging
@@ -87,10 +87,10 @@ services:
       - key: LOG_LEVEL
         value: info
       - key: ALLOWED_ORIGIN_REGEX
-        value: https://.*-staging\.onrender\.com
+        value: https://ambrosia-web-staging\.onrender\.com
 
   - type: web
-    name: ambrosia-trade-review-web-staging
+    name: ambrosia-web-staging
     runtime: node
     rootDir: .
     branch: staging
@@ -103,4 +103,4 @@ services:
       - key: NEXT_PUBLIC_ENV
         value: staging
       - key: NEXT_PUBLIC_API_URL
-        value: https://ambrosia-trade-review-api-staging.onrender.com
+        value: https://ambrosia-api-staging.onrender.com

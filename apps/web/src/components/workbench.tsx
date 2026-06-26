@@ -21,7 +21,6 @@ import {
 import { sampleReviews } from "@/lib/sample-data";
 import type { DecisionPacket, DecisionState, MarketSnapshot, ReviewStatus, SentimentData, TechnicalIndicators, TradeReview } from "@/lib/types";
 import { Badge, Panel, cn } from "./ui";
-import { CommonActionsBar } from "./common-actions";
 
 type NavView = "workbench" | "memory" | "calibration" | "sources";
 type ActionResult = "ok" | "fallback" | "skipped";
@@ -398,36 +397,6 @@ export function Workbench({ initialReviewId }: { initialReviewId?: string } = {}
             {actionFeedback.message}
           </div>
         ) : null}
-        
-        {/* Common actions bar */}
-        <CommonActionsBar
-          onNewReview={() => {
-            void runAction("New Review", startNewPacketDraft);
-          }}
-          onOpenExistingReview={() => {
-            void runAction("Open Existing", openExistingReview);
-          }}
-          onRefreshMetrics={() => {
-            void runAction("Refresh Metrics", refreshMarketMetrics);
-          }}
-          onRunAgentSwarm={() => {
-            void runAction("Run Agent Swarm", runAgentSwarm);
-          }}
-          onPrepareBacktest={() => {
-            void runAction("Prepare Backtest", prepareBacktest);
-          }}
-          onEvaluateRisk={() => {
-            void runAction("Evaluate Risk", viewRisks);
-          }}
-          onDeriveConfidence={() => {
-            void runAction("Derive Confidence", viewTechnicalsAndDeriveConfidence);
-          }}
-          onRecordDecision={() => {
-            updateDecision(activeReview.decisionState ?? "watch");
-            void runAction("Record Decision", recordOutcomeForDecision);
-          }}
-          disabled={Boolean(activeAction)}
-        />
 
         {/* Main content area - 3 column layout for review workbench */}
         {activeView === "workbench" ? (
@@ -459,7 +428,18 @@ export function Workbench({ initialReviewId }: { initialReviewId?: string } = {}
               {/* Compact market summary */}
               {liveMarketData?.snapshot ? (
                 <Panel className="p-4">
-                  <h3 className="text-xs font-semibold mb-3 uppercase text-slate-400">Market Snapshot</h3>
+                  <div className="flex items-start justify-between mb-3">
+                    <h3 className="text-xs font-semibold uppercase text-slate-400">Market Snapshot</h3>
+                    <button
+                      onClick={() => {
+                        void runAction("Refresh Metrics", refreshMarketMetrics);
+                      }}
+                      disabled={Boolean(activeAction)}
+                      className="text-xs text-teal hover:text-teal/70 disabled:opacity-50"
+                    >
+                      ↻
+                    </button>
+                  </div>
                   <div className="space-y-2 text-sm">
                     <div className="flex justify-between">
                       <span className="text-slate-400">Price</span>
@@ -529,7 +509,7 @@ export function Workbench({ initialReviewId }: { initialReviewId?: string } = {}
             {/* Right column: Decision Controls & Risk */}
             <div className="space-y-4">
               {/* Sticky decision strip */}
-              <Panel className="p-4 border-2 border-teal/30 bg-teal/5">
+              <Panel className="sticky bottom-0 p-4 border-2 border-teal/30 bg-teal/5 shadow-lg">
                 <h2 className="text-sm font-semibold mb-3">Decision</h2>
                 <div className="space-y-2">
                   {(Object.entries(decisionLabels) as Array<[DecisionState, string]>).map(([state, label]) => (

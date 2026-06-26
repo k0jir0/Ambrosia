@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { Activity, ArrowRight, Beaker, CheckCircle2, Circle, Clock3, RefreshCw, ShieldCheck, SlidersHorizontal } from "lucide-react";
+import { Activity, ArrowRight, Beaker, CheckCircle2, Circle, Clock3, Download, RefreshCw, ShieldCheck, SlidersHorizontal } from "lucide-react";
 import {
   createPacket,
   derivePacketConfidence,
@@ -624,6 +624,11 @@ export function Workbench({ initialReviewId }: { initialReviewId?: string } = {}
     }
   }
 
+  function exportCurrentReport() {
+    if (!reportArtifact) return;
+    downloadReportArtifact(reportArtifact);
+  }
+
   const runbookSteps = useMemo(
     () => buildRunbookSteps(activeReview, activePacketData, liveMarketData, reportArtifact),
     [activeReview, activePacketData, liveMarketData, reportArtifact]
@@ -638,12 +643,14 @@ export function Workbench({ initialReviewId }: { initialReviewId?: string } = {}
           review={activeReview}
           packet={activePacketData}
           steps={runbookSteps}
+          reportArtifact={reportArtifact}
           runbookState={runbookState}
           activeAction={activeAction}
           providerMode={providerMode}
           onProviderModeChange={setProviderMode}
           onRunNext={runNextRunbookStep}
           onRunGuided={runGuidedDemo}
+          onExportReport={exportCurrentReport}
         />
 
         <div className="grid gap-4 xl:grid-cols-[minmax(260px,0.9fr)_minmax(360px,1.35fr)_minmax(280px,0.85fr)]">
@@ -721,22 +728,26 @@ function RunbookStrip({
   review,
   packet,
   steps,
+  reportArtifact,
   runbookState,
   activeAction,
   providerMode,
   onProviderModeChange,
   onRunNext,
-  onRunGuided
+  onRunGuided,
+  onExportReport
 }: {
   review: TradeReview;
   packet: DecisionPacket | null;
   steps: RunbookStep[];
+  reportArtifact: ReportArtifact | null;
   runbookState: RunbookRunState;
   activeAction: string | null;
   providerMode: ProviderMode;
   onProviderModeChange: (mode: ProviderMode) => void;
   onRunNext: () => void;
   onRunGuided: () => void;
+  onExportReport: () => void;
 }) {
   const nextStep = steps.find((step) => !step.done) ?? null;
   const currentStep = runbookState.currentStepId ? steps.find((step) => step.id === runbookState.currentStepId) ?? null : null;
@@ -792,6 +803,15 @@ function RunbookStrip({
           >
             {activeAction === "Run guided demo" ? "Running..." : "Run guided demo"}
           </button>
+          <button
+            type="button"
+            onClick={onExportReport}
+            disabled={!reportArtifact || Boolean(activeAction)}
+            className="focus-ring inline-flex items-center gap-1 rounded-md border border-line bg-fog/70 px-3 py-2 text-xs font-semibold text-slate-200 transition hover:border-teal/50 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <Download className="h-3.5 w-3.5" />
+            Export report
+          </button>
         </div>
       </div>
 
@@ -822,6 +842,8 @@ function RunbookStrip({
             displayStatus={getRunbookDisplayStatus(step, nextStep, runbookState)}
             review={review}
             packet={packet}
+            reportArtifact={reportArtifact}
+            onExportReport={onExportReport}
           />
         ))}
       </ol>
@@ -834,13 +856,17 @@ function RunbookStepCard({
   index,
   displayStatus,
   review,
-  packet
+  packet,
+  reportArtifact,
+  onExportReport
 }: {
   step: RunbookStep;
   index: number;
   displayStatus: { label: string; tone: "neutral" | "good" | "warn" | "info"; active: boolean };
   review: TradeReview;
   packet: DecisionPacket | null;
+  reportArtifact: ReportArtifact | null;
+  onExportReport: () => void;
 }) {
   return (
     <li className={cn("rounded-md border p-2 text-xs", step.done ? "border-teal/30 bg-teal/10" : displayStatus.active ? "border-amber/40 bg-amber/5" : "border-line bg-fog/70")}>
@@ -866,6 +892,19 @@ function RunbookStepCard({
           {step.id === "agents" ? <EvidenceLine label="Provider" value={packet?.providerInfo ? `${packet.providerInfo.name} / fallback=${packet.providerInfo.fallbackUsed ? "yes" : "no"}` : "Pending agent run"} /> : null}
           {step.manualGate ? <EvidenceLine label="Gate" value={step.manualGate} /> : null}
         </dl>
+        {step.id === "report" ? (
+          <div className="mt-3 border-t border-line pt-2">
+            <button
+              type="button"
+              onClick={onExportReport}
+              disabled={!reportArtifact}
+              className="focus-ring inline-flex items-center gap-1 rounded-md border border-line bg-fog/80 px-2 py-1 text-[11px] font-semibold text-slate-200 transition hover:border-teal/50 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <Download className="h-3 w-3" />
+              {reportArtifact ? "Download Markdown report" : "Generate report to download"}
+            </button>
+          </div>
+        ) : null}
       </details>
     </li>
   );
@@ -1491,6 +1530,48 @@ function MetricRow({ label, value, tone = "neutral" }: { label: string; value: s
 
 function compactNumber(value: number) {
   return new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 }).format(value);
+}
+
+function downloadReportArtifact(report: ReportArtifact) {
+  if (typeof window === "undefined") return;
+  const markdown = renderReportMarkdown(report);
+  const blob = new Blob([markdown], { type: "text/markdown;charset=utf-8" });
+  const url = window.URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `${safeFilename(report.ticker)}-investment-decision-report.md`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.URL.revokeObjectURL(url);
+}
+
+function renderReportMarkdown(report: ReportArtifact) {
+  const metadata = [
+    `# ${report.title}`,
+    "",
+    `Ticker: ${report.ticker}`,
+    `Packet ID: ${report.packetId}`,
+    `Generated: ${formatReportTimestamp(report.createdAt)}`,
+    `Data mode: ${report.dataMode}`,
+    `Provenance: ${report.provenanceLabel}`,
+    report.marketDataSource ? `Market data source: ${report.marketDataSource}` : "Market data source: none attached",
+    report.marketDataFreshnessSeconds !== null ? `Market data freshness: ${report.marketDataFreshnessSeconds}s` : "Market data freshness: unavailable",
+    ""
+  ];
+
+  const sections = report.sections.flatMap((section) => [`## ${section.title}`, "", section.content, ""]);
+  return [...metadata, ...sections].join("\n");
+}
+
+function safeFilename(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "ambrosia";
+}
+
+function formatReportTimestamp(value: string) {
+  const timestamp = Date.parse(value);
+  if (Number.isNaN(timestamp)) return value;
+  return new Date(timestamp).toISOString();
 }
 
 function mergeReviews(apiReviews: TradeReview[], localReviews: TradeReview[]): TradeReview[] {

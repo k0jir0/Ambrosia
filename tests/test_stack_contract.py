@@ -146,11 +146,16 @@ class StackContractTests(unittest.TestCase):
         ]:
             self.assertIn(f"def {method}", store)
 
-    def test_render_predeploy_runs_repo_level_validator_from_api_root(self) -> None:
+    def test_render_blueprint_matches_free_tier_staging_contract(self) -> None:
         render = read_text("render.yaml")
         validator = read_text("scripts/validate-schema.py")
 
-        self.assertIn("preDeployCommand: cd ../.. && python scripts/validate-schema.py", render)
+        self.assertNotIn("preDeployCommand:", render)
+        self.assertNotIn("healthCheckStartFailureThreshold:", render)
+        self.assertIn("repo: https://github.com/k0jir0/Ambrosia", render)
+        self.assertIn("--timeout-graceful-shutdown 30", render)
+        self.assertIn("ambrosia-api-staging", render)
+        self.assertIn("ambrosia-web-staging", render)
         self.assertIn("cwd=api_dir", validator)
         self.assertIn('"-p", "test_stack_contract.py"', validator)
 

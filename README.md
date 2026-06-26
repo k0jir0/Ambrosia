@@ -1,58 +1,71 @@
 # Ambrosia
 
-Ambrosia is an agent-native trading and investment decision platform for financial decisioning in an AI-driven world. It turns a signal, alert, watchlist move, market question, or trade thesis into an organized, data-aware, risk-aware decision workflow before money is put at risk.
+Ambrosia is an agentic investment decision platform. It turns a signal, alert, watchlist move, market question, or trade thesis into a structured, auditable, risk-aware review before capital is put at risk.
 
-Ambrosia is organized around three product surfaces:
+The product is organized around three connected surfaces:
 
-- Decisions: the Agentic Quant Workflow AI for structured pre-trade decision packets
-- Swarm Private: specialist multi-agent collaboration with explicit coordinator routing
-- Enterprise Agentic Swarm Marketplace: governed, serverized workflows with tool-boundary scaffolding
-
-## What It Does
-
-Ambrosia packages the repeated work of trading and investment decisioning into one auditable workflow:
-- generates a review from a thesis or alert
-- enriches the case with market data, technicals, sentiment, and related context
-- runs specialist agents for market data, technicals, sentiment, fundamentals, inter-market, quant validation, bull case, bear case, risk, and PM synthesis
-- produces critique, disconfirming tests, validation plans, and tradeability questions
-- prepares controlled backtests and evaluates risk with explicit refusal gates
-- derives multi-factor confidence and updates packet state
-- records the complete audit trail, outcome, and follow-up memory
+- Decisions: agentic review workflows for pre-trade investment decisions.
+- Swarm Private: private specialist-agent collaboration for portfolio, risk, market, and thesis analysis.
+- Enterprise Agentic Swarm Marketplace: governed workflows, admin controls, visibility checks, and deployable enterprise modules.
 
 ## Current State
 
-The current monorepo includes a working Next.js workbench and a FastAPI backend. The implemented workflow supports API-backed review and packet actions with deterministic fallback behavior when external services are unavailable.
+Ambrosia is now a working monorepo with a Next.js frontend, a FastAPI backend, local full-stack scripts, CI validation, and production deployment wiring.
 
-What is currently live in the product:
+The frontend includes:
 
-- workbench-first review and packet workflow
-- manual thesis intake and generated thesis seeds
-- Generate thesis support for quick starts
-- API-first review creation and retrieval
-- market metrics refresh for snapshot, technicals, and sentiment
-- Run Agent Swarm with coordinator-driven specialist outputs
-- prepare backtest, evaluate risk, derive confidence, and record decision flows
-- decision memory, source navigation, and report-oriented packet views
-- Functional left navigation between workbench, memory, calibration, and sources
-- Live dashboard metrics in the workbench and summary views
-- Visible form validation errors for empty or incomplete thesis inputs
-- Local deterministic fallback when external services are unavailable
-- provenance-aware fallback disclosure rather than hidden invented data
+- Dashboard and review workbench
+- New Review flow with review creation and re-access paths
+- Review detail pages at `/review/[id]`
+- Discovery / market intelligence surface
+- History, calibration, team, reports, governance, admin, and advanced operations pages
+- Global navigation with the Operating Model panel visible beneath the Admin pressable banner
+- API-first behavior with deterministic local fallback when services are unavailable
+- Visible paragraphs describing Agentic AI for Investments, Investment Trading Decisions, Swarm Intelligence, and Agentic Swarm
 
-The current 8-function philosophy is encoded as one connected workflow, not as isolated features.
+The backend includes:
 
-## Why It Matters
+- Review creation, retrieval, and packet workflow routes
+- Market data, scanner, sentiment, retrieval, risk, report, and coordinator modules
+- Provider abstraction for deterministic, Ollama, hosted, and hybrid specialist runs
+- Stateful sandbox routes for advanced operating functions such as orders, positions, attribution, alerts, admin audit, and guardrail policy updates
+- PostgreSQL-ready schema and migration scaffolding for durable packet, audit, and memory storage
 
-Most investment tools optimize for idea generation. Ambrosia is designed to optimize for idea validation, skepticism, and decision discipline. It keeps human authority explicit while making the workflow repeatable, auditable, and easier to trust.
+## Product Thesis
+
+Ambrosia is Agentic AI for Investments because it decomposes an investment question into coordinated specialist tasks, generates review packets, records evidence, exposes uncertainty, and keeps the human decision maker in control.
+
+Ambrosia supports Investment Trading Decisions by converting thesis intake into a repeatable path: market context, specialist critique, risk evaluation, confidence synthesis, decision memory, and follow-up reporting.
+
+Ambrosia is Swarm Intelligence because specialist outputs are routed through a coordinator instead of being shown as isolated summaries. The system compares perspectives, preserves disagreement, and produces a more disciplined final packet.
+
+Ambrosia is an Agentic Swarm because the workflow is not a static dashboard. Agents can be assigned roles, called through provider modes, evaluated through gates, and surfaced through UI modules that map to operating decisions.
 
 ## Architecture
 
+- Monorepo root with pnpm workspaces
 - Next.js 15.1.0 frontend with React 19
-- FastAPI backend with packet, review, market, retrieval, risk, and coordinator routes
-- Deterministic local review generation fallback
-- Provider abstraction for deterministic, Ollama, hosted, and hybrid specialist runs
-- PostgreSQL-ready durable-memory schema and packet/audit storage patterns
-- Playwright, pytest, Ruff, and contract-style stack tests
+- FastAPI backend with Python 3.12
+- SQLAlchemy and PostgreSQL-oriented schema patterns
+- Provider modes for deterministic local execution, Ollama, hosted models, and hybrid operation
+- Playwright, pytest, Ruff, visibility checks, eval scripts, and stack contract tests
+- Render deployment entrypoints through root `index.js` and `render.yaml`
+
+## Repository Layout
+
+The root is intentionally kept small. Configuration and entrypoint files stay at the top level; operational notes, archives, helper scripts, and logs live in focused subfolders.
+
+- `apps/web/` - Next.js frontend
+- `services/api/` - FastAPI backend
+- `packages/evals/` - evaluation and ablation runners
+- `packages/schemas/` - shared schema contracts
+- `scripts/` - deployment, validation, local stack, and automation scripts
+- `scripts/dev/` - lower-level development helper scripts moved out of the root
+- `docs/` - implementation notes, deployment notes, roadmap documents, and verification records
+- `docs/session-archives/` - historical index artifacts, including `index69.txt`
+- `infra/` - database schema and migration scaffolding
+- `tests/` - stack and integration tests
+- `artifacts/` - ignored local logs and generated artifacts
 
 ## Local Development
 
@@ -63,11 +76,13 @@ Requirements:
 - Python 3.12
 - uv
 
-Common commands from the repository root:
+Install dependencies:
 
 ```powershell
 pnpm install
 ```
+
+Run the full local stack:
 
 ```powershell
 pnpm local:serve
@@ -75,13 +90,47 @@ pnpm local:serve
 
 Useful local commands:
 
-- `pnpm local:serve` runs the full stack in one terminal
 - `pnpm local:start` launches the stack in detached mode
 - `pnpm local:stop` stops the local stack
 - `pnpm local:status` checks whether web and API are responding
-- `pnpm local:logs` tails stack logs from `.local/`
+- `pnpm local:logs` tails local stack logs from `.local/`
 - `pnpm local:web:serve` runs only the web app
 - `pnpm local:api:serve` runs only the API
+
+## Verification
+
+Common checks from the repository root:
+
+```powershell
+pnpm build:web
+pnpm lint:web
+pnpm test:e2e
+pnpm test:api
+pnpm lint:api
+pnpm visibility:check
+pnpm evals
+pnpm evals:ablation
+pnpm evals:retrieval
+pnpm evals:scanner
+pnpm db:migrations:check
+pnpm scorecard:check
+pnpm m1:readiness
+pnpm test:stack
+```
+
+Synthetic monitoring:
+
+```powershell
+python scripts/synthetic-monitor.py --base-url https://ambrosia-api.onrender.com
+```
+
+Recent verification status:
+
+- Web build and lint were brought back to green locally.
+- API test suite was brought to green locally.
+- Visibility and provider workflow gates are green in GitHub Actions.
+- The production web surface has served the current UI at `https://ambrosia-5aec.onrender.com/`.
+- The API production health URL requires Render availability and hook verification if `https://ambrosia-api.onrender.com` returns unavailable.
 
 ## Render
 
@@ -93,40 +142,25 @@ Current Render settings:
 - Build Command: `pnpm build`
 - Start Command: `node index.js`
 
-The live product is served at [https://ambrosia-5aec.onrender.com/](https://ambrosia-5aec.onrender.com/).
+Live product:
 
-## Verification
+- Web: `https://ambrosia-5aec.onrender.com/`
+- API health target: `https://ambrosia-api.onrender.com/health`
 
-From the repo root:
-
-```powershell
-pnpm build:web
-pnpm lint:web
-pnpm test:e2e
-pnpm test:api
-pnpm lint:api
-pnpm evals
-pnpm evals:ablation
-pnpm evals:retrieval
-pnpm evals:scanner
-pnpm db:migrations:check
-pnpm scorecard:check
-pnpm m1:readiness
-python scripts/synthetic-monitor.py --base-url https://ambrosia-api.onrender.com
-pnpm test:stack
-```
-
-Synthetic monitoring also runs every 6 hours in GitHub Actions via `.github/workflows/synthetic-monitoring.yml` and uploads `synthetic-monitor-report` artifacts.
+GitHub production deploy wiring exists, but Render deploy hook secrets must be populated for automated hook-triggered deployment. When the hook variables are empty, the GitHub deploy workflow can pass while skipping the Render trigger steps.
 
 ## Roadmap
 
-1. Formalize migration/versioning automation and pgvector ranking strategies.
-2. Expand provider ablations, eval reporting, and synthetic monitoring in CI.
-3. Add scanner-style NYSE thesis discovery and report generation on top of the existing workflow.
-4. Add multi-user governance and permission layers for enterprise rollout.
-5. Advance post-Day-7 roadmap: broker sandbox, advanced factor attribution, and mobile alerts.
+1. Restore and continuously verify production API health on Render.
+2. Move advanced sandbox state from in-memory fallback behavior into durable PostgreSQL-backed storage.
+3. Expand review lifecycle persistence across accounts, teams, and historical search.
+4. Connect more frontend operating panels directly to live advanced backend endpoints.
+5. Expand provider ablations, evaluation reporting, and regression gates.
+6. Harden enterprise governance, marketplace packaging, and permission boundaries.
+7. Add broker-sandbox workflows, advanced attribution, mobile alerting, and portfolio-level action loops.
 
 ## Repository
 
 Private repository: `https://github.com/k0jir0/Ambrosia`
+
 Application: `https://ambrosia-5aec.onrender.com/`

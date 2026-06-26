@@ -1,0 +1,82 @@
+Index69: Current State of Ambrosia
+Date: June 26, 2026
+
+Executive Summary
+
+Ambrosia has moved from a mostly demo-shaped trade review interface into a working agentic investment decision platform with a real monorepo structure, a modern frontend, a FastAPI backend, local full-stack commands, review creation and retrieval flows, advanced operating panels, provider abstraction, and CI gates that now cover build, visibility, API, and provider workflow behavior.
+
+The current state is not yet a finished institutional platform, but it is no longer only a prototype. The core product question is now sharper: how does Ambrosia turn uncertain investment ideas into disciplined, auditable, repeatable decisions? The present answer is visible across the product. A user can create a review, revisit review details, inspect dashboard metrics, move through market intelligence, history, calibration, team, admin, and advanced operations pages, and see the language of Agentic AI for Investments, Investment Trading Decisions, Swarm Intelligence, and Agentic Swarm expressed directly in the interface.
+
+The major work ahead is operational hardening. The frontend has become coherent. The backend has useful APIs and stateful fallback behavior. The architecture is ready for durable storage, production model providers, and enterprise governance. The next phase should replace remaining demo-like state with durable, account-aware, production-backed behavior while preserving the useful speed of the current local stack.
+
+Product State
+
+Ambrosia currently presents itself as an agentic investment decision system. The product is organized around review workflows rather than passive dashboards. The central action is not simply viewing market data. The central action is forming, testing, critiquing, and recording a decision packet.
+
+The frontend includes the Dashboard, New Review, review detail pages, Discovery / market intelligence, History, Calibration, Team, Reports, Governance, Admin, and Advanced operations. The recent layout change moved the Operating Model table beneath the Admin pressable banner so it reads consistently as a whole-site operating layer rather than a front-page-only block. This is the correct direction for the current stage because the operating model should frame the whole system, not only the landing experience.
+
+The New Review feature is intended to behave like a production feature: a user creates a review for a ticker or thesis, the review is counted in total review activity, and the review remains re-accessible through ID-based routes and history-like surfaces. The system now has the right conceptual flow for this. The remaining hardening question is not whether the UI can show a created review, but whether created reviews persist across sessions, deploys, accounts, and team boundaries with durable backend storage. That is the correct next line between prototype and institutional readiness.
+
+Agentic AI for Investments
+
+Ambrosia is Agentic AI for Investments because it uses agents as decision operators, not only text generators. The intended flow decomposes an investment question into specialist perspectives: market data, technicals, sentiment, fundamentals, quant validation, bull case, bear case, risk, and portfolio-manager synthesis. The coordinator assembles the outputs into a review packet with critique, uncertainty, decision memory, and follow-up actions.
+
+The current implementation supports this thesis through provider abstraction. Specialist runs can operate through deterministic local behavior, Ollama, hosted providers, or hybrid configurations. This matters because it lets Ambrosia test workflows locally without pretending that local fallback is the final product. The provider layer is the bridge between current development reliability and future model diversity.
+
+Investment Trading Decisions
+
+Ambrosia supports Investment Trading Decisions by turning a ticker, thesis, signal, or alert into a structured review before action is taken. The product is strongest when it is viewed as a pre-trade discipline layer. It asks: what is the thesis, what evidence supports it, what evidence disconfirms it, what risk is being accepted, what would invalidate the idea, and how should the decision be recorded?
+
+The backend already contains many of the right modules for this behavior: review engine, coordinator, market data, sentiment, scanner, retrieval quality, report generation, risk, calibration, operational scorecard, feedback, and execution-loop scaffolding. The frontend exposes this as review creation, packet actions, dashboard metrics, history, and advanced operating panels. The current task is to ensure every surface has appropriate variance in variables and real backend state rather than static, demo-like examples.
+
+Swarm Intelligence
+
+Ambrosia is Swarm Intelligence when multiple specialist perspectives are coordinated into a better decision than any single perspective would produce alone. In the current architecture, the coordinator is the important idea. The agents are not valuable merely because there are many of them. They are valuable because the system can route tasks, preserve disagreement, compare cases, and synthesize a decision packet.
+
+For the product to fully earn this label, the next phase should make disagreement and synthesis more explicit. The UI should show where agents agree, where they conflict, which evidence changed confidence, and which claims remain unresolved. A strong Ambrosia packet should feel less like an answer and more like a governed investment committee record produced at software speed.
+
+Agentic Swarm
+
+Ambrosia is an Agentic Swarm when the specialist-agent system can take bounded actions across the workflow. This includes generating review packets, preparing backtests, evaluating risk, deriving confidence, triggering follow-up checks, updating guardrail policies, and recording audit state. The advanced backend routes and frontend Advanced page are the beginning of this operating layer.
+
+The current implementation includes stateful sandbox behavior for orders, positions, attribution reports, mobile alert events and subscriptions, admin audit, and guardrail policies. This is important because it gives Ambrosia a skeleton for operational loops beyond static review pages. The next step is durable storage and real service integrations so these operations survive process restarts and production deployments.
+
+Private, Enterprise, and Marketplace
+
+Product 2, "Private", means the system can run as a private intelligence and decision environment rather than a public social trading product. Private reviews, private agent runs, private audit logs, private team permissions, and private model-provider choices are all part of that direction. This is especially important in investing because proprietary theses, position context, and risk constraints cannot be treated as public data.
+
+Ambrosia is Enterprise because it is moving toward governed workflows: admin surfaces, visibility matrices, role boundaries, audit trails, CI validation, deployment controls, and provider configuration. Enterprise readiness is less about a big interface and more about accountability. The system needs to show who did what, why a decision was made, what evidence was used, what model or provider contributed, and which permissions allowed the action.
+
+Ambrosia is Marketplace when workflows, specialist agents, reports, scanners, and enterprise modules can be packaged, governed, and reused. The current codebase is not yet a full marketplace, but the monorepo structure, provider abstraction, function registry, visibility documents, and modular service boundaries point in that direction.
+
+Architecture
+
+The repository is organized as a pnpm monorepo with a Next.js frontend in `apps/web`, a FastAPI backend in `services/api`, evaluation runners in `packages/evals`, schema contracts in `packages/schemas`, infrastructure files in `infra`, and scripts for local development, deployment, visibility checks, monitoring, and validation.
+
+The root folder has now been cleaned so it is more presentable. Configuration and entrypoint files remain at top level. Historical Index59 artifacts were moved to `docs/session-archives/index59`. The current paper lives at `docs/session-archives/index69.txt`. Tracked test output was moved to `docs/session-archives/test-output`. Lower-level helper scripts were moved to `scripts/dev`. Local transient logs were moved into ignored `artifacts/logs`.
+
+This matters because a clean repository is not cosmetic. It changes how quickly an operator can understand the system. A tidy root makes the main architecture legible: app, service, packages, scripts, docs, infra, and tests.
+
+Verification State
+
+The build and verification posture is materially stronger than it was earlier in the session. The web build and lint gates were fixed locally. The API tests were brought to green locally. Visibility checks and provider workflow checks were brought to green in GitHub Actions. The production web route served the current UI, including the `/advanced` surface, on `https://ambrosia-5aec.onrender.com/`.
+
+There is one important production caveat. The API health target at `https://ambrosia-api.onrender.com/health` must be continuously verified, and the Render deploy hook variables need to be populated for automated hook-triggered deployment. The GitHub workflow can succeed while skipping Render hook steps when the hook secrets are empty. This means the code state and the production service state should not be assumed identical without an explicit health check.
+
+Current Gaps
+
+The remaining gaps are clear and manageable:
+
+1. Production API health needs reliable Render deployment and monitoring.
+2. Review persistence should move from local and fallback behavior into durable, account-aware backend storage.
+3. Advanced sandbox state should become PostgreSQL-backed operational state.
+4. More frontend panels should call live backend endpoints instead of static sample data.
+5. Swarm disagreement, confidence movement, and evidence quality should become more visible in the UI.
+6. Enterprise permissions, audit boundaries, and team workflows need stronger production semantics.
+7. Marketplace packaging needs a clearer module contract for agents, reports, scanners, and workflows.
+
+Conclusion
+
+The current state of Ambrosia is promising because the product concept and architecture are now aligned. The system is not merely a collection of demos. It has a coherent investment decision workflow, an agentic product thesis, a working frontend, a backend with meaningful modules, provider abstraction, local development commands, CI gates, and a cleaned repository structure.
+
+The next phase should be less about adding new visible surfaces and more about making every existing surface operational. That means durable state, account boundaries, production API reliability, provider observability, audit trails, and real variance in variables across all functions. Ambrosia is closest to its design intention when every page answers one question: how does this help an investor make a better, more accountable decision?

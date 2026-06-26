@@ -12,8 +12,8 @@
 |----------|---------|----------|
 | **Execution Guide** | Full implementation roadmap & timeline | `INDEX59_AUTOPILOT_100_PERCENT_EXECUTION_GUIDE.md` |
 | **Complete Checklist** | Phase-by-phase verification | `INDEX59_COMPLETE_IMPLEMENTATION_CHECKLIST.md` |
-| **Session Summary** | What was built today | `INDEX59_SESSION_IMPLEMENTATION_SUMMARY.py` |
-| **Final Summary** | Overall status | `INDEX59_FINAL_SESSION_SUMMARY.py` |
+| **Session Summary** | What was built today | `docs/session-archives/index59/INDEX59_SESSION_IMPLEMENTATION_SUMMARY.py` |
+| **Final Summary** | Overall status | `docs/session-archives/index59/INDEX59_FINAL_SESSION_SUMMARY.py` |
 | **Autopilot Status** | Weekly operation guide | `INDEX59_AUTOPILOT_STATUS.md` (from earlier session) |
 
 ---

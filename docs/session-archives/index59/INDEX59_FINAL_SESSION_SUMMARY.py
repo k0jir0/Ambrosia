@@ -6,6 +6,7 @@ Complete implementation of 100% autopilot execution plan
 
 import json
 from datetime import datetime
+from pathlib import Path
 
 summary = {
     "session_date": "2026-06-25",
@@ -246,7 +247,8 @@ if __name__ == "__main__":
     print("\n" + "=" * 80)
     
     # Save to file
-    with open("INDEX59_FINAL_SESSION_SUMMARY.json", "w") as f:
+    output_path = Path(__file__).with_name("INDEX59_FINAL_SESSION_SUMMARY.json")
+    with open(output_path, "w") as f:
         json.dump(summary, f, indent=2)
     
-    print("\nFull summary saved to: INDEX59_FINAL_SESSION_SUMMARY.json")
+    print(f"\nFull summary saved to: {output_path}")

@@ -149,7 +149,7 @@ pytest.ini                                (Configuration)
 TEST_SUITE_GUIDE.md                       (1,200 line complete guide)
 TEST_SUITE_SUMMARY.md                     (500 line summary)
 RUN_TESTS_NOW.md                          (600 line quick start)
-TEST_QUICK_REFERENCE.sh                   (Commands reference)
+scripts/dev/TEST_QUICK_REFERENCE.sh       (Commands reference)
 ```
 
 ---

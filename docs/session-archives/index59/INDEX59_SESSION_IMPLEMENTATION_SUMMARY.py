@@ -230,7 +230,7 @@ if __name__ == "__main__":
     print(json.dumps(summary, indent=2))
     
     # Save to file
-    output_path = Path("INDEX59_SESSION_IMPLEMENTATION_SUMMARY.json")
+    output_path = Path(__file__).with_name("INDEX59_SESSION_IMPLEMENTATION_SUMMARY.json")
     with open(output_path, "w") as f:
         json.dump(summary, f, indent=2)
     print(f"\nSummary saved to: {output_path}")

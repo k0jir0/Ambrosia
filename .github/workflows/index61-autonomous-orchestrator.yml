@@ -1,0 +1,69 @@
+name: INDEX61 Autonomous Weekly Orchestrator
+
+on:
+  # Every Friday at 17:00 UTC
+  schedule:
+    - cron: '0 17 * * 5'
+  # Manual trigger for testing
+  workflow_dispatch:
+
+jobs:
+  autonomous-execution:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+      
+      - name: Run autonomous orchestrator
+        env:
+          PYTHONIOENCODING: utf-8
+        run: |
+          python scripts/autonomous-orchestrator.py
+      
+      - name: Check status artifacts
+        run: |
+          if [ -f artifacts/index61-weekly-status.json ]; then
+            echo "✅ Status artifact generated"
+            cat artifacts/index61-weekly-status.json | python -m json.tool
+          fi
+      
+      - name: Commit status update
+        run: |
+          git config user.name "INDEX61 Autopilot"
+          git config user.email "autopilot@ambrosia.dev"
+          git add artifacts/index61-weekly-status.json || true
+          git commit -m "chore: INDEX61 weekly autopilot execution" || true
+          git push
+      
+      - name: Check for blockers
+        run: |
+          # Check if any critical validations failed
+          python -c "
+          import json
+          with open('artifacts/index61-weekly-status.json') as f:
+              report = json.load(f)
+          
+          # Check completion % is on track
+          completion = report['completion_tracking']['expected_completion_pct']
+          week = report['week']
+          min_expected = week * 9
+          
+          if completion < min_expected - 2:
+              print(f'❌ BEHIND SCHEDULE: Week {week} completion {completion}% < {min_expected}%')
+              exit(1)
+          else:
+              print(f'✅ ON TRACK: Week {week} at {completion}%')
+          "
+      
+      - name: Alert if behind schedule
+        if: failure()
+        run: |
+          echo "::error::INDEX61 Roadmap behind schedule - manual intervention needed"

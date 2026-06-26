@@ -30,14 +30,13 @@ services:
   - type: web
     name: ambrosia-api
     runtime: python
+    repo: https://github.com/k0jir0/Ambrosia
     rootDir: services/api
     branch: main
     plan: free
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT --timeout-grace-period 30 --timeout-keep-alive 30
     healthCheckPath: /health
-    healthCheckStartFailureThreshold: 10
-    preDeployCommand: cd ../.. && python scripts/validate-schema.py
     envVars:
       - key: PYTHON_VERSION
         value: 3.12.10
@@ -51,6 +50,7 @@ services:
   - type: web
     name: ambrosia-web
     runtime: node
+    repo: https://github.com/k0jir0/Ambrosia
     rootDir: .
     branch: main
     plan: free
@@ -71,14 +71,13 @@ services:
   - type: web
     name: ambrosia-api-staging
     runtime: python
+    repo: https://github.com/k0jir0/Ambrosia
     rootDir: services/api
     branch: staging
     plan: free
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT --timeout-grace-period 30 --timeout-keep-alive 30
     healthCheckPath: /health
-    healthCheckStartFailureThreshold: 10
-    preDeployCommand: cd ../.. && python scripts/validate-schema.py
     envVars:
       - key: PYTHON_VERSION
         value: 3.12.10
@@ -92,6 +91,7 @@ services:
   - type: web
     name: ambrosia-web-staging
     runtime: node
+    repo: https://github.com/k0jir0/Ambrosia
     rootDir: .
     branch: staging
     plan: free

@@ -3,11 +3,17 @@ Phase C: Discovery & Intelligence UI Integration
 Scanner UI, report generation, analyst shortcuts, panel integration
 """
 
+from datetime import datetime
+import os
+
 from fastapi import APIRouter
 from pydantic import BaseModel
-from datetime import datetime
 
 router = APIRouter(prefix="/discovery", tags=["discovery"])
+
+
+def public_api_base_url() -> str:
+    return (os.getenv("PUBLIC_API_BASE_URL") or os.getenv("RENDER_EXTERNAL_URL") or "https://ambrosia-api-69t6.onrender.com").rstrip("/")
 
 class SignalResult(BaseModel):
     id: str
@@ -87,7 +93,7 @@ async def export_report(review_id: str, format: str = "pdf") -> ReportExportResu
         report_id=f"rpt-{review_id}",
         status="generated",
         format=format,
-        url=f"https://ambrosia-api.onrender.com/reports/{review_id}.{format}",
+        url=f"{public_api_base_url()}/reports/{review_id}.{format}",
         generated_at=datetime.now().isoformat(),
     )
 

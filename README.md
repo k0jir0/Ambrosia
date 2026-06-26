@@ -121,7 +121,7 @@ pnpm test:stack
 Synthetic monitoring:
 
 ```powershell
-python scripts/synthetic-monitor.py --base-url https://ambrosia-api.onrender.com
+python scripts/synthetic-monitor.py --base-url https://ambrosia-api-69t6.onrender.com
 ```
 
 Recent verification status:
@@ -129,8 +129,9 @@ Recent verification status:
 - Web build and lint were brought back to green locally.
 - API test suite was brought to green locally.
 - Visibility and provider workflow gates are green in GitHub Actions.
-- The production web surface has served the current UI at `https://ambrosia-5aec.onrender.com/`.
-- The API production health URL requires Render availability and hook verification if `https://ambrosia-api.onrender.com` returns unavailable.
+- The production web surface is live at `https://ambrosia-5aec.onrender.com/`.
+- The split production web/API stack is live at `https://ambrosia-web-c3ax.onrender.com/` and `https://ambrosia-api-69t6.onrender.com/health`.
+- The existing production web URL is also configured with `NEXT_PUBLIC_API_URL=https://ambrosia-api-69t6.onrender.com`.
 
 ## Render
 
@@ -144,8 +145,9 @@ Current Render settings:
 
 Live product:
 
-- Web: `https://ambrosia-5aec.onrender.com/`
-- API health target: `https://ambrosia-api.onrender.com/health`
+- Existing web: `https://ambrosia-5aec.onrender.com/`
+- Split-stack web: `https://ambrosia-web-c3ax.onrender.com/`
+- API health target: `https://ambrosia-api-69t6.onrender.com/health`
 
 GitHub production deploy wiring exists, but Render deploy hook secrets must be populated for automated hook-triggered deployment. When the hook variables are empty, the GitHub deploy workflow can pass while skipping the Render trigger steps.
 
@@ -164,3 +166,5 @@ GitHub production deploy wiring exists, but Render deploy hook secrets must be p
 Private repository: `https://github.com/k0jir0/Ambrosia`
 
 Application: `https://ambrosia-5aec.onrender.com/`
+
+Production API: `https://ambrosia-api-69t6.onrender.com/`

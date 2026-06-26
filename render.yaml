@@ -45,7 +45,7 @@ services:
       - key: LOG_LEVEL
         value: warning
       - key: ALLOWED_ORIGIN_REGEX
-        value: https://ambrosia-web\.onrender\.com
+        value: https://(ambrosia-web-c3ax|ambrosia-5aec)\.onrender\.com
 
   - type: web
     name: ambrosia-web
@@ -62,7 +62,7 @@ services:
       - key: NEXT_PUBLIC_ENV
         value: production
       - key: NEXT_PUBLIC_API_URL
-        value: https://ambrosia-api.onrender.com
+        value: https://ambrosia-api-69t6.onrender.com
 
   # ============================================================
   # STAGING SERVICES (branch: staging)

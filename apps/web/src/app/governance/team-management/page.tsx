@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from "react";
 import { Badge, Panel, SectionTitle } from "@/components/ui";
+import { getApiBaseUrl } from "@/lib/api";
 
 interface TeamMember {
   user_id: string;
@@ -22,8 +23,10 @@ export default function TeamManagementPage() {
   useEffect(() => {
     const fetchTeamMembers = async () => {
       try {
+        const apiBaseUrl = getApiBaseUrl();
+        if (!apiBaseUrl) throw new Error("Ambrosia API URL is not configured");
         const response = await fetch(
-          "https://ambrosia-api.onrender.com/governance/team/members",
+          `${apiBaseUrl}/governance/team/members`,
           {
             headers: {
               "X-User-Role": "admin",
@@ -55,8 +58,10 @@ export default function TeamManagementPage() {
     }
 
     try {
+      const apiBaseUrl = getApiBaseUrl();
+      if (!apiBaseUrl) throw new Error("Ambrosia API URL is not configured");
       const response = await fetch(
-        "https://ambrosia-api.onrender.com/governance/team/invite",
+        `${apiBaseUrl}/governance/team/invite`,
         {
           method: "POST",
           headers: {

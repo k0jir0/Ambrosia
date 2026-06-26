@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from "react";
 import { Badge, Panel, SectionTitle, cn } from "@/components/ui";
+import { getApiBaseUrl } from "@/lib/api";
 
 interface Signal {
   id: string;
@@ -23,8 +24,10 @@ export default function DiscoveryPage() {
     setLoading(true);
     setError(null);
     try {
+      const apiBaseUrl = getApiBaseUrl();
+      if (!apiBaseUrl) throw new Error("Ambrosia API URL is not configured");
       const response = await fetch(
-        "https://ambrosia-api.onrender.com/discovery/scan",
+        `${apiBaseUrl}/discovery/scan`,
         {
           method: "POST",
           headers: {
@@ -55,8 +58,10 @@ export default function DiscoveryPage() {
   // Convert signal to thesis
   const createThesisFromSignal = async (signal: Signal) => {
     try {
+      const apiBaseUrl = getApiBaseUrl();
+      if (!apiBaseUrl) throw new Error("Ambrosia API URL is not configured");
       const response = await fetch(
-        `https://ambrosia-api.onrender.com/discovery/signal/${signal.id}/create-thesis`,
+        `${apiBaseUrl}/discovery/signal/${signal.id}/create-thesis`,
         {
           method: "POST",
           headers: {
@@ -79,8 +84,10 @@ export default function DiscoveryPage() {
   // Export signal as report
   const exportSignalReport = async (signal: Signal) => {
     try {
+      const apiBaseUrl = getApiBaseUrl();
+      if (!apiBaseUrl) throw new Error("Ambrosia API URL is not configured");
       const response = await fetch(
-        `https://ambrosia-api.onrender.com/discovery/reports/${signal.id}/export`,
+        `${apiBaseUrl}/discovery/reports/${signal.id}/export`,
         {
           method: "POST",
           headers: {

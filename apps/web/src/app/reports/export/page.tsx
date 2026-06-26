@@ -3,6 +3,7 @@
 import React, { useState } from "react";
 import { useParams } from "next/navigation";
 import { Badge, Panel, SectionTitle, cn } from "@/components/ui";
+import { getApiBaseUrl } from "@/lib/api";
 
 export default function ReportExportPage() {
   const params = useParams();
@@ -29,13 +30,15 @@ export default function ReportExportPage() {
     setSuccess(false);
 
     try {
+      const apiBaseUrl = getApiBaseUrl();
+      if (!apiBaseUrl) throw new Error("Ambrosia API URL is not configured");
       if (exportFormat === "email") {
         if (!recipientEmail) {
           throw new Error("Please enter a recipient email");
         }
 
         const response = await fetch(
-          `https://ambrosia-api.onrender.com/discovery/reports/${reviewId}/email`,
+          `${apiBaseUrl}/discovery/reports/${reviewId}/email`,
           {
             method: "POST",
             headers: {
@@ -55,7 +58,7 @@ export default function ReportExportPage() {
         setRecipientEmail("");
       } else {
         const response = await fetch(
-          `https://ambrosia-api.onrender.com/discovery/reports/${reviewId}/export`,
+          `${apiBaseUrl}/discovery/reports/${reviewId}/export`,
           {
             method: "POST",
             headers: {

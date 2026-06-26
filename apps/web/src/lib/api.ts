@@ -52,7 +52,7 @@ async function readJsonResponse<T>(response: Response): Promise<T> {
   return response.json() as Promise<T>;
 }
 
-function getApiBaseUrl(): string | null {
+export function getApiBaseUrl(): string | null {
   if (CONFIGURED_API_BASE_URL) {
     return CONFIGURED_API_BASE_URL.replace(/\/$/, "");
   }

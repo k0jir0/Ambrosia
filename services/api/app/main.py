@@ -84,6 +84,10 @@ from .phase_d_rbac import (
 )
 from .phase_e_execution import router as execution_router
 from .phase_index61_completion import router as completion_router
+from .phase_b_ci_cd import router as phase_b_router
+from .phase_c_discovery_ui import router as phase_c_ui_router
+from .phase_d_governance_ui import router as phase_d_router
+from .phase_e_execution_loop import router as phase_e_router
 
 _executor = ThreadPoolExecutor(max_workers=4)
 
@@ -116,18 +120,27 @@ app.add_middleware(
 # Include feedback router for calibration queries and feedback recording
 app.include_router(feedback_router)
 
+# Include Phase B: CI/CD Industrialization
+app.include_router(phase_b_router)
+
 # Include Phase C: Discovery & Intelligence
 app.include_router(discovery_router)
+app.include_router(phase_c_ui_router)
+
+# Include Phase D: Enterprise Governance & RBAC
+app.include_router(phase_d_router)
 
 # Include Phase E: Execution Loop & Attribution
 app.include_router(execution_router)
+app.include_router(phase_e_router)
 
 # Include INDEX61 Completion Status & RBAC
 app.include_router(completion_router)
 
-# Add RBAC Middleware - DISABLED FOR PHASE A (enabled in Phase D)
-# TODO: Re-enable this middleware in Phase D deployment (Week 8)
-# app.add_middleware(RBACMiddleware)
+# Add RBAC Middleware - Environment Controlled (Phase D+)
+RBAC_ENABLED = os.getenv("RBAC_ENABLED", "true").lower() == "true"
+if RBAC_ENABLED:
+    app.add_middleware(RBACMiddleware)
 
 
 def _clock() -> str:

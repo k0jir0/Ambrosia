@@ -35,7 +35,7 @@ jobs:
       - name: Run provider ablation tests
         run: |
           cd services/api
-          python -m pytest tests/ -k provider -v --tb=short
+          RBAC_ENABLED=false python -m pytest tests/ -k provider -v --tb=short
           
       - name: Generate provider ablation artifact
         if: always()

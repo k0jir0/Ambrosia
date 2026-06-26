@@ -88,6 +88,7 @@ from .phase_b_ci_cd import router as phase_b_router
 from .phase_c_discovery_ui import router as phase_c_ui_router
 from .phase_d_governance_ui import router as phase_d_router
 from .phase_e_execution_loop import router as phase_e_router
+from .phase_e_market_integration import router as market_integration_router
 
 _executor = ThreadPoolExecutor(max_workers=4)
 
@@ -133,6 +134,7 @@ app.include_router(phase_d_router)
 # Include Phase E: Execution Loop & Attribution
 app.include_router(execution_router)
 app.include_router(phase_e_router)
+app.include_router(market_integration_router)
 
 # Include INDEX61 Completion Status & RBAC
 app.include_router(completion_router)

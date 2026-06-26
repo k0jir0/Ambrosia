@@ -1,16 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Badge, Panel, SectionTitle, cn } from "@/components/ui";
 
 interface Signal {
   id: string;
@@ -119,173 +110,147 @@ export default function DiscoveryPage() {
   }, []);
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 p-8">
+    <div className="min-h-screen bg-fog p-8">
       <div className="max-w-7xl mx-auto">
         {/* Header */}
-        <div className="mb-8">
-          <h1 className="text-4xl font-bold text-slate-900 mb-2">
-            Discovery Scanner
-          </h1>
-          <p className="text-slate-600">
+        <Panel>
+          <SectionTitle eyebrow="Phase C" title="Discovery Scanner" />
+          <p className="text-sm text-muted mt-2">
             AI-powered market signal discovery and thesis generation
           </p>
-        </div>
+        </Panel>
 
         {/* Controls */}
-        <Card className="mb-8">
-          <CardHeader>
-            <CardTitle>Scanner Controls</CardTitle>
-            <CardDescription>
-              Run discovery scan to identify trading signals
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="flex gap-4">
-            <Button
+        <Panel className="mt-6">
+          <div className="flex gap-4">
+            <button
               onClick={runDiscoveryScan}
               disabled={loading}
-              className="bg-teal-600 hover:bg-teal-700"
+              className="px-4 py-2 bg-teal text-white rounded font-semibold hover:bg-teal/90 disabled:opacity-50"
             >
               {loading ? "Scanning..." : "Run Discovery Scan"}
-            </Button>
-            <Button variant="outline" disabled>
+            </button>
+            <button
+              disabled
+              className="px-4 py-2 border border-line text-muted rounded font-semibold hover:bg-fog disabled:opacity-50"
+            >
               Advanced Filters
-            </Button>
-          </CardContent>
-        </Card>
+            </button>
+          </div>
+        </Panel>
 
         {/* Error Alert */}
         {error && (
-          <Alert className="mb-8 border-red-200 bg-red-50">
-            <AlertDescription className="text-red-800">
-              Error: {error}
-            </AlertDescription>
-          </Alert>
+          <Panel className="mt-6 border border-coral/30 bg-coral/10">
+            <p className="text-coral font-semibold">Error</p>
+            <p className="text-sm text-coral">{error}</p>
+          </Panel>
         )}
 
         {/* Signals Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-8">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mt-6">
           {signals.map((signal) => (
-            <Card
+            <div
               key={signal.id}
-              className={`cursor-pointer transition-all ${
-                selectedSignal?.id === signal.id
-                  ? "ring-2 ring-teal-500"
-                  : "hover:shadow-lg"
-              }`}
               onClick={() => setSelectedSignal(signal)}
+              className="cursor-pointer"
             >
-              <CardHeader>
-                <div className="flex justify-between items-start">
+              <Panel
+                className={cn(
+                  "border-2 h-full",
+                  selectedSignal?.id === signal.id
+                    ? "border-teal bg-teal/5"
+                    : "border-line hover:border-teal/50"
+                )}
+              >
+                <div className="flex justify-between items-start mb-3">
                   <div>
-                    <CardTitle className="text-2xl font-bold">
-                      {signal.ticker}
-                    </CardTitle>
-                    <CardDescription className="capitalize">
+                    <h3 className="text-lg font-bold text-ink">{signal.ticker}</h3>
+                    <p className="text-xs text-muted capitalize">
                       {signal.signal_type.replace(/_/g, " ")}
-                    </CardDescription>
+                    </p>
                   </div>
-                  <Badge className="bg-teal-100 text-teal-800">
-                    {(signal.conviction * 100).toFixed(0)}%
-                  </Badge>
+                  <Badge tone="good">{(signal.conviction * 100).toFixed(0)}%</Badge>
                 </div>
-              </CardHeader>
-              <CardContent>
-                <p className="text-sm text-slate-600 mb-4">
-                  {signal.description}
-                </p>
+                <p className="text-sm text-muted mb-3">{signal.description}</p>
                 <div className="flex flex-wrap gap-2 mb-4">
                   {signal.data_sources.map((source) => (
-                    <Badge key={source} variant="outline" className="text-xs">
+                    <Badge key={source} tone="info">
                       {source}
                     </Badge>
                   ))}
                 </div>
                 <div className="flex gap-2">
-                  <Button
-                    size="sm"
+                  <button
                     onClick={() => createThesisFromSignal(signal)}
-                    className="flex-1 bg-amber-600 hover:bg-amber-700 text-white"
+                    className="flex-1 px-3 py-2 bg-teal text-white rounded text-sm font-semibold hover:bg-teal/90"
                   >
                     Create Thesis
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
+                  </button>
+                  <button
                     onClick={() => exportSignalReport(signal)}
-                    className="flex-1"
+                    className="flex-1 px-3 py-2 border border-line text-ink rounded text-sm font-semibold hover:bg-fog"
                   >
                     Export
-                  </Button>
+                  </button>
                 </div>
-              </CardContent>
-            </Card>
+              </Panel>
+            </div>
           ))}
         </div>
 
         {/* Signal Details Panel */}
         {selectedSignal && (
-          <Card>
-            <CardHeader>
-              <CardTitle>Signal Details: {selectedSignal.ticker}</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-4">
-                <div>
-                  <h4 className="font-semibold text-slate-900 mb-2">
-                    Description
-                  </h4>
-                  <p className="text-slate-600">{selectedSignal.description}</p>
-                </div>
-                <div>
-                  <h4 className="font-semibold text-slate-900 mb-2">
-                    Conviction Score
-                  </h4>
-                  <div className="bg-slate-100 rounded h-2">
-                    <div
-                      className="bg-teal-600 h-2 rounded"
-                      style={{ width: `${selectedSignal.conviction * 100}%` }}
-                    />
-                  </div>
-                  <p className="text-sm text-slate-600 mt-1">
-                    {(selectedSignal.conviction * 100).toFixed(1)}% confidence
-                  </p>
-                </div>
-                <div>
-                  <h4 className="font-semibold text-slate-900 mb-2">
-                    Data Sources
-                  </h4>
-                  <div className="flex flex-wrap gap-2">
-                    {selectedSignal.data_sources.map((source) => (
-                      <Badge key={source}>{source}</Badge>
-                    ))}
-                  </div>
-                </div>
-                <Button
-                  onClick={() => createThesisFromSignal(selectedSignal)}
-                  className="w-full bg-teal-600 hover:bg-teal-700"
-                >
-                  Create Trading Thesis
-                </Button>
+          <Panel className="mt-6">
+            <SectionTitle title={`Signal Details: ${selectedSignal.ticker}`} />
+            <div className="space-y-4 mt-4">
+              <div>
+                <h4 className="font-semibold text-ink mb-2">Description</h4>
+                <p className="text-sm text-muted">{selectedSignal.description}</p>
               </div>
-            </CardContent>
-          </Card>
+              <div>
+                <h4 className="font-semibold text-ink mb-2">Conviction Score</h4>
+                <div className="bg-line rounded h-2">
+                  <div
+                    className="bg-teal h-2 rounded"
+                    style={{ width: `${selectedSignal.conviction * 100}%` }}
+                  />
+                </div>
+                <p className="text-sm text-muted mt-1">
+                  {(selectedSignal.conviction * 100).toFixed(1)}% confidence
+                </p>
+              </div>
+              <div>
+                <h4 className="font-semibold text-ink mb-2">Data Sources</h4>
+                <div className="flex flex-wrap gap-2">
+                  {selectedSignal.data_sources.map((source) => (
+                    <Badge key={source}>{source}</Badge>
+                  ))}
+                </div>
+              </div>
+              <button
+                onClick={() => createThesisFromSignal(selectedSignal)}
+                className="w-full px-4 py-2 bg-teal text-white rounded font-semibold hover:bg-teal/90 mt-4"
+              >
+                Create Trading Thesis
+              </button>
+            </div>
+          </Panel>
         )}
 
         {/* Empty State */}
         {!loading && signals.length === 0 && !error && (
-          <Card className="text-center py-12">
-            <CardContent>
-              <p className="text-slate-600 mb-4">
-                No signals found. Try running a discovery scan.
-              </p>
-              <Button
-                onClick={runDiscoveryScan}
-                className="bg-teal-600 hover:bg-teal-700"
-              >
-                Start Scan
-              </Button>
-            </CardContent>
-          </Card>
+          <Panel className="mt-6 text-center">
+            <p className="text-muted mb-4">
+              No signals found. Try running a discovery scan.
+            </p>
+            <button
+              onClick={runDiscoveryScan}
+              className="px-4 py-2 bg-teal text-white rounded font-semibold hover:bg-teal/90"
+            >
+              Start Scan
+            </button>
+          </Panel>
         )}
       </div>
     </div>

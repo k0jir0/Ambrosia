@@ -1,0 +1,150 @@
+{
+  "timestamp": "2026-06-26T00:18:31.418847",
+  "total_panels": 24,
+  "panels": [
+    {
+      "name": "analytics_dashboard",
+      "endpoint": "GET /discovery/analytics",
+      "status": "ready_to_wire",
+      "category": "analytics"
+    },
+    {
+      "name": "performance_metrics",
+      "endpoint": "GET /discovery/metrics",
+      "status": "ready_to_wire",
+      "category": "performance"
+    },
+    {
+      "name": "signal_heatmap",
+      "endpoint": "GET /discovery/heatmap",
+      "status": "ready_to_wire",
+      "category": "signal"
+    },
+    {
+      "name": "conviction_distribution",
+      "endpoint": "GET /discovery/conviction-distribution",
+      "status": "ready_to_wire",
+      "category": "conviction"
+    },
+    {
+      "name": "risk_radar",
+      "endpoint": "GET /governance/risk-assessment",
+      "status": "ready_to_wire",
+      "category": "risk"
+    },
+    {
+      "name": "correlation_matrix",
+      "endpoint": "GET /market/correlation-matrix",
+      "status": "ready_to_wire",
+      "category": "correlation"
+    },
+    {
+      "name": "drawdown_analysis",
+      "endpoint": "GET /market/drawdown-analysis",
+      "status": "ready_to_wire",
+      "category": "drawdown"
+    },
+    {
+      "name": "market_regime",
+      "endpoint": "GET /market/regime-detection",
+      "status": "ready_to_wire",
+      "category": "market"
+    },
+    {
+      "name": "sector_rotation",
+      "endpoint": "GET /market/sector-rotation",
+      "status": "ready_to_wire",
+      "category": "sector"
+    },
+    {
+      "name": "volatility_surface",
+      "endpoint": "GET /market/volatility-surface",
+      "status": "ready_to_wire",
+      "category": "volatility"
+    },
+    {
+      "name": "sentiment_index",
+      "endpoint": "GET /market/sentiment",
+      "status": "ready_to_wire",
+      "category": "sentiment"
+    },
+    {
+      "name": "calibration_bands",
+      "endpoint": "GET /calibration/bands",
+      "status": "ready_to_wire",
+      "category": "calibration"
+    },
+    {
+      "name": "feedback_loop",
+      "endpoint": "POST /feedback/record",
+      "status": "ready_to_wire",
+      "category": "feedback"
+    },
+    {
+      "name": "accuracy_trends",
+      "endpoint": "GET /feedback/accuracy-trends",
+      "status": "ready_to_wire",
+      "category": "accuracy"
+    },
+    {
+      "name": "trade_history",
+      "endpoint": "GET /trading/order-history",
+      "status": "ready_to_wire",
+      "category": "trade"
+    },
+    {
+      "name": "attribution_waterfall",
+      "endpoint": "GET /attribution/factor-analysis",
+      "status": "ready_to_wire",
+      "category": "attribution"
+    },
+    {
+      "name": "performance_attribution",
+      "endpoint": "GET /attribution/dashboard",
+      "status": "ready_to_wire",
+      "category": "performance"
+    },
+    {
+      "name": "review_archive",
+      "endpoint": "GET /review/archive",
+      "status": "ready_to_wire",
+      "category": "review"
+    },
+    {
+      "name": "signal_filters",
+      "endpoint": "GET /discovery/filter-options",
+      "status": "ready_to_wire",
+      "category": "signal"
+    },
+    {
+      "name": "data_export",
+      "endpoint": "POST /export/data",
+      "status": "ready_to_wire",
+      "category": "data"
+    },
+    {
+      "name": "portfolio_composition",
+      "endpoint": "GET /market/sandbox/portfolio",
+      "status": "ready_to_wire",
+      "category": "portfolio"
+    },
+    {
+      "name": "team_activity",
+      "endpoint": "GET /governance/team/activity",
+      "status": "ready_to_wire",
+      "category": "team"
+    },
+    {
+      "name": "shared_insights",
+      "endpoint": "GET /governance/shared-insights",
+      "status": "ready_to_wire",
+      "category": "shared"
+    },
+    {
+      "name": "audit_log",
+      "endpoint": "GET /governance/admin/audit-log",
+      "status": "ready_to_wire",
+      "category": "audit"
+    }
+  ]
+}

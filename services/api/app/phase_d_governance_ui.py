@@ -18,6 +18,30 @@ class Role(str, Enum):
     ANALYST = "analyst"
     VIEWER = "viewer"
 
+# RBAC role hierarchy
+ROLE_HIERARCHY = {
+    "owner": ["owner", "admin", "reviewer", "analyst", "viewer"],
+    "admin": ["admin", "reviewer", "analyst", "viewer"],
+    "reviewer": ["reviewer", "analyst", "viewer"],
+    "analyst": ["analyst", "viewer"],
+    "viewer": ["viewer"],
+}
+
+def require_role(minimum_role: str):
+    """Decorator to enforce role-based access control."""
+    async def verify_role(x_user_role: str = Header(None)) -> bool:
+        if not x_user_role:
+            raise HTTPException(status_code=401, detail="User role header required")
+        user_role = x_user_role.lower()
+        allowed_roles = ROLE_HIERARCHY.get(minimum_role, [])
+        if user_role not in allowed_roles:
+            raise HTTPException(
+                status_code=403, 
+                detail=f"Insufficient permissions. Required: {minimum_role}, Got: {user_role}"
+            )
+        return user_role
+    return verify_role
+
 class Permission(BaseModel):
     resource: str
     action: str  # "read", "write", "delete", "approve"

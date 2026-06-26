@@ -17,11 +17,11 @@ const NAV_ITEMS: NavItem[] = [
   { href: "/", label: "Dashboard", icon: Home, group: "top" },
   { href: "/review/new", label: "New Review", icon: ClipboardPlus, group: "top" },
   { href: "/markets/AAPL", label: "Market Intelligence", icon: Activity, group: "middle" },
-  { href: "/advanced", label: "Advanced", icon: SlidersHorizontal, group: "middle" },
   { href: "/history", label: "Decision History", icon: History, group: "middle" },
   { href: "/calibration", label: "Calibration", icon: BarChart3, group: "middle" },
   { href: "/team", label: "Team", icon: Users, group: "bottom" },
-  { href: "/admin", label: "Admin", icon: Settings, group: "bottom" }
+  { href: "/admin", label: "Admin", icon: Settings, group: "bottom" },
+  { href: "/advanced", label: "Advanced", icon: SlidersHorizontal, group: "bottom" }
 ];
 
 const MOBILE_ITEMS = [

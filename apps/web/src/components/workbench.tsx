@@ -7,6 +7,7 @@ import {
   createPacket,
   derivePacketConfidence,
   evaluatePacketRisk,
+  generateReport as generatePacketReport,
   getMarketSnapshot,
   getMarketTechnicals,
   getPacket,
@@ -17,13 +18,16 @@ import {
   refreshPacketMetrics,
   runPacketAgents
 } from "@/lib/api";
-import { loadReviewArchive, resolveReview, upsertLocalReview } from "@/lib/review-store";
+import { getLocalReviews, loadReviewArchive, resolveReview, upsertLocalReview } from "@/lib/review-store";
 import { sampleReviews } from "@/lib/sample-data";
 import type {
+  AuditEvent,
   Claim,
   DecisionPacket,
   DecisionState,
   MarketSnapshot,
+  ProviderMode,
+  ReportArtifact,
   ReviewStatus,
   SentimentData,
   SourcePointer,
@@ -33,6 +37,9 @@ import type {
 import { Badge, Panel, cn } from "./ui";
 
 type ActionResult = "ok" | "fallback" | "skipped";
+type RunbookStepId = "intake" | "market" | "agents" | "risk" | "confidence" | "decision" | "outcome" | "report";
+type RunbookStatus = "idle" | "running" | "manual_required" | "complete" | "failed";
+type RunbookStepResult = ActionResult | "manual_required";
 
 type LiveMarketData = {
   snapshot: MarketSnapshot | null;
@@ -40,6 +47,28 @@ type LiveMarketData = {
   sentiment: SentimentData | null;
   ticker: string;
   fetchedAt: string;
+};
+
+type RunbookRunState = {
+  status: RunbookStatus;
+  currentStepId: RunbookStepId | null;
+  message: string;
+  startedAt?: string;
+  completedAt?: string;
+  error?: string;
+};
+
+type RunbookStep = {
+  id: RunbookStepId;
+  label: string;
+  done: boolean;
+  detail: string;
+  actionLabel: string;
+  endpoint: string;
+  artifact: string;
+  auditEvents: string[];
+  latestAudit: AuditEvent | null;
+  manualGate?: string;
 };
 
 type WorkflowStage = {
@@ -59,6 +88,8 @@ const statusLabels: Record<ReviewStatus, string> = {
 };
 
 const statusOrder: ReviewStatus[] = ["intake", "retrieval", "adversarial_review", "validation", "tradeability", "synthesis", "decision_recorded"];
+const expectedAgentRoles = ["marketData", "technical", "sentiment", "interMarket", "fundamental", "quant", "bull", "bear", "risk", "pmSynthesis"];
+const providerModes: ProviderMode[] = ["hybrid", "ollama", "hosted", "deterministic"];
 
 const decisionLabels: Record<DecisionState, string> = {
   pursue: "Pursue",
@@ -68,13 +99,23 @@ const decisionLabels: Record<DecisionState, string> = {
 };
 
 export function Workbench({ initialReviewId }: { initialReviewId?: string } = {}) {
-  const [reviews, setReviews] = useState<TradeReview[]>(sampleReviews);
+  const [reviews, setReviews] = useState<TradeReview[]>(() => mergeReviews(getLocalReviews(), sampleReviews));
   const [packetIdsByReviewId, setPacketIdsByReviewId] = useState<Record<string, string>>({});
-  const [activeId, setActiveId] = useState(initialReviewId && sampleReviews.some((review) => review.id === initialReviewId) ? initialReviewId : sampleReviews[0]?.id ?? "");
+  const [activeId, setActiveId] = useState(() => {
+    const initialReviews = mergeReviews(getLocalReviews(), sampleReviews);
+    return initialReviewId && initialReviews.some((review) => review.id === initialReviewId) ? initialReviewId : initialReviews[0]?.id ?? "";
+  });
   const [activeAction, setActiveAction] = useState<string | null>(null);
   const [actionFeedback, setActionFeedback] = useState<{ tone: "neutral" | "good" | "warn"; message: string } | null>(null);
   const [liveMarketData, setLiveMarketData] = useState<LiveMarketData | null>(null);
   const [activePacketData, setActivePacketData] = useState<DecisionPacket | null>(null);
+  const [reportArtifact, setReportArtifact] = useState<ReportArtifact | null>(null);
+  const [providerMode, setProviderMode] = useState<ProviderMode>("hybrid");
+  const [runbookState, setRunbookState] = useState<RunbookRunState>({
+    status: "idle",
+    currentStepId: null,
+    message: "Ready to run the next checkpoint."
+  });
   const activeReview = reviews.find((review) => review.id === activeId) ?? reviews[0];
 
   useEffect(() => {
@@ -105,6 +146,12 @@ export function Workbench({ initialReviewId }: { initialReviewId?: string } = {}
   useEffect(() => {
     setLiveMarketData(null);
     setActivePacketData(null);
+    setReportArtifact(null);
+    setRunbookState({
+      status: "idle",
+      currentStepId: null,
+      message: "Ready to run the next checkpoint."
+    });
     setActionFeedback(null);
   }, [activeId]);
 
@@ -174,15 +221,23 @@ export function Workbench({ initialReviewId }: { initialReviewId?: string } = {}
   async function runAction(label: string, action: () => Promise<ActionResult>) {
     setActiveAction(label);
     setActionFeedback({ tone: "neutral", message: `${label} running...` });
-    const result = await action();
-    if (result === "ok") {
-      setActionFeedback({ tone: "good", message: `${label} completed. The workflow trace was updated.` });
-    } else if (result === "fallback") {
-      setActionFeedback({ tone: "warn", message: `${label} could not reach every API path, so the review stayed in fallback-safe mode.` });
-    } else {
-      setActionFeedback({ tone: "warn", message: `${label} skipped because required packet context was missing.` });
+    try {
+      const result = await action();
+      if (result === "ok") {
+        setActionFeedback({ tone: "good", message: `${label} completed. The workflow trace was updated.` });
+      } else if (result === "fallback") {
+        setActionFeedback({ tone: "warn", message: `${label} could not reach every API path, so the review stayed in fallback-safe mode.` });
+      } else {
+        setActionFeedback({ tone: "warn", message: `${label} skipped because required packet context was missing.` });
+      }
+    } catch (error) {
+      setActionFeedback({
+        tone: "warn",
+        message: `${label} failed: ${error instanceof Error ? error.message : "unknown error"}`
+      });
+    } finally {
+      setActiveAction(null);
     }
-    setActiveAction(null);
   }
 
   function syncReviewFromPacket(reviewId: string, packet: DecisionPacket) {
@@ -331,7 +386,7 @@ export function Workbench({ initialReviewId }: { initialReviewId?: string } = {}
 
     try {
       const { reviewId, packetId } = await ensurePacketForReview(activeReview);
-      const packet = await runPacketAgents(packetId, "hybrid");
+      const packet = await runPacketAgents(packetId, providerMode);
       syncReviewFromPacket(reviewId, packet);
       appendAuditEvent("agents.run", `Agent swarm completed for ${activeReview.ticker} using ${packet.providerInfo?.name ?? "unknown provider"}.`);
       return "ok";
@@ -394,11 +449,202 @@ export function Workbench({ initialReviewId }: { initialReviewId?: string } = {}
     }
   }
 
+  async function generateRunbookReport(): Promise<ActionResult> {
+    if (!activeReview) {
+      appendAuditEvent("report.generate.skipped", "Report generation skipped because no active review is selected.");
+      return "skipped";
+    }
+
+    try {
+      const { reviewId, packetId } = await ensurePacketForReview(activeReview);
+      const report = await generatePacketReport(packetId);
+      setReportArtifact(report);
+      try {
+        const refreshedPacket = await getPacket(packetId);
+        syncReviewFromPacket(reviewId, refreshedPacket);
+      } catch {
+        appendAuditEvent("report.generated", `Report artifact generated for ${activeReview.ticker}; packet refresh unavailable after export.`);
+      }
+      return "ok";
+    } catch {
+      appendAuditEvent("report.generate.fallback", "Report generation endpoint unavailable; report checkpoint remains pending.");
+      return "fallback";
+    }
+  }
+
+  async function executeRunbookStep(step: RunbookStep): Promise<RunbookStepResult> {
+    if (step.manualGate) {
+      setRunbookState({
+        status: "manual_required",
+        currentStepId: step.id,
+        message: step.manualGate,
+        completedAt: new Date().toISOString()
+      });
+      return "manual_required";
+    }
+
+    setRunbookState({
+      status: "running",
+      currentStepId: step.id,
+      message: `Running ${step.label}...`,
+      startedAt: new Date().toISOString()
+    });
+
+    let result: ActionResult;
+    switch (step.id) {
+      case "market":
+        result = await refreshMarketMetrics();
+        break;
+      case "agents":
+        result = await runAgentSwarm();
+        break;
+      case "risk":
+        result = await evaluateRisk();
+        break;
+      case "confidence":
+        result = await deriveConfidenceFromMarket();
+        break;
+      case "report":
+        result = await generateRunbookReport();
+        break;
+      default:
+        result = "skipped";
+    }
+
+    const completedAt = new Date().toISOString();
+    if (result === "ok") {
+      setRunbookState({
+        status: "complete",
+        currentStepId: step.id,
+        message: `${step.label} completed with evidence available.`,
+        completedAt
+      });
+    } else {
+      setRunbookState({
+        status: "failed",
+        currentStepId: step.id,
+        message: `${step.label} did not produce completion evidence.`,
+        completedAt,
+        error: result === "fallback" ? "API path or provider fell back before checkpoint evidence was created." : "Required context was missing."
+      });
+    }
+    return result;
+  }
+
+  async function runNextRunbookStep() {
+    const nextStep = runbookSteps.find((step) => !step.done);
+    if (!nextStep) {
+      setRunbookState({
+        status: "complete",
+        currentStepId: null,
+        message: "All runbook checkpoints are complete.",
+        completedAt: new Date().toISOString()
+      });
+      setActionFeedback({ tone: "good", message: "All runbook checkpoints are complete." });
+      return;
+    }
+
+    setActiveAction("Run next checkpoint");
+    setActionFeedback({ tone: "neutral", message: `${nextStep.actionLabel} running from the Demo Runbook...` });
+    try {
+      const result = await executeRunbookStep(nextStep);
+      if (result === "ok") {
+        setActionFeedback({ tone: "good", message: `${nextStep.label} completed. Open its evidence drawer for endpoint, artifact, and audit proof.` });
+      } else if (result === "manual_required") {
+        setActionFeedback({ tone: "warn", message: nextStep.manualGate ?? `${nextStep.label} requires human action.` });
+      } else {
+        setActionFeedback({ tone: "warn", message: `${nextStep.label} stopped before completion evidence was produced.` });
+      }
+    } catch (error) {
+      setRunbookState({
+        status: "failed",
+        currentStepId: nextStep.id,
+        message: `${nextStep.label} failed.`,
+        completedAt: new Date().toISOString(),
+        error: error instanceof Error ? error.message : "unknown error"
+      });
+      setActionFeedback({
+        tone: "warn",
+        message: `${nextStep.label} failed: ${error instanceof Error ? error.message : "unknown error"}`
+      });
+    } finally {
+      setActiveAction(null);
+    }
+  }
+
+  async function runGuidedDemo() {
+    const remainingSteps = runbookSteps.filter((step) => !step.done);
+    if (remainingSteps.length === 0) {
+      setRunbookState({
+        status: "complete",
+        currentStepId: null,
+        message: "All runbook checkpoints are complete.",
+        completedAt: new Date().toISOString()
+      });
+      setActionFeedback({ tone: "good", message: "All runbook checkpoints are complete." });
+      return;
+    }
+
+    setActiveAction("Run guided demo");
+    setActionFeedback({ tone: "neutral", message: "Guided demo running real checkpoints in order..." });
+
+    try {
+      for (const step of remainingSteps) {
+        const result = await executeRunbookStep(step);
+        if (result === "manual_required") {
+          setActionFeedback({ tone: "warn", message: step.manualGate ?? `${step.label} requires human action before the runbook can continue.` });
+          return;
+        }
+        if (result !== "ok") {
+          setActionFeedback({ tone: "warn", message: `Guided demo stopped at ${step.label}; no completion evidence was produced.` });
+          return;
+        }
+      }
+      setRunbookState({
+        status: "complete",
+        currentStepId: null,
+        message: "Guided demo completed every available checkpoint.",
+        completedAt: new Date().toISOString()
+      });
+      setActionFeedback({ tone: "good", message: "Guided demo completed every available checkpoint." });
+    } catch (error) {
+      setRunbookState({
+        status: "failed",
+        currentStepId: null,
+        message: "Guided demo failed.",
+        completedAt: new Date().toISOString(),
+        error: error instanceof Error ? error.message : "unknown error"
+      });
+      setActionFeedback({
+        tone: "warn",
+        message: `Guided demo failed: ${error instanceof Error ? error.message : "unknown error"}`
+      });
+    } finally {
+      setActiveAction(null);
+    }
+  }
+
+  const runbookSteps = useMemo(
+    () => buildRunbookSteps(activeReview, activePacketData, liveMarketData, reportArtifact),
+    [activeReview, activePacketData, liveMarketData, reportArtifact]
+  );
+
   return (
     <main className="min-h-screen pb-36 text-ink">
       <div className="mx-auto max-w-[1500px] space-y-4">
         <TopBar review={activeReview} />
         {actionFeedback ? <FeedbackBanner feedback={actionFeedback} /> : null}
+        <RunbookStrip
+          review={activeReview}
+          packet={activePacketData}
+          steps={runbookSteps}
+          runbookState={runbookState}
+          activeAction={activeAction}
+          providerMode={providerMode}
+          onProviderModeChange={setProviderMode}
+          onRunNext={runNextRunbookStep}
+          onRunGuided={runGuidedDemo}
+        />
 
         <div className="grid gap-4 xl:grid-cols-[minmax(260px,0.9fr)_minmax(360px,1.35fr)_minmax(280px,0.85fr)]">
           <ContextPanel review={activeReview} recentReviews={recentReviews} onSelectReview={setActiveId} />
@@ -469,6 +715,325 @@ function FeedbackBanner({ feedback }: { feedback: { tone: "neutral" | "good" | "
       {feedback.message}
     </div>
   );
+}
+
+function RunbookStrip({
+  review,
+  packet,
+  steps,
+  runbookState,
+  activeAction,
+  providerMode,
+  onProviderModeChange,
+  onRunNext,
+  onRunGuided
+}: {
+  review: TradeReview;
+  packet: DecisionPacket | null;
+  steps: RunbookStep[];
+  runbookState: RunbookRunState;
+  activeAction: string | null;
+  providerMode: ProviderMode;
+  onProviderModeChange: (mode: ProviderMode) => void;
+  onRunNext: () => void;
+  onRunGuided: () => void;
+}) {
+  const nextStep = steps.find((step) => !step.done) ?? null;
+  const currentStep = runbookState.currentStepId ? steps.find((step) => step.id === runbookState.currentStepId) ?? null : null;
+  const latestAudit = review.audit.at(-1);
+  const statusLabel =
+    runbookState.status === "running" && currentStep
+      ? `Running ${currentStep.label}`
+      : runbookState.status === "manual_required" && currentStep
+        ? `${currentStep.label} requires human action`
+        : nextStep
+          ? `Next: ${nextStep.actionLabel}`
+          : "Complete";
+  const statusTone = runbookState.status === "failed" ? "warn" : runbookState.status === "complete" && !nextStep ? "good" : "info";
+
+  return (
+    <Panel className="p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wide text-teal">Demo runbook</p>
+          <p className="text-sm text-ink/70">Run one investment decision through visible proof checkpoints.</p>
+        </div>
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <Badge tone={statusTone}>{statusLabel}</Badge>
+          <label className="flex items-center gap-2 text-xs font-semibold text-slate-400">
+            Provider
+            <select
+              aria-label="Provider mode"
+              value={providerMode}
+              disabled={Boolean(activeAction)}
+              onChange={(event) => onProviderModeChange(event.target.value as ProviderMode)}
+              className="focus-ring rounded-md border border-line bg-fog px-2 py-1 text-xs font-semibold text-slate-200 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {providerModes.map((mode) => (
+                <option key={mode} value={mode}>
+                  {mode}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button
+            type="button"
+            onClick={onRunNext}
+            disabled={Boolean(activeAction) || !nextStep}
+            className="focus-ring rounded-md bg-teal px-3 py-2 text-xs font-semibold text-fog transition hover:bg-teal/90 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {activeAction === "Run next checkpoint" ? "Running..." : nextStep ? "Run next checkpoint" : "Runbook complete"}
+          </button>
+          <button
+            type="button"
+            onClick={onRunGuided}
+            disabled={Boolean(activeAction) || !nextStep}
+            className="focus-ring rounded-md border border-line bg-fog/70 px-3 py-2 text-xs font-semibold text-slate-200 transition hover:border-teal/50 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {activeAction === "Run guided demo" ? "Running..." : "Run guided demo"}
+          </button>
+        </div>
+      </div>
+
+      <div
+        role="status"
+        aria-live="polite"
+        className="mt-4 grid gap-2 rounded-md border border-line bg-fog/60 p-3 text-xs text-slate-300 md:grid-cols-4"
+      >
+        <ProofMetric label="Runbook status" value={statusLabel} />
+        <ProofMetric label="Provider path" value={packet?.providerInfo ? `${packet.providerInfo.name} / ${packet.providerInfo.type}` : providerMode} />
+        <ProofMetric label="Fallback" value={packet?.providerInfo ? (packet.providerInfo.fallbackUsed ? "Fallback used" : "No runtime fallback") : "Pending provider evidence"} />
+        <ProofMetric label="Last audit" value={latestAudit ? latestAudit.eventType : "No audit event yet"} />
+      </div>
+
+      {runbookState.message ? (
+        <p className={cn("mt-3 rounded-md border px-3 py-2 text-xs", runbookState.status === "failed" || runbookState.status === "manual_required" ? "border-amber/30 bg-amber/10 text-amber" : "border-line bg-paper text-slate-300")}>
+          {runbookState.message}
+          {runbookState.error ? ` ${runbookState.error}` : ""}
+        </p>
+      ) : null}
+
+      <ol className="mt-4 grid gap-2 md:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-8">
+        {steps.map((step, index) => (
+          <RunbookStepCard
+            key={step.id}
+            step={step}
+            index={index}
+            displayStatus={getRunbookDisplayStatus(step, nextStep, runbookState)}
+            review={review}
+            packet={packet}
+          />
+        ))}
+      </ol>
+    </Panel>
+  );
+}
+
+function RunbookStepCard({
+  step,
+  index,
+  displayStatus,
+  review,
+  packet
+}: {
+  step: RunbookStep;
+  index: number;
+  displayStatus: { label: string; tone: "neutral" | "good" | "warn" | "info"; active: boolean };
+  review: TradeReview;
+  packet: DecisionPacket | null;
+}) {
+  return (
+    <li className={cn("rounded-md border p-2 text-xs", step.done ? "border-teal/30 bg-teal/10" : displayStatus.active ? "border-amber/40 bg-amber/5" : "border-line bg-fog/70")}>
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <span className={cn("flex h-5 w-5 items-center justify-center rounded-full border text-[10px] font-semibold", step.done ? "border-teal bg-teal text-fog" : "border-line text-ink/60")}>
+                {index + 1}
+              </span>
+              <span className="font-semibold text-ink">{step.label}</span>
+            </div>
+            <p className="mt-1 text-ink/60">{step.detail}</p>
+        </div>
+        <Badge tone={displayStatus.tone}>{displayStatus.label}</Badge>
+      </div>
+      <details className="mt-2 rounded-md border border-line bg-paper/70 p-2">
+        <summary className="cursor-pointer list-none font-semibold text-teal">View evidence</summary>
+        <dl className="mt-2 space-y-1 text-[11px] leading-4 text-slate-300">
+          <EvidenceLine label="Action" value={step.actionLabel} />
+          <EvidenceLine label="Endpoint" value={step.endpoint} />
+          <EvidenceLine label="Artifact" value={resolveRunbookArtifact(step, review, packet)} />
+          <EvidenceLine label="Audit" value={step.latestAudit ? `${step.latestAudit.eventType}: ${step.latestAudit.detail}` : step.auditEvents.join(" or ")} />
+          {step.id === "agents" ? <EvidenceLine label="Provider" value={packet?.providerInfo ? `${packet.providerInfo.name} / fallback=${packet.providerInfo.fallbackUsed ? "yes" : "no"}` : "Pending agent run"} /> : null}
+          {step.manualGate ? <EvidenceLine label="Gate" value={step.manualGate} /> : null}
+        </dl>
+      </details>
+    </li>
+  );
+}
+
+function EvidenceLine({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="grid grid-cols-[64px_1fr] gap-2">
+      <dt className="font-semibold text-slate-500">{label}</dt>
+      <dd className="break-words text-slate-300">{value}</dd>
+    </div>
+  );
+}
+
+function buildRunbookSteps(review: TradeReview, packet: DecisionPacket | null, marketData: LiveMarketData | null, reportArtifact: ReportArtifact | null): RunbookStep[] {
+  const hasAudit = (eventType: string) => review.audit.some((event) => event.eventType === eventType);
+  const marketDone = Boolean(packet?.marketSnapshot || marketData?.snapshot);
+  const agentsDone = Boolean(packet?.agentOutputs);
+  const riskDone = Boolean(packet?.riskMonitor);
+  const confidenceDone = Boolean(packet?.confidenceBreakdown);
+  const decisionDone = Boolean(review.decisionState);
+  const outcomeDone = hasAudit("outcome.recorded");
+  const reportDone = hasAudit("report.generated") || Boolean(reportArtifact);
+
+  return [
+    {
+      id: "intake",
+      label: "Intake",
+      done: true,
+      detail: "Review object",
+      actionLabel: "Open review",
+      endpoint: "buildPacketShell(...) / createPacket(...)",
+      artifact: review.id,
+      auditEvents: ["review.created", "packet.created"],
+      latestAudit: getLatestAuditEvent(review.audit, ["review.created", "packet.created"])
+    },
+    {
+      id: "market",
+      label: "Market Context",
+      done: marketDone,
+      detail: "Snapshot / technicals / sentiment",
+      actionLabel: "Refresh market context",
+      endpoint: "POST /packets/{packet_id}/metrics/refresh",
+      artifact: packet?.marketSnapshot?.timestamp ?? marketData?.fetchedAt ?? "Pending market snapshot",
+      auditEvents: ["metrics.refresh", "metrics.refresh.fallback"],
+      latestAudit: getLatestAuditEvent(review.audit, ["metrics.refresh", "metrics.refresh.fallback"])
+    },
+    {
+      id: "agents",
+      label: "Agents",
+      done: agentsDone,
+      detail: "Specialists + PM synthesis",
+      actionLabel: "Run agent swarm",
+      endpoint: "POST /packets/{packet_id}/agents/run",
+      artifact: packet?.agentOutputs ? `${Object.values(packet.agentOutputs).filter(Boolean).length}/${expectedAgentRoles.length} specialist outputs` : "Pending agent outputs",
+      auditEvents: ["agents.run", "agents.run.fallback"],
+      latestAudit: getLatestAuditEvent(review.audit, ["agents.run", "agents.run.fallback"])
+    },
+    {
+      id: "risk",
+      label: "Risk",
+      done: riskDone,
+      detail: "Monitor state",
+      actionLabel: "Evaluate risk",
+      endpoint: "POST /packets/{packet_id}/risk/evaluate",
+      artifact: packet?.riskMonitor ? `${packet.riskMonitor.status} / concentration ${packet.riskMonitor.concentrationRisk}` : "Pending risk monitor",
+      auditEvents: ["risk.evaluate", "risk.evaluate.fallback"],
+      latestAudit: getLatestAuditEvent(review.audit, ["risk.evaluate", "risk.evaluate.fallback"])
+    },
+    {
+      id: "confidence",
+      label: "Confidence",
+      done: confidenceDone,
+      detail: "Score breakdown",
+      actionLabel: "Derive confidence",
+      endpoint: "POST /packets/{packet_id}/confidence/derive",
+      artifact: packet?.confidenceBreakdown ? `${packet.confidenceBreakdown.overallConfidence}% overall confidence` : "Pending confidence breakdown",
+      auditEvents: ["confidence.derive", "confidence.derive.fallback"],
+      latestAudit: getLatestAuditEvent(review.audit, ["confidence.derive", "confidence.derive.fallback"])
+    },
+    {
+      id: "decision",
+      label: "Decision",
+      done: decisionDone,
+      detail: "Human-owned",
+      actionLabel: "Choose human decision",
+      endpoint: "PATCH /reviews/{review_id}/decision",
+      artifact: review.decisionState ? decisionLabels[review.decisionState] : "Pending human decision",
+      auditEvents: ["decision.recorded"],
+      latestAudit: getLatestAuditEvent(review.audit, ["decision.recorded"]),
+      manualGate: decisionDone ? undefined : "Manual required: choose Pursue, Watch, Reject, or Needs more data in the decision controls."
+    },
+    {
+      id: "outcome",
+      label: "Outcome",
+      done: outcomeDone,
+      detail: "Feedback loop",
+      actionLabel: "Record outcome",
+      endpoint: "POST /packets/{packet_id}/outcome",
+      artifact: outcomeDone ? "Outcome audit recorded" : "Pending outcome attribution",
+      auditEvents: ["outcome.recorded", "outcome.recorded.fallback"],
+      latestAudit: getLatestAuditEvent(review.audit, ["outcome.recorded", "outcome.recorded.fallback"]),
+      manualGate: outcomeDone ? undefined : "Manual required: record an outcome from the Outcome Loop when the result is known."
+    },
+    {
+      id: "report",
+      label: "Report",
+      done: reportDone,
+      detail: "Exportable packet",
+      actionLabel: "Generate report",
+      endpoint: "POST /packets/{packet_id}/report",
+      artifact: reportArtifact ? `${reportArtifact.title} / ${reportArtifact.dataMode}` : "Pending report artifact",
+      auditEvents: ["report.generated", "report.generate.fallback"],
+      latestAudit: getLatestAuditEvent(review.audit, ["report.generated", "report.generate.fallback"])
+    }
+  ];
+}
+
+function getLatestAuditEvent(audit: AuditEvent[], eventTypes: string[]): AuditEvent | null {
+  const allowedEvents = new Set(eventTypes);
+  for (let index = audit.length - 1; index >= 0; index -= 1) {
+    if (allowedEvents.has(audit[index].eventType)) {
+      return audit[index];
+    }
+  }
+  return null;
+}
+
+function getRunbookDisplayStatus(step: RunbookStep, nextStep: RunbookStep | null, runbookState: RunbookRunState): { label: string; tone: "neutral" | "good" | "warn" | "info"; active: boolean } {
+  if (runbookState.currentStepId === step.id) {
+    if (runbookState.status === "running") return { label: "Running", tone: "info", active: true };
+    if (runbookState.status === "manual_required") return { label: "Manual", tone: "warn", active: true };
+    if (runbookState.status === "failed") return { label: "Failed", tone: "warn", active: true };
+    if (runbookState.status === "complete") return { label: "Complete", tone: "good", active: false };
+  }
+
+  if (step.done) {
+    return { label: "Complete", tone: "good", active: false };
+  }
+
+  if (nextStep?.id === step.id) {
+    return { label: step.manualGate ? "Manual required" : "Ready", tone: step.manualGate ? "warn" : "info", active: true };
+  }
+
+  return { label: "Pending", tone: "neutral", active: false };
+}
+
+function resolveRunbookArtifact(step: RunbookStep, review: TradeReview, packet: DecisionPacket | null): string {
+  switch (step.id) {
+    case "intake":
+      return `${review.id} / ${review.ticker}`;
+    case "market":
+      return packet?.marketSnapshot ? `${review.ticker} snapshot at ${packet.marketSnapshot.timestamp}` : step.artifact;
+    case "agents":
+      return packet?.agentOutputs ? `${Object.values(packet.agentOutputs).filter(Boolean).length}/${expectedAgentRoles.length} role outputs` : step.artifact;
+    case "risk":
+      return packet?.riskMonitor ? `${packet.riskMonitor.status}; max drawdown ${Math.round(packet.riskMonitor.maxDrawdownThreshold * 100)}%` : step.artifact;
+    case "confidence":
+      return packet?.confidenceBreakdown ? `${packet.confidenceBreakdown.overallConfidence}% with ${packet.confidenceBreakdown.blockers.length} blocker(s)` : step.artifact;
+    case "decision":
+      return review.decisionState ? decisionLabels[review.decisionState] : step.artifact;
+    case "outcome":
+      return step.latestAudit?.detail ?? step.artifact;
+    case "report":
+      return step.latestAudit?.detail ?? step.artifact;
+    default:
+      return step.artifact;
+  }
 }
 
 function ContextPanel({ review, recentReviews, onSelectReview }: { review: TradeReview; recentReviews: TradeReview[]; onSelectReview: (reviewId: string) => void }) {
@@ -560,6 +1125,7 @@ function AnalysisFeed({
             <ActionButton label="Derive confidence" icon={<SlidersHorizontal className="h-4 w-4" />} activeAction={activeAction} onClick={onDeriveConfidence} />
           </div>
         </div>
+        <ProviderProvenancePanel packet={packet} />
 
         <div className="mt-4 space-y-3">
           {stages.map((stage) => (
@@ -760,16 +1326,77 @@ function WorkflowStageCard({ stage, currentStatus, review, packet }: { stage: Wo
             ))}
           </ul>
         ) : stage.status === "synthesis" && packet?.agentOutputs ? (
-          <ul className="space-y-1">
-            {Object.values(packet.agentOutputs).flatMap((agent) => (agent ? [agent] : [])).map((agent) => (
-              <li key={`${agent.role}-${agent.timestamp}`}>{agent.role}: {agent.summary}</li>
-            ))}
-          </ul>
+          <AgentOutputList packet={packet} />
         ) : (
           <p>{stage.summary}</p>
         )}
       </div>
     </details>
+  );
+}
+
+function ProviderProvenancePanel({ packet }: { packet: DecisionPacket | null }) {
+  const provider = packet?.providerInfo;
+  const agentOutputs = packet?.agentOutputs ? Object.values(packet.agentOutputs).filter(Boolean) : [];
+  const roleCount = agentOutputs.length;
+
+  return (
+    <div className="mt-4 rounded-md border border-line bg-fog/60 p-3 text-xs">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <p className="font-semibold text-ink">Provider provenance</p>
+          <p className="mt-1 text-ink/60">
+            {provider ? `${provider.name} / ${provider.type}` : "Run analysis to expose provider mode, fallback chain, and role outputs."}
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Badge tone={provider?.fallbackUsed ? "warn" : provider ? "good" : "neutral"}>
+            {provider ? (provider.fallbackUsed ? "Fallback used" : "No runtime fallback") : "Pending"}
+          </Badge>
+          <Badge tone="info">{roleCount}/{expectedAgentRoles.length} roles</Badge>
+        </div>
+      </div>
+      {provider ? (
+        <div className="mt-3 grid gap-2 md:grid-cols-3">
+          <ProofMetric label="Fallback chain" value={provider.fallbackChain.join(" -> ")} />
+          <ProofMetric label="Reason" value={provider.reason} />
+          <ProofMetric label="Coordinator" value={packet?.coordinatorVersion ?? "coordinator.v1"} />
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function AgentOutputList({ packet }: { packet: DecisionPacket }) {
+  const agents = packet.agentOutputs ? Object.values(packet.agentOutputs).flatMap((agent) => (agent ? [agent] : [])) : [];
+  return (
+    <ul className="space-y-2">
+      {agents.map((agent) => (
+        <li key={`${agent.role}-${agent.timestamp}`} className="rounded-md border border-line bg-paper/70 p-2">
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <div>
+              <p className="font-semibold text-ink">{agent.role}</p>
+              <p className="mt-1">{agent.summary}</p>
+            </div>
+            <div className="flex flex-wrap gap-1">
+              <Badge tone={agent.fallbackUsed ? "warn" : "good"}>{agent.fallbackUsed ? "fallback" : "primary"}</Badge>
+              <Badge tone="neutral">{agent.provider}</Badge>
+              {agent.score !== null ? <Badge tone="info">{agent.score}</Badge> : null}
+            </div>
+          </div>
+          <p className="mt-2 text-[11px] text-slate-500">{agent.timestamp}</p>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function ProofMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-md border border-line bg-paper/80 p-2">
+      <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{label}</p>
+      <p className="mt-1 text-slate-300">{value}</p>
+    </div>
   );
 }
 

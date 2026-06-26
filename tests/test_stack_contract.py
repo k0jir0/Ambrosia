@@ -62,7 +62,16 @@ class StackContractTests(unittest.TestCase):
         for expected in ["loadReviewArchive", "createReviewRecord", "resolveReview", "upsertLocalReview"]:
             self.assertIn(expected, review_store)
 
-        for expected in ["Run analysis", "buildPacketShell", "ensurePacketForReview", "DecisionStrip", "MarketAndRiskPanel"]:
+        for expected in [
+            "Run analysis",
+            "buildPacketShell",
+            "ensurePacketForReview",
+            "DecisionStrip",
+            "MarketAndRiskPanel",
+            "RunbookStrip",
+            "ProviderProvenancePanel",
+            "expectedAgentRoles",
+        ]:
             self.assertIn(expected, workbench)
 
         self.assertIn("createReviewRecord", new_review_page)
@@ -76,6 +85,7 @@ class StackContractTests(unittest.TestCase):
         self.assertIn("<OperatingModelPanel />", app_shell)
         self.assertIn('href: "/advanced"', app_shell)
         self.assertIn("Operator and instrumentation surface", advanced_page)
+        self.assertLess(app_shell.index('href: "/admin"'), app_shell.index('href: "/advanced"'))
         self.assertLess(app_shell.index("NavSection items={bottom}"), app_shell.index("<OperatingModelPanel />"))
         for expected in [
             "Agentic AI for Investments",
@@ -84,7 +94,23 @@ class StackContractTests(unittest.TestCase):
             "Agentic Swarm",
         ]:
             self.assertIn(expected, app_shell)
-            self.assertNotIn(expected, dashboard)
+            self.assertIn(expected, dashboard)
+
+        for expected in [
+            "PROOF_CARDS",
+            "Proof",
+            "Endpoint",
+            "Known limitation",
+        ]:
+            self.assertIn(expected, dashboard)
+
+        for expected in [
+            "Admin & Monitoring",
+            "defaultOpen: true",
+            "25 panels / 6 groups",
+            "Provider path is visible",
+        ]:
+            self.assertIn(expected, advanced_page)
 
     def test_backend_contracts_cover_operational_routes(self) -> None:
         pyproject = tomllib.loads(read_text("services/api/pyproject.toml"))

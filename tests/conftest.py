@@ -50,12 +50,14 @@ def api_client():
                         raise
             return response
         
-        def post(self, endpoint: str, json_data: Optional[dict] = None, **kwargs):
+        def post(self, endpoint: str, json: Optional[dict] = None, json_data: Optional[dict] = None, **kwargs):
             """POST request with retry logic."""
             url = f"{self.base_url}{endpoint}"
+            # Support both json and json_data parameters for compatibility
+            payload = json or json_data
             for attempt in range(3):
                 try:
-                    response = self.session.post(url, json=json_data, timeout=self.timeout, **kwargs)
+                    response = self.session.post(url, json=payload, timeout=self.timeout, **kwargs)
                     return response
                 except requests.Timeout:
                     if attempt < 2:

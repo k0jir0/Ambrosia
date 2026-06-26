@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowRight, CircleDashed } from "lucide-react";
 import { Panel, SectionTitle } from "@/components/ui";
+import { createReviewRecord, useReviewArchive } from "@/lib/review-store";
 
 type Step = 1 | 2 | 3;
 
@@ -15,6 +16,7 @@ const STEPS = [
 
 export default function NewReviewPage() {
   const router = useRouter();
+  const { reviews } = useReviewArchive();
   const [step, setStep] = useState<Step>(1);
   const [ticker, setTicker] = useState("AAPL");
   const [assetClass, setAssetClass] = useState("Equities");
@@ -23,8 +25,11 @@ export default function NewReviewPage() {
   const [thesis, setThesis] = useState("");
   const [sources, setSources] = useState<string[]>([]);
   const [sourceDraft, setSourceDraft] = useState("");
+  const [creating, setCreating] = useState(false);
+  const [createMessage, setCreateMessage] = useState<string | null>(null);
 
   const canContinueStep1 = ticker.trim() && assetClass.trim() && timeHorizon.trim() && expression.trim();
+  const canCreateReview = canContinueStep1 && thesis.trim().length > 0;
   const claimCount = useMemo(() => thesis.split(/[.!?]/).filter((item) => item.trim().length > 12).length, [thesis]);
 
   function addSource() {
@@ -34,14 +39,32 @@ export default function NewReviewPage() {
     setSourceDraft("");
   }
 
-  function startAnalysis() {
-    router.push(`/markets/${encodeURIComponent(ticker.toUpperCase())}?from=new-review`);
+  async function startAnalysis() {
+    if (!canCreateReview || creating) return;
+    setCreating(true);
+    setCreateMessage("Creating review packet...");
+    const { review, source } = await createReviewRecord(
+      {
+        thesis,
+        ticker: ticker.toUpperCase(),
+        assetClass,
+        timeHorizon,
+        intendedExpression: expression,
+        sourcePointer: sources.join("; ")
+      },
+      reviews.length
+    );
+    setCreateMessage(source === "api" ? "Review created through the API. Opening decision workbench..." : "API unavailable, so Ambrosia saved a local durable review. Opening decision workbench...");
+    router.push(`/review/${encodeURIComponent(review.id)}`);
   }
 
   return (
     <div className="space-y-4">
       <Panel className="p-5">
         <SectionTitle eyebrow="New Review" title="Thesis intake workflow" />
+        <p className="mt-2 max-w-3xl text-sm leading-6 text-ink/70">
+          Creating a review adds it to the Ambrosia review archive, increments dashboard totals, and makes the packet re-openable from History and Recent Reviews.
+        </p>
         <div className="mt-4 flex flex-wrap items-center gap-2 text-sm">
           {STEPS.map((item) => (
             <button
@@ -96,6 +119,7 @@ export default function NewReviewPage() {
             <button
               type="button"
               className="focus-ring inline-flex items-center gap-1 rounded-md bg-teal px-3 py-2 font-semibold text-fog"
+              disabled={!thesis.trim()}
               onClick={() => setStep(3)}
             >
               Continue <ArrowRight className="h-4 w-4" />
@@ -129,13 +153,14 @@ export default function NewReviewPage() {
             ) : null}
           </ul>
           <div className="mt-4 flex items-center justify-between">
-            <button type="button" className="focus-ring rounded-md border border-line px-3 py-2 text-sm" onClick={startAnalysis}>
+            <button type="button" className="focus-ring rounded-md border border-line px-3 py-2 text-sm disabled:opacity-50" disabled={!canCreateReview || creating} onClick={startAnalysis}>
               Skip
             </button>
-            <button type="button" className="focus-ring inline-flex items-center gap-1 rounded-md bg-teal px-3 py-2 font-semibold text-fog" onClick={startAnalysis}>
-              <CircleDashed className="h-4 w-4" /> Start Analysis
+            <button type="button" className="focus-ring inline-flex items-center gap-1 rounded-md bg-teal px-3 py-2 font-semibold text-fog disabled:opacity-50" disabled={!canCreateReview || creating} onClick={startAnalysis}>
+              <CircleDashed className="h-4 w-4" /> {creating ? "Creating review..." : "Create review"}
             </button>
           </div>
+          {createMessage ? <p className="mt-3 text-sm text-ink/65">{createMessage}</p> : null}
         </Panel>
       ) : null}
     </div>

@@ -20,7 +20,7 @@ import type {
   TradeReview,
 } from "./types";
 
-const CONFIGURED_API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL?.trim();
+const CONFIGURED_API_BASE_URL = (process.env.NEXT_PUBLIC_API_BASE_URL ?? process.env.NEXT_PUBLIC_API_URL)?.trim();
 const DEFAULT_API_TIMEOUT_MS = 65000;
 const CREATE_REVIEW_TIMEOUT_MS = 65000;
 
@@ -119,6 +119,17 @@ export async function listReviews(): Promise<TradeReview[]> {
   const response = await fetchWithTimeout(`${apiBaseUrl}/reviews`);
 
   return readJsonResponse<TradeReview[]>(response);
+}
+
+export async function getReview(reviewId: string): Promise<TradeReview> {
+  const apiBaseUrl = getApiBaseUrl();
+  if (!apiBaseUrl) {
+    throw new ApiUnavailableError();
+  }
+
+  const response = await fetchWithTimeout(`${apiBaseUrl}/reviews/${encodeURIComponent(reviewId)}`);
+
+  return readJsonResponse<TradeReview>(response);
 }
 
 export async function recordDecision(reviewId: string, decisionState: string): Promise<TradeReview> {

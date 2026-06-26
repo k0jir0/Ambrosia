@@ -11,13 +11,13 @@ import {
   getMarketTechnicals,
   getPacket,
   getSentiment,
-  listReviews,
   preparePacketBacktest,
   recordDecision,
   recordPacketOutcome,
   refreshPacketMetrics,
   runPacketAgents
 } from "@/lib/api";
+import { loadReviewArchive, resolveReview, upsertLocalReview } from "@/lib/review-store";
 import { sampleReviews } from "@/lib/sample-data";
 import type {
   Claim,
@@ -79,11 +79,19 @@ export function Workbench({ initialReviewId }: { initialReviewId?: string } = {}
 
   useEffect(() => {
     let cancelled = false;
-    listReviews()
-      .then((apiReviews) => {
-        if (!cancelled && apiReviews.length > 0) {
-          setReviews((current) => mergeReviews(apiReviews, current));
-          setActiveId((currentActiveId) => currentActiveId || apiReviews[0].id);
+    loadReviewArchive()
+      .then(async ({ reviews: archiveReviews }) => {
+        if (cancelled) return;
+        let nextReviews = archiveReviews.length > 0 ? archiveReviews : sampleReviews;
+        if (initialReviewId && !nextReviews.some((review) => review.id === initialReviewId)) {
+          const resolved = await resolveReview(initialReviewId);
+          if (resolved) {
+            nextReviews = mergeReviews([resolved], nextReviews);
+          }
+        }
+        if (!cancelled) {
+          setReviews(nextReviews);
+          setActiveId((currentActiveId) => (initialReviewId && nextReviews.some((review) => review.id === initialReviewId) ? initialReviewId : (currentActiveId || nextReviews[0]?.id || "")));
         }
       })
       .catch(() => {
@@ -92,7 +100,7 @@ export function Workbench({ initialReviewId }: { initialReviewId?: string } = {}
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [initialReviewId]);
 
   useEffect(() => {
     setLiveMarketData(null);
@@ -110,7 +118,14 @@ export function Workbench({ initialReviewId }: { initialReviewId?: string } = {}
   const recentReviews = useMemo(() => reviews.slice(0, 4), [reviews]);
 
   function updateReview(reviewId: string, updater: (review: TradeReview) => TradeReview) {
-    setReviews((current) => current.map((review) => (review.id === reviewId ? updater(review) : review)));
+    setReviews((current) =>
+      current.map((review) => {
+        if (review.id !== reviewId) return review;
+        const updated = updater(review);
+        upsertLocalReview(updated);
+        return updated;
+      })
+    );
   }
 
   function updateConfidence(value: number) {

@@ -3,22 +3,23 @@
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import { Download, Search } from "lucide-react";
-import { sampleReviews } from "@/lib/sample-data";
+import { useReviewArchive } from "@/lib/review-store";
 import { Badge, Panel, SectionTitle } from "./ui";
 
 const OUTCOME_LOOKUP = ["won", "lost", "pending"] as const;
 
 export function HistoryPage() {
+  const { reviews, source, loading } = useReviewArchive();
   const [query, setQuery] = useState("");
   const [decisionFilter, setDecisionFilter] = useState("all");
   const [tickerFilter, setTickerFilter] = useState("all");
   const [outcomeFilter, setOutcomeFilter] = useState("all");
   const [minConfidence, setMinConfidence] = useState(40);
 
-  const tickers = useMemo(() => ["all", ...Array.from(new Set(sampleReviews.map((review) => review.ticker)))], []);
+  const tickers = useMemo(() => ["all", ...Array.from(new Set(reviews.map((review) => review.ticker)))], [reviews]);
 
   const rows = useMemo(() => {
-    return sampleReviews
+    return reviews
       .map((review, index) => {
         const outcome = OUTCOME_LOOKUP[index % OUTCOME_LOOKUP.length];
         const ret = outcome === "won" ? `+${(1.2 + index * 0.4).toFixed(1)}%` : outcome === "lost" ? `-${(0.8 + index * 0.3).toFixed(1)}%` : "-";
@@ -34,14 +35,14 @@ export function HistoryPage() {
         if (row.confidence < minConfidence) return false;
         return true;
       });
-  }, [decisionFilter, minConfidence, outcomeFilter, query, tickerFilter]);
+  }, [decisionFilter, minConfidence, outcomeFilter, query, reviews, tickerFilter]);
 
   const winRate = rows.length === 0 ? 0 : Math.round((rows.filter((row) => row.outcome === "won").length / rows.length) * 100);
 
   return (
     <div className="space-y-4">
       <Panel className="p-5">
-        <SectionTitle eyebrow="Decision History" title={`Archive (${sampleReviews.length} total)`} />
+        <SectionTitle eyebrow="Decision History" title={`Archive (${reviews.length} total)`} />
         <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-6">
           <label className="xl:col-span-2">
             <span className="mb-1 block text-xs text-ink/60">Search</span>
@@ -63,7 +64,7 @@ export function HistoryPage() {
       </Panel>
 
       <Panel className="p-4 text-sm text-ink/70">
-        Showing {rows.length} of {sampleReviews.length} | Filtered win rate: <span className="font-semibold text-teal">{winRate}%</span>
+        Showing {rows.length} of {reviews.length} | Filtered win rate: <span className="font-semibold text-teal">{winRate}%</span> | Source: {loading ? "syncing" : source}
       </Panel>
 
       <Panel className="overflow-x-auto p-2">

@@ -70,9 +70,12 @@ class StackContractTests(unittest.TestCase):
 
     def test_operating_model_copy_is_global_sidebar_content(self) -> None:
         app_shell = read_text("apps/web/src/components/app-shell.tsx")
+        advanced_page = read_text("apps/web/src/app/advanced/page.tsx")
         dashboard = read_text("apps/web/src/components/dashboard-page.tsx")
 
         self.assertIn("<OperatingModelPanel />", app_shell)
+        self.assertIn('href: "/advanced"', app_shell)
+        self.assertIn("Operator and instrumentation surface", advanced_page)
         self.assertLess(app_shell.index("NavSection items={bottom}"), app_shell.index("<OperatingModelPanel />"))
         for expected in [
             "Agentic AI for Investments",

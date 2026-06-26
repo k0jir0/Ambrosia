@@ -401,6 +401,14 @@
   },
   {
     "method": "GET",
+    "path": "/health/phases",
+    "exposure": "user",
+    "frontendRoute": "/",
+    "requiredRole": "user",
+    "auditEvent": "health.phases.read"
+  },
+  {
+    "method": "GET",
     "path": "/market/{ticker}/snapshot",
     "exposure": "user",
     "frontendRoute": "/markets/:ticker",
@@ -414,6 +422,14 @@
     "frontendRoute": "/markets/:ticker",
     "requiredRole": "user",
     "auditEvent": "market.technicals.read"
+  },
+  {
+    "method": "GET",
+    "path": "/metrics/retrieval",
+    "exposure": "user",
+    "frontendRoute": "/",
+    "requiredRole": "user",
+    "auditEvent": "metrics.retrieval.read"
   },
   {
     "method": "GET",

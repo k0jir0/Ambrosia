@@ -39,7 +39,7 @@ export function DashboardPage() {
           <SectionTitle eyebrow="Needs Your Attention" title="Priority queue" />
           <ul className="mt-4 space-y-3">
             <li className="flex items-center justify-between rounded-md border border-line bg-fog/70 p-3 text-sm">
-              <span>SPY review from Monday is awaiting decision</span>
+              <span>TLT curve steepener is awaiting decision</span>
               <Link href="/review/atr-003" className="focus-ring inline-flex items-center gap-1 text-teal">
                 Continue <ArrowRight className="h-4 w-4" />
               </Link>

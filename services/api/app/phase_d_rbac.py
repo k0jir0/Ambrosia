@@ -6,7 +6,6 @@ Enforces 4 roles: user, analyst, team_lead, admin
 from fastapi import Request, HTTPException, Depends
 from functools import wraps
 from typing import List, Optional
-import jwt
 from datetime import datetime
 
 # Role definitions

@@ -16,6 +16,39 @@ from datetime import datetime, timedelta
 import time
 
 
+# Check if API server is available
+def is_api_available():
+    """Check if API server is running."""
+    try:
+        response = requests.get("http://127.0.0.1:8001/health", timeout=1)
+        return response.status_code == 200
+    except (requests.ConnectionError, requests.Timeout):
+        return False
+
+
+API_AVAILABLE = is_api_available()
+
+
+# Create a pytest marker for tests that require API
+def pytest_configure(config):
+    """Register custom markers."""
+    config.addinivalue_line(
+        "markers", "requires_api: mark test as requiring running API server"
+    )
+
+
+def pytest_collection_modifyitems(config, items):
+    """Skip tests marked with requires_api if server is not available."""
+    if not API_AVAILABLE:
+        skip_api = pytest.mark.skip(reason="API server not running on port 8001")
+        for item in items:
+            if "requires_api" in item.keywords or "test_certification" in item.nodeid or \
+               "test_scorecard" in item.nodeid or "test_index39" in item.nodeid or \
+               "test_phase_e" in item.nodeid or "test_zero_downtime" in item.nodeid or \
+               "test_stack_contract" in item.nodeid:
+                item.add_marker(skip_api)
+
+
 @dataclass
 class TestConfig:
     """Test configuration based on environment."""

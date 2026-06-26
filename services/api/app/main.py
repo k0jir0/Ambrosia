@@ -13,14 +13,8 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .market_data import build_market_snapshot, build_technicals
 from .models import (
-    AdminAuditEvent,
     AgentRunRequest,
     AlertQueueRecord,
-    AttributionReport,
-    AttributionRequest,
-    BrokerSandboxExecution,
-    BrokerSandboxOrderRequest,
-    BrokerSandboxPosition,
     AuditEvent,
     AuditEventCreate,
     BacktestPrepareRequest,
@@ -35,12 +29,8 @@ from .models import (
     DecisionPacket,
     DecisionState,
     DecisionUpdate,
-    FunctionRegistryEntry,
     JobRecord,
     MarketSnapshot,
-    MobileAlertEvent,
-    MobileAlertSubscription,
-    MobileAlertSubscriptionCreate,
     OutcomeUpdate,
     RiskEvaluateRequest,
     ReportArtifact,
@@ -50,9 +40,6 @@ from .models import (
     ScannerRunRequest,
     ScannerResult,
     SentimentData,
-    GuardrailPolicyProfile,
-    GuardrailPolicyProfileCreate,
-    GuardrailPolicyActivateRequest,
     TechnicalIndicators,
     ThesisRequest,
     TradeReview,
@@ -464,10 +451,10 @@ def get_tool_boundaries(
     return list_tool_boundaries()
 
 
-@app.get("/visibility/function-registry", response_model=list[FunctionRegistryEntry])
+@app.get("/visibility/function-registry", response_model=list[dict])
 def get_function_registry(
     x_ambrosia_role: str | None = Header(default=None, alias="X-Ambrosia-Role"),
-) -> list[FunctionRegistryEntry]:
+) -> list[dict]:
     _require_role(ADVANCED_ROLES, x_ambrosia_role, scope="advanced")
     return load_function_registry()
 
@@ -488,7 +475,7 @@ def get_admin_boundary_rules(
     return load_admin_boundary_rules()
 
 
-@app.post("/sandbox/orders/simulate", response_model=BrokerSandboxExecution)
+@app.post("/sandbox/orders/simulate", response_model=dict)
 def simulate_sandbox_order(
     body: BrokerSandboxOrderRequest,
     x_ambrosia_role: str | None = Header(default=None, alias="X-Ambrosia-Role"),
@@ -497,7 +484,7 @@ def simulate_sandbox_order(
     return store.simulate_sandbox_order(body)
 
 
-@app.get("/sandbox/orders", response_model=list[BrokerSandboxExecution])
+@app.get("/sandbox/orders", response_model=list[dict])
 def list_sandbox_orders(
     x_ambrosia_role: str | None = Header(default=None, alias="X-Ambrosia-Role"),
 ) -> list[BrokerSandboxExecution]:
@@ -505,7 +492,7 @@ def list_sandbox_orders(
     return store.list_sandbox_orders()
 
 
-@app.get("/sandbox/positions", response_model=list[BrokerSandboxPosition])
+@app.get("/sandbox/positions", response_model=list[dict])
 def list_sandbox_positions(
     x_ambrosia_role: str | None = Header(default=None, alias="X-Ambrosia-Role"),
 ) -> list[BrokerSandboxPosition]:
@@ -779,7 +766,7 @@ def record_packet_outcome(packet_id: str, body: PacketOutcomeUpdate) -> Decision
     return saved
 
 
-@app.post("/packets/{packet_id}/attribution/compute", response_model=AttributionReport)
+@app.post("/packets/{packet_id}/attribution/compute", response_model=dict)
 def compute_packet_attribution(
     packet_id: str,
     body: AttributionRequest,
@@ -804,7 +791,7 @@ def compute_packet_attribution(
     return report
 
 
-@app.get("/packets/{packet_id}/attribution/latest", response_model=AttributionReport)
+@app.get("/packets/{packet_id}/attribution/latest", response_model=dict)
 def get_packet_attribution_latest(
     packet_id: str,
     x_ambrosia_role: str | None = Header(default=None, alias="X-Ambrosia-Role"),
@@ -816,7 +803,7 @@ def get_packet_attribution_latest(
     return report
 
 
-@app.post("/alerts/subscriptions", response_model=MobileAlertSubscription)
+@app.post("/alerts/subscriptions", response_model=dict)
 def create_mobile_alert_subscription(
     body: MobileAlertSubscriptionCreate,
     x_ambrosia_role: str | None = Header(default=None, alias="X-Ambrosia-Role"),
@@ -825,7 +812,7 @@ def create_mobile_alert_subscription(
     return store.create_mobile_alert_subscription(body)
 
 
-@app.get("/alerts/subscriptions", response_model=list[MobileAlertSubscription])
+@app.get("/alerts/subscriptions", response_model=list[dict])
 def list_mobile_alert_subscriptions(
     x_ambrosia_role: str | None = Header(default=None, alias="X-Ambrosia-Role"),
 ) -> list[MobileAlertSubscription]:
@@ -833,7 +820,7 @@ def list_mobile_alert_subscriptions(
     return store.list_mobile_alert_subscriptions()
 
 
-@app.get("/alerts/mobile", response_model=list[MobileAlertEvent])
+@app.get("/alerts/mobile", response_model=list[dict])
 def list_mobile_alert_events(
     limit: int = Query(default=50, ge=1, le=200),
     x_ambrosia_role: str | None = Header(default=None, alias="X-Ambrosia-Role"),
@@ -1475,18 +1462,18 @@ def archive_workflow_template(
     return t
 
 
-@app.get("/admin/policies", response_model=list[GuardrailPolicyProfile])
+@app.get("/admin/policies", response_model=list[dict])
 def list_guardrail_policies(
     x_ambrosia_role: str | None = Header(default=None, alias="X-Ambrosia-Role"),
-) -> list[GuardrailPolicyProfile]:
+) -> list[dict]:
     _require_role(ADMIN_ROLES, x_ambrosia_role, scope="admin")
     return store.list_guardrail_profiles()
 
 
-@app.get("/admin/policies/active", response_model=GuardrailPolicyProfile)
+@app.get("/admin/policies/active", response_model=dict)
 def get_active_guardrail_policy(
     x_ambrosia_role: str | None = Header(default=None, alias="X-Ambrosia-Role"),
-) -> GuardrailPolicyProfile:
+) -> dict:
     _require_role(ADMIN_ROLES, x_ambrosia_role, scope="admin")
     profile = store.get_active_guardrail_profile()
     if profile is None:
@@ -1494,11 +1481,11 @@ def get_active_guardrail_policy(
     return profile
 
 
-@app.post("/admin/policies", response_model=GuardrailPolicyProfile)
+@app.post("/admin/policies", response_model=dict)
 def create_guardrail_policy(
-    body: GuardrailPolicyProfileCreate,
+    body: dict,
     x_ambrosia_role: str | None = Header(default=None, alias="X-Ambrosia-Role"),
-) -> GuardrailPolicyProfile:
+) -> dict:
     actor = _require_role(ADMIN_ROLES, x_ambrosia_role, scope="admin")
     created = store.create_guardrail_profile(body)
     store.add_admin_audit_event(
@@ -1511,12 +1498,12 @@ def create_guardrail_policy(
     return created
 
 
-@app.patch("/admin/policies/{profile_id}/activate", response_model=GuardrailPolicyProfile)
+@app.patch("/admin/policies/{profile_id}/activate", response_model=dict)
 def activate_guardrail_policy(
     profile_id: str,
-    body: GuardrailPolicyActivateRequest,
+    body: dict,
     x_ambrosia_role: str | None = Header(default=None, alias="X-Ambrosia-Role"),
-) -> GuardrailPolicyProfile:
+) -> dict:
     actor = _require_role(ADMIN_ROLES, x_ambrosia_role, scope="admin")
     activated = store.activate_guardrail_profile(profile_id, updated_by=body.updatedBy)
     if activated is None:
@@ -1531,11 +1518,11 @@ def activate_guardrail_policy(
     return activated
 
 
-@app.get("/admin/audit", response_model=list[AdminAuditEvent])
+@app.get("/admin/audit", response_model=list[dict])
 def list_admin_audit(
     limit: int = Query(default=50, ge=1, le=200),
     event_type: str | None = Query(default=None),
     x_ambrosia_role: str | None = Header(default=None, alias="X-Ambrosia-Role"),
-) -> list[AdminAuditEvent]:
+) -> list[dict]:
     _require_role(ADMIN_ROLES, x_ambrosia_role, scope="admin")
     return store.list_admin_audit_events(limit=limit, event_type=event_type)

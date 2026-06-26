@@ -1,0 +1,602 @@
+[
+  {
+    "method": "GET",
+    "path": "/admin/audit",
+    "exposure": "admin",
+    "frontendRoute": "/admin",
+    "requiredRole": "admin",
+    "auditEvent": "admin.audit.read"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/boundary-rules",
+    "exposure": "admin",
+    "frontendRoute": "/admin",
+    "requiredRole": "admin",
+    "auditEvent": "admin.boundary-rules.read"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/policies",
+    "exposure": "admin",
+    "frontendRoute": "/admin",
+    "requiredRole": "admin",
+    "auditEvent": "admin.policies.read"
+  },
+  {
+    "method": "POST",
+    "path": "/admin/policies",
+    "exposure": "admin",
+    "frontendRoute": "/admin",
+    "requiredRole": "admin",
+    "auditEvent": "admin.policies.write"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/policies/active",
+    "exposure": "admin",
+    "frontendRoute": "/admin",
+    "requiredRole": "admin",
+    "auditEvent": "admin.policies.active.read"
+  },
+  {
+    "method": "PATCH",
+    "path": "/admin/policies/{profile_id}/activate",
+    "exposure": "admin",
+    "frontendRoute": "/admin",
+    "requiredRole": "admin",
+    "auditEvent": "admin.policies.activate.update"
+  },
+  {
+    "method": "GET",
+    "path": "/workflows/templates",
+    "exposure": "admin",
+    "frontendRoute": "/admin",
+    "requiredRole": "admin",
+    "auditEvent": "workflows.templates.read"
+  },
+  {
+    "method": "POST",
+    "path": "/workflows/templates",
+    "exposure": "admin",
+    "frontendRoute": "/admin",
+    "requiredRole": "admin",
+    "auditEvent": "workflows.templates.write"
+  },
+  {
+    "method": "GET",
+    "path": "/workflows/templates/{template_id}",
+    "exposure": "admin",
+    "frontendRoute": "/admin",
+    "requiredRole": "admin",
+    "auditEvent": "workflows.templates.read"
+  },
+  {
+    "method": "POST",
+    "path": "/workflows/templates/{template_id}/archive",
+    "exposure": "admin",
+    "frontendRoute": "/admin",
+    "requiredRole": "admin",
+    "auditEvent": "workflows.templates.archive.write"
+  },
+  {
+    "method": "POST",
+    "path": "/workflows/templates/{template_id}/publish",
+    "exposure": "admin",
+    "frontendRoute": "/admin",
+    "requiredRole": "admin",
+    "auditEvent": "workflows.templates.publish.write"
+  },
+  {
+    "method": "GET",
+    "path": "/alerts/mobile",
+    "exposure": "advanced",
+    "frontendRoute": "/advanced",
+    "requiredRole": "analyst",
+    "auditEvent": "alerts.mobile.read"
+  },
+  {
+    "method": "GET",
+    "path": "/alerts/queue",
+    "exposure": "advanced",
+    "frontendRoute": "/advanced",
+    "requiredRole": "analyst",
+    "auditEvent": "alerts.queue.read"
+  },
+  {
+    "method": "GET",
+    "path": "/alerts/subscriptions",
+    "exposure": "advanced",
+    "frontendRoute": "/advanced",
+    "requiredRole": "analyst",
+    "auditEvent": "alerts.subscriptions.read"
+  },
+  {
+    "method": "POST",
+    "path": "/alerts/subscriptions",
+    "exposure": "advanced",
+    "frontendRoute": "/advanced",
+    "requiredRole": "analyst",
+    "auditEvent": "alerts.subscriptions.write"
+  },
+  {
+    "method": "GET",
+    "path": "/feedback/calibration/alerts",
+    "exposure": "advanced",
+    "frontendRoute": "/advanced",
+    "requiredRole": "analyst",
+    "auditEvent": "feedback.calibration.alerts.read"
+  },
+  {
+    "method": "GET",
+    "path": "/feedback/calibration/band",
+    "exposure": "advanced",
+    "frontendRoute": "/advanced",
+    "requiredRole": "analyst",
+    "auditEvent": "feedback.calibration.band.read"
+  },
+  {
+    "method": "GET",
+    "path": "/feedback/calibration/cohort",
+    "exposure": "advanced",
+    "frontendRoute": "/advanced",
+    "requiredRole": "analyst",
+    "auditEvent": "feedback.calibration.cohort.read"
+  },
+  {
+    "method": "GET",
+    "path": "/feedback/calibration/summary",
+    "exposure": "advanced",
+    "frontendRoute": "/advanced",
+    "requiredRole": "analyst",
+    "auditEvent": "feedback.calibration.summary.read"
+  },
+  {
+    "method": "POST",
+    "path": "/feedback/record",
+    "exposure": "advanced",
+    "frontendRoute": "/advanced",
+    "requiredRole": "analyst",
+    "auditEvent": "feedback.record.write"
+  },
+  {
+    "method": "GET",
+    "path": "/feedback/records",
+    "exposure": "advanced",
+    "frontendRoute": "/advanced",
+    "requiredRole": "analyst",
+    "auditEvent": "feedback.records.read"
+  },
+  {
+    "method": "GET",
+    "path": "/feedback/records/{feedback_id}",
+    "exposure": "advanced",
+    "frontendRoute": "/advanced",
+    "requiredRole": "analyst",
+    "auditEvent": "feedback.records.read"
+  },
+  {
+    "method": "GET",
+    "path": "/health",
+    "exposure": "advanced",
+    "frontendRoute": "/advanced",
+    "requiredRole": "analyst",
+    "auditEvent": "health.read"
+  },
+  {
+    "method": "GET",
+    "path": "/health/detailed",
+    "exposure": "advanced",
+    "frontendRoute": "/advanced",
+    "requiredRole": "analyst",
+    "auditEvent": "health.detailed.read"
+  },
+  {
+    "method": "GET",
+    "path": "/jobs",
+    "exposure": "advanced",
+    "frontendRoute": "/advanced",
+    "requiredRole": "analyst",
+    "auditEvent": "jobs.read"
+  },
+  {
+    "method": "GET",
+    "path": "/jobs/{job_id}",
+    "exposure": "advanced",
+    "frontendRoute": "/advanced",
+    "requiredRole": "analyst",
+    "auditEvent": "jobs.read"
+  },
+  {
+    "method": "GET",
+    "path": "/market/providers/status",
+    "exposure": "advanced",
+    "frontendRoute": "/advanced",
+    "requiredRole": "analyst",
+    "auditEvent": "market.providers.status.read"
+  },
+  {
+    "method": "GET",
+    "path": "/metrics",
+    "exposure": "advanced",
+    "frontendRoute": "/advanced",
+    "requiredRole": "analyst",
+    "auditEvent": "metrics.read"
+  },
+  {
+    "method": "POST",
+    "path": "/packets/{packet_id}/attribution/compute",
+    "exposure": "advanced",
+    "frontendRoute": "/advanced",
+    "requiredRole": "analyst",
+    "auditEvent": "packets.attribution.compute.write"
+  },
+  {
+    "method": "GET",
+    "path": "/packets/{packet_id}/attribution/latest",
+    "exposure": "advanced",
+    "frontendRoute": "/advanced",
+    "requiredRole": "analyst",
+    "auditEvent": "packets.attribution.latest.read"
+  },
+  {
+    "method": "GET",
+    "path": "/providers/status",
+    "exposure": "advanced",
+    "frontendRoute": "/advanced",
+    "requiredRole": "analyst",
+    "auditEvent": "providers.status.read"
+  },
+  {
+    "method": "GET",
+    "path": "/sandbox/orders",
+    "exposure": "advanced",
+    "frontendRoute": "/advanced",
+    "requiredRole": "analyst",
+    "auditEvent": "sandbox.orders.read"
+  },
+  {
+    "method": "POST",
+    "path": "/sandbox/orders/simulate",
+    "exposure": "advanced",
+    "frontendRoute": "/advanced",
+    "requiredRole": "analyst",
+    "auditEvent": "sandbox.orders.simulate.write"
+  },
+  {
+    "method": "GET",
+    "path": "/sandbox/positions",
+    "exposure": "advanced",
+    "frontendRoute": "/advanced",
+    "requiredRole": "analyst",
+    "auditEvent": "sandbox.positions.read"
+  },
+  {
+    "method": "POST",
+    "path": "/scanner/run",
+    "exposure": "advanced",
+    "frontendRoute": "/advanced",
+    "requiredRole": "analyst",
+    "auditEvent": "scanner.run.write"
+  },
+  {
+    "method": "POST",
+    "path": "/scanner/run/async",
+    "exposure": "advanced",
+    "frontendRoute": "/advanced",
+    "requiredRole": "analyst",
+    "auditEvent": "scanner.run.async.write"
+  },
+  {
+    "method": "GET",
+    "path": "/scorecard",
+    "exposure": "advanced",
+    "frontendRoute": "/advanced",
+    "requiredRole": "analyst",
+    "auditEvent": "scorecard.read"
+  },
+  {
+    "method": "GET",
+    "path": "/tools/boundaries",
+    "exposure": "advanced",
+    "frontendRoute": "/advanced",
+    "requiredRole": "analyst",
+    "auditEvent": "tools.boundaries.read"
+  },
+  {
+    "method": "GET",
+    "path": "/visibility/frontend-matrix",
+    "exposure": "advanced",
+    "frontendRoute": "/advanced",
+    "requiredRole": "analyst",
+    "auditEvent": "visibility.frontend-matrix.read"
+  },
+  {
+    "method": "GET",
+    "path": "/visibility/function-registry",
+    "exposure": "advanced",
+    "frontendRoute": "/advanced",
+    "requiredRole": "analyst",
+    "auditEvent": "visibility.function-registry.read"
+  },
+  {
+    "method": "POST",
+    "path": "/webhooks/tradingview",
+    "exposure": "internal-only",
+    "frontendRoute": "internal",
+    "requiredRole": "system",
+    "auditEvent": "webhooks.tradingview.write"
+  },
+  {
+    "method": "POST",
+    "path": "/webhooks/tradingview/packet",
+    "exposure": "internal-only",
+    "frontendRoute": "internal",
+    "requiredRole": "system",
+    "auditEvent": "webhooks.tradingview.packet.write"
+  },
+  {
+    "method": "GET",
+    "path": "/packets/{packet_id}/approval",
+    "exposure": "team",
+    "frontendRoute": "/team",
+    "requiredRole": "reviewer",
+    "auditEvent": "packets.approval.read"
+  },
+  {
+    "method": "POST",
+    "path": "/packets/{packet_id}/approval",
+    "exposure": "team",
+    "frontendRoute": "/team",
+    "requiredRole": "reviewer",
+    "auditEvent": "packets.approval.write"
+  },
+  {
+    "method": "GET",
+    "path": "/packets/{packet_id}/comments",
+    "exposure": "team",
+    "frontendRoute": "/team",
+    "requiredRole": "viewer",
+    "auditEvent": "packets.comments.read"
+  },
+  {
+    "method": "POST",
+    "path": "/packets/{packet_id}/comments",
+    "exposure": "team",
+    "frontendRoute": "/team",
+    "requiredRole": "analyst",
+    "auditEvent": "packets.comments.write"
+  },
+  {
+    "method": "GET",
+    "path": "/workspaces",
+    "exposure": "team",
+    "frontendRoute": "/team",
+    "requiredRole": "viewer",
+    "auditEvent": "workspaces.read"
+  },
+  {
+    "method": "POST",
+    "path": "/workspaces",
+    "exposure": "team",
+    "frontendRoute": "/team",
+    "requiredRole": "analyst",
+    "auditEvent": "workspaces.write"
+  },
+  {
+    "method": "GET",
+    "path": "/workspaces/{workspace_id}",
+    "exposure": "team",
+    "frontendRoute": "/team",
+    "requiredRole": "viewer",
+    "auditEvent": "workspaces.read"
+  },
+  {
+    "method": "POST",
+    "path": "/workspaces/{workspace_id}/packets",
+    "exposure": "team",
+    "frontendRoute": "/team",
+    "requiredRole": "analyst",
+    "auditEvent": "workspaces.packets.write"
+  },
+  {
+    "method": "GET",
+    "path": "/market/{ticker}/snapshot",
+    "exposure": "user",
+    "frontendRoute": "/markets/:ticker",
+    "requiredRole": "user",
+    "auditEvent": "market.snapshot.read"
+  },
+  {
+    "method": "GET",
+    "path": "/market/{ticker}/technicals",
+    "exposure": "user",
+    "frontendRoute": "/markets/:ticker",
+    "requiredRole": "user",
+    "auditEvent": "market.technicals.read"
+  },
+  {
+    "method": "GET",
+    "path": "/packets",
+    "exposure": "user",
+    "frontendRoute": "/",
+    "requiredRole": "user",
+    "auditEvent": "packets.read"
+  },
+  {
+    "method": "POST",
+    "path": "/packets",
+    "exposure": "user",
+    "frontendRoute": "/",
+    "requiredRole": "user",
+    "auditEvent": "packets.write"
+  },
+  {
+    "method": "GET",
+    "path": "/packets/{packet_id}",
+    "exposure": "user",
+    "frontendRoute": "/review/:id",
+    "requiredRole": "user",
+    "auditEvent": "packets.read"
+  },
+  {
+    "method": "POST",
+    "path": "/packets/{packet_id}/agents/run",
+    "exposure": "user",
+    "frontendRoute": "/review/:id",
+    "requiredRole": "user",
+    "auditEvent": "packets.agents.run.write"
+  },
+  {
+    "method": "GET",
+    "path": "/packets/{packet_id}/audit",
+    "exposure": "user",
+    "frontendRoute": "/review/:id",
+    "requiredRole": "user",
+    "auditEvent": "packets.audit.read"
+  },
+  {
+    "method": "POST",
+    "path": "/packets/{packet_id}/audit",
+    "exposure": "user",
+    "frontendRoute": "/review/:id",
+    "requiredRole": "user",
+    "auditEvent": "packets.audit.write"
+  },
+  {
+    "method": "POST",
+    "path": "/packets/{packet_id}/backtest/prepare",
+    "exposure": "user",
+    "frontendRoute": "/review/:id",
+    "requiredRole": "user",
+    "auditEvent": "packets.backtest.prepare.write"
+  },
+  {
+    "method": "POST",
+    "path": "/packets/{packet_id}/backtest/run",
+    "exposure": "user",
+    "frontendRoute": "/review/:id",
+    "requiredRole": "user",
+    "auditEvent": "packets.backtest.run.write"
+  },
+  {
+    "method": "POST",
+    "path": "/packets/{packet_id}/backtest/run/async",
+    "exposure": "user",
+    "frontendRoute": "/review/:id",
+    "requiredRole": "user",
+    "auditEvent": "packets.backtest.run.write"
+  },
+  {
+    "method": "POST",
+    "path": "/packets/{packet_id}/confidence/derive",
+    "exposure": "user",
+    "frontendRoute": "/review/:id",
+    "requiredRole": "user",
+    "auditEvent": "packets.confidence.derive.write"
+  },
+  {
+    "method": "POST",
+    "path": "/packets/{packet_id}/metrics/refresh",
+    "exposure": "user",
+    "frontendRoute": "/review/:id",
+    "requiredRole": "user",
+    "auditEvent": "packets.metrics.refresh.write"
+  },
+  {
+    "method": "POST",
+    "path": "/packets/{packet_id}/outcome",
+    "exposure": "user",
+    "frontendRoute": "/review/:id",
+    "requiredRole": "user",
+    "auditEvent": "packets.outcome.write"
+  },
+  {
+    "method": "POST",
+    "path": "/packets/{packet_id}/portfolio/update",
+    "exposure": "user",
+    "frontendRoute": "/review/:id",
+    "requiredRole": "user",
+    "auditEvent": "packets.portfolio.update.write"
+  },
+  {
+    "method": "POST",
+    "path": "/packets/{packet_id}/report",
+    "exposure": "user",
+    "frontendRoute": "/review/:id",
+    "requiredRole": "user",
+    "auditEvent": "packets.report.write"
+  },
+  {
+    "method": "POST",
+    "path": "/packets/{packet_id}/report/async",
+    "exposure": "user",
+    "frontendRoute": "/review/:id",
+    "requiredRole": "user",
+    "auditEvent": "packets.report.async.write"
+  },
+  {
+    "method": "POST",
+    "path": "/packets/{packet_id}/retrieve",
+    "exposure": "user",
+    "frontendRoute": "/review/:id",
+    "requiredRole": "user",
+    "auditEvent": "packets.retrieve.write"
+  },
+  {
+    "method": "POST",
+    "path": "/packets/{packet_id}/risk/evaluate",
+    "exposure": "user",
+    "frontendRoute": "/review/:id",
+    "requiredRole": "user",
+    "auditEvent": "packets.risk.evaluate.write"
+  },
+  {
+    "method": "GET",
+    "path": "/reviews",
+    "exposure": "user",
+    "frontendRoute": "/review/new",
+    "requiredRole": "user",
+    "auditEvent": "reviews.read"
+  },
+  {
+    "method": "POST",
+    "path": "/reviews",
+    "exposure": "user",
+    "frontendRoute": "/review/new",
+    "requiredRole": "user",
+    "auditEvent": "reviews.write"
+  },
+  {
+    "method": "GET",
+    "path": "/reviews/{review_id}",
+    "exposure": "user",
+    "frontendRoute": "/review/new",
+    "requiredRole": "user",
+    "auditEvent": "reviews.read"
+  },
+  {
+    "method": "PATCH",
+    "path": "/reviews/{review_id}/decision",
+    "exposure": "user",
+    "frontendRoute": "/review/new",
+    "requiredRole": "user",
+    "auditEvent": "reviews.decision.update"
+  },
+  {
+    "method": "POST",
+    "path": "/reviews/{review_id}/outcome",
+    "exposure": "user",
+    "frontendRoute": "/review/new",
+    "requiredRole": "user",
+    "auditEvent": "reviews.outcome.write"
+  },
+  {
+    "method": "GET",
+    "path": "/sentiment/{ticker}",
+    "exposure": "user",
+    "frontendRoute": "/markets/:ticker",
+    "requiredRole": "user",
+    "auditEvent": "sentiment.read"
+  }
+]

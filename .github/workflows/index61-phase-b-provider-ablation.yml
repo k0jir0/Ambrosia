@@ -1,0 +1,61 @@
+name: INDEX61 Phase B - Provider Ablation
+
+on:
+  workflow_run:
+    workflows: [API Tests]
+    types: [completed]
+
+jobs:
+  provider-ablation:
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+      
+      - name: Run provider ablation analysis
+        run: |
+          python scripts/generate-provider-ablation.py
+      
+      - name: Upload ablation report
+        uses: actions/upload-artifact@v3
+        with:
+          name: provider-ablation-report
+          path: artifacts/provider-ablation.json
+      
+      - name: Fail if ablation critical
+        run: |
+          python -c "
+          import json
+          with open('artifacts/provider-ablation.json') as f:
+              report = json.load(f)
+          
+          critical = [r for r in report.get('results', []) if r.get('severity') == 'CRITICAL']
+          if critical:
+              print(f'CRITICAL ablation issues: {len(critical)}')
+              exit(1)
+          "
+      
+      - name: Comment PR with ablation results
+        if: always()
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const fs = require('fs');
+            const report = JSON.parse(fs.readFileSync('artifacts/provider-ablation.json', 'utf8'));
+            const comment = `## Provider Ablation Report
+            - Critical issues: ${report.critical || 0}
+            - Warning issues: ${report.warnings || 0}
+            - Status: ${report.status || 'PASS'}`;
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: comment
+            });

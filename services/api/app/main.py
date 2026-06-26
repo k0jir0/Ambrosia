@@ -8,13 +8,19 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from uuid import uuid4
 
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from .market_data import build_market_snapshot, build_technicals
 from .models import (
+    AdminAuditEvent,
     AgentRunRequest,
     AlertQueueRecord,
+    AttributionReport,
+    AttributionRequest,
+    BrokerSandboxExecution,
+    BrokerSandboxOrderRequest,
+    BrokerSandboxPosition,
     AuditEvent,
     AuditEventCreate,
     BacktestPrepareRequest,
@@ -29,8 +35,12 @@ from .models import (
     DecisionPacket,
     DecisionState,
     DecisionUpdate,
+    FunctionRegistryEntry,
     JobRecord,
     MarketSnapshot,
+    MobileAlertEvent,
+    MobileAlertSubscription,
+    MobileAlertSubscriptionCreate,
     OutcomeUpdate,
     RiskEvaluateRequest,
     ReportArtifact,
@@ -40,6 +50,9 @@ from .models import (
     ScannerRunRequest,
     ScannerResult,
     SentimentData,
+    GuardrailPolicyProfile,
+    GuardrailPolicyProfileCreate,
+    GuardrailPolicyActivateRequest,
     TechnicalIndicators,
     ThesisRequest,
     TradeReview,
@@ -57,15 +70,30 @@ from .feedback_api import feedback_router
 from .market_providers import market_provider_status
 from .providers import provider_status, resolve_provider
 from .report import generate_report
+from .retrieval_quality import (
+    get_retrieval_quality_tracker,
+    generate_retrieval_quality_report,
+)
 from .review_engine import detects_prompt_injection, generate_review
 from .scanner import run_scanner
 from .sentiment import build_sentiment
 from .store import store
+from .visibility_registry import (
+    load_admin_boundary_rules,
+    load_frontend_visibility_matrix,
+    load_function_registry,
+)
 from .tool_boundaries import list_tool_boundaries
 
 _executor = ThreadPoolExecutor(max_workers=4)
 
 app = FastAPI(title="Ambrosia Trade Review API", version="0.1.0")
+
+TEAM_READ_ROLES = {"viewer", "analyst", "reviewer", "owner", "admin"}
+TEAM_WRITE_ROLES = {"analyst", "reviewer", "owner", "admin"}
+TEAM_APPROVAL_ROLES = {"reviewer", "owner", "admin"}
+ADVANCED_ROLES = {"analyst", "reviewer", "owner", "admin"}
+ADMIN_ROLES = {"owner", "admin"}
 
 default_origins = ["http://localhost:3000", "http://127.0.0.1:3000"]
 configured_origins = [
@@ -160,6 +188,31 @@ def _score_text_match(query: str, text: str) -> float:
 
 def _originating_review_id_from_packet_id(packet_id: str) -> str | None:
     return packet_id[len("pkt-") :] if packet_id.startswith("pkt-") else None
+
+
+def _normalize_role(role: str | None) -> str:
+    return (role or "").strip().lower()
+
+
+def _require_role(
+    allowed_roles: set[str],
+    header_role: str | None,
+    *,
+    scope: str,
+) -> str:
+    role = _normalize_role(header_role)
+    if not role:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Missing X-Ambrosia-Role header for {scope} access",
+        )
+    if role not in allowed_roles:
+        allowed = ", ".join(sorted(allowed_roles))
+        raise HTTPException(
+            status_code=403,
+            detail=f"Role '{role}' is not allowed for {scope}; allowed roles: {allowed}",
+        )
+    return role
 
 
 @app.get("/health")
@@ -307,18 +360,76 @@ def refresh_packet_metrics(packet_id: str) -> DecisionPacket:
 
 
 @app.get("/alerts/queue", response_model=list[AlertQueueRecord])
-def list_alert_queue() -> list[AlertQueueRecord]:
+def list_alert_queue(
+    x_ambrosia_role: str | None = Header(default=None, alias="X-Ambrosia-Role"),
+) -> list[AlertQueueRecord]:
+    _require_role(ADVANCED_ROLES, x_ambrosia_role, scope="advanced")
     return store.list_alerts()
 
 
 @app.get("/providers/status")
-def get_provider_status() -> dict[str, bool]:
+def get_provider_status(
+    x_ambrosia_role: str | None = Header(default=None, alias="X-Ambrosia-Role"),
+) -> dict[str, bool]:
+    _require_role(ADVANCED_ROLES, x_ambrosia_role, scope="advanced")
     return provider_status()
 
 
 @app.get("/tools/boundaries", response_model=list[ToolBoundary])
-def get_tool_boundaries() -> list[ToolBoundary]:
+def get_tool_boundaries(
+    x_ambrosia_role: str | None = Header(default=None, alias="X-Ambrosia-Role"),
+) -> list[ToolBoundary]:
+    _require_role(ADVANCED_ROLES, x_ambrosia_role, scope="advanced")
     return list_tool_boundaries()
+
+
+@app.get("/visibility/function-registry", response_model=list[FunctionRegistryEntry])
+def get_function_registry(
+    x_ambrosia_role: str | None = Header(default=None, alias="X-Ambrosia-Role"),
+) -> list[FunctionRegistryEntry]:
+    _require_role(ADVANCED_ROLES, x_ambrosia_role, scope="advanced")
+    return load_function_registry()
+
+
+@app.get("/visibility/frontend-matrix")
+def get_frontend_visibility_matrix(
+    x_ambrosia_role: str | None = Header(default=None, alias="X-Ambrosia-Role"),
+) -> dict[str, str]:
+    _require_role(ADVANCED_ROLES, x_ambrosia_role, scope="advanced")
+    return load_frontend_visibility_matrix()
+
+
+@app.get("/admin/boundary-rules")
+def get_admin_boundary_rules(
+    x_ambrosia_role: str | None = Header(default=None, alias="X-Ambrosia-Role"),
+) -> dict[str, str]:
+    _require_role(ADMIN_ROLES, x_ambrosia_role, scope="admin")
+    return load_admin_boundary_rules()
+
+
+@app.post("/sandbox/orders/simulate", response_model=BrokerSandboxExecution)
+def simulate_sandbox_order(
+    body: BrokerSandboxOrderRequest,
+    x_ambrosia_role: str | None = Header(default=None, alias="X-Ambrosia-Role"),
+) -> BrokerSandboxExecution:
+    _require_role(ADVANCED_ROLES, x_ambrosia_role, scope="advanced")
+    return store.simulate_sandbox_order(body)
+
+
+@app.get("/sandbox/orders", response_model=list[BrokerSandboxExecution])
+def list_sandbox_orders(
+    x_ambrosia_role: str | None = Header(default=None, alias="X-Ambrosia-Role"),
+) -> list[BrokerSandboxExecution]:
+    _require_role(ADVANCED_ROLES, x_ambrosia_role, scope="advanced")
+    return store.list_sandbox_orders()
+
+
+@app.get("/sandbox/positions", response_model=list[BrokerSandboxPosition])
+def list_sandbox_positions(
+    x_ambrosia_role: str | None = Header(default=None, alias="X-Ambrosia-Role"),
+) -> list[BrokerSandboxPosition]:
+    _require_role(ADVANCED_ROLES, x_ambrosia_role, scope="advanced")
+    return store.list_sandbox_positions()
 
 
 @app.post("/packets/{packet_id}/agents/run", response_model=DecisionPacket)
@@ -485,7 +596,15 @@ def evaluate_packet_risk(packet_id: str, body: RiskEvaluateRequest) -> DecisionP
             ],
         }
     )
-    return store.save_packet(updated_packet)
+    saved = store.save_packet(updated_packet)
+    if risk.status == "alert":
+        store.emit_mobile_alert(
+            packet_id=packet_id,
+            event_type="risk.trigger",
+            severity="critical",
+            message=f"Risk trigger for {packet.ticker}: status={risk.status}; follow-up required.",
+        )
+    return saved
 
 
 @app.post("/packets/{packet_id}/outcome", response_model=DecisionPacket)
@@ -565,7 +684,81 @@ def record_packet_outcome(packet_id: str, body: PacketOutcomeUpdate) -> Decision
             ],
         }
     )
-    return store.save_packet(updated_packet)
+    saved = store.save_packet(updated_packet)
+
+    outcome_label = body.outcome.lower().strip()
+    if outcome_label in {"lost", "loss", "whipsaw", "invalidated", "invalid"}:
+        store.emit_mobile_alert(
+            packet_id=packet_id,
+            event_type="outcome.follow_up",
+            severity="warning",
+            message=f"Outcome {body.outcome} recorded for {packet.ticker}; review follow-up tasks.",
+        )
+
+    return saved
+
+
+@app.post("/packets/{packet_id}/attribution/compute", response_model=AttributionReport)
+def compute_packet_attribution(
+    packet_id: str,
+    body: AttributionRequest,
+    x_ambrosia_role: str | None = Header(default=None, alias="X-Ambrosia-Role"),
+) -> AttributionReport:
+    _require_role(ADVANCED_ROLES, x_ambrosia_role, scope="advanced")
+    report = store.compute_attribution_report(
+        packet_id,
+        pnl=body.pnl,
+        horizon_days=body.horizonDays,
+    )
+    if report is None:
+        raise HTTPException(status_code=404, detail="Packet not found")
+
+    store.add_packet_audit_event(
+        packet_id,
+        AuditEventCreate(
+            eventType="attribution.computed",
+            detail=f"Factor attribution computed for horizon={body.horizonDays} and pnl={body.pnl}",
+        ),
+    )
+    return report
+
+
+@app.get("/packets/{packet_id}/attribution/latest", response_model=AttributionReport)
+def get_packet_attribution_latest(
+    packet_id: str,
+    x_ambrosia_role: str | None = Header(default=None, alias="X-Ambrosia-Role"),
+) -> AttributionReport:
+    _require_role(ADVANCED_ROLES, x_ambrosia_role, scope="advanced")
+    report = store.get_attribution_report(packet_id)
+    if report is None:
+        raise HTTPException(status_code=404, detail="Attribution report not found")
+    return report
+
+
+@app.post("/alerts/subscriptions", response_model=MobileAlertSubscription)
+def create_mobile_alert_subscription(
+    body: MobileAlertSubscriptionCreate,
+    x_ambrosia_role: str | None = Header(default=None, alias="X-Ambrosia-Role"),
+) -> MobileAlertSubscription:
+    _require_role(ADVANCED_ROLES, x_ambrosia_role, scope="advanced")
+    return store.create_mobile_alert_subscription(body)
+
+
+@app.get("/alerts/subscriptions", response_model=list[MobileAlertSubscription])
+def list_mobile_alert_subscriptions(
+    x_ambrosia_role: str | None = Header(default=None, alias="X-Ambrosia-Role"),
+) -> list[MobileAlertSubscription]:
+    _require_role(ADVANCED_ROLES, x_ambrosia_role, scope="advanced")
+    return store.list_mobile_alert_subscriptions()
+
+
+@app.get("/alerts/mobile", response_model=list[MobileAlertEvent])
+def list_mobile_alert_events(
+    limit: int = Query(default=50, ge=1, le=200),
+    x_ambrosia_role: str | None = Header(default=None, alias="X-Ambrosia-Role"),
+) -> list[MobileAlertEvent]:
+    _require_role(ADVANCED_ROLES, x_ambrosia_role, scope="advanced")
+    return store.list_mobile_alert_events(limit=limit)
 
 
 @app.post("/packets/{packet_id}/portfolio/update", response_model=DecisionPacket)
@@ -634,6 +827,20 @@ def retrieve_packet_context(packet_id: str, body: RetrievalRequest) -> Retrieval
 
     hits.sort(key=lambda hit: hit.score, reverse=True)
     top_hits = hits[: body.topK]
+
+    # Track retrieval quality for monitoring
+    try:
+        quality_tracker = get_retrieval_quality_tracker()
+        # Use all relevant packet sources as ground truth
+        ground_truth_ids = [src.id for src in packet.sources]
+        quality_tracker.record_retrieval(
+            query=query,
+            ground_truth_hit_ids=ground_truth_ids,
+            retrieved_hits=top_hits,
+            data_mode="live",  # TODO: track actual data mode from market provider
+        )
+    except Exception:
+        pass  # Quality tracking is non-critical
 
     store.record_retrieval_event(
         packet_id,
@@ -759,13 +966,32 @@ def metrics() -> dict[str, int]:
     }
 
 
+@app.get("/metrics/retrieval")
+def metrics_retrieval(
+    x_ambrosia_role: str | None = Header(default=None, alias="X-Ambrosia-Role"),
+) -> dict:
+    """Get detailed retrieval quality metrics for Phase A2 monitoring"""
+    _require_role(ADVANCED_ROLES, x_ambrosia_role, scope="advanced")
+    tracker = get_retrieval_quality_tracker()
+    report = generate_retrieval_quality_report(tracker)
+    return report
+
+
 @app.post("/scanner/run", response_model=ScannerResult)
-def scanner_run(body: ScannerRunRequest) -> ScannerResult:
+def scanner_run(
+    body: ScannerRunRequest,
+    x_ambrosia_role: str | None = Header(default=None, alias="X-Ambrosia-Role"),
+) -> ScannerResult:
+    _require_role(ADVANCED_ROLES, x_ambrosia_role, scope="advanced")
     return run_scanner(body)
 
 
 @app.post("/scanner/run/async", response_model=JobRecord)
-def scanner_run_async(body: ScannerRunRequest) -> JobRecord:
+def scanner_run_async(
+    body: ScannerRunRequest,
+    x_ambrosia_role: str | None = Header(default=None, alias="X-Ambrosia-Role"),
+) -> JobRecord:
+    _require_role(ADVANCED_ROLES, x_ambrosia_role, scope="advanced")
     universe_label = ",".join(body.universe) if body.universe else "default-nyse"
     job = store.enqueue_job(
         "scanner.run",
@@ -786,12 +1012,19 @@ def scanner_run_async(body: ScannerRunRequest) -> JobRecord:
 
 
 @app.get("/jobs", response_model=list[JobRecord])
-def list_jobs() -> list[JobRecord]:
+def list_jobs(
+    x_ambrosia_role: str | None = Header(default=None, alias="X-Ambrosia-Role"),
+) -> list[JobRecord]:
+    _require_role(ADVANCED_ROLES, x_ambrosia_role, scope="advanced")
     return store.list_jobs()
 
 
 @app.get("/jobs/{job_id}", response_model=JobRecord)
-def get_job_status(job_id: str) -> JobRecord:
+def get_job_status(
+    job_id: str,
+    x_ambrosia_role: str | None = Header(default=None, alias="X-Ambrosia-Role"),
+) -> JobRecord:
+    _require_role(ADVANCED_ROLES, x_ambrosia_role, scope="advanced")
     job = store.get_job(job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found")
@@ -799,7 +1032,10 @@ def get_job_status(job_id: str) -> JobRecord:
 
 
 @app.get("/market/providers/status")
-def get_market_provider_status() -> dict:
+def get_market_provider_status(
+    x_ambrosia_role: str | None = Header(default=None, alias="X-Ambrosia-Role"),
+) -> dict:
+    _require_role(ADVANCED_ROLES, x_ambrosia_role, scope="advanced")
     return market_provider_status()
 
 
@@ -889,6 +1125,10 @@ def health_detailed() -> dict:
                 "underConfidentBands": cal_summary.under_confident_count,
                 "totalAlerts": cal_summary.total_alerts,
             },
+            "retrievalQuality": {
+                "status": "tracking",
+                "description": "Use GET /metrics/retrieval for detailed quality analysis",
+            },
         },
         "slo": {
             "reviewsCreated": len(reviews),
@@ -959,17 +1199,29 @@ def generate_packet_report_async(packet_id: str) -> JobRecord:
 # ---------------------------------------------------------------------------
 
 @app.post("/workspaces", response_model=WorkspaceRecord)
-def create_workspace(body: WorkspaceCreateRequest) -> WorkspaceRecord:
+def create_workspace(
+    body: WorkspaceCreateRequest,
+    x_ambrosia_role: str | None = Header(default=None, alias="X-Ambrosia-Role"),
+) -> WorkspaceRecord:
+    _require_role(TEAM_WRITE_ROLES, x_ambrosia_role, scope="team write")
     return store.create_workspace(body)
 
 
 @app.get("/workspaces", response_model=list[WorkspaceRecord])
-def list_workspaces(owner_id: str | None = Query(default=None)) -> list[WorkspaceRecord]:
+def list_workspaces(
+    owner_id: str | None = Query(default=None),
+    x_ambrosia_role: str | None = Header(default=None, alias="X-Ambrosia-Role"),
+) -> list[WorkspaceRecord]:
+    _require_role(TEAM_READ_ROLES, x_ambrosia_role, scope="team read")
     return store.list_workspaces(owner_id=owner_id)
 
 
 @app.get("/workspaces/{workspace_id}", response_model=WorkspaceRecord)
-def get_workspace(workspace_id: str) -> WorkspaceRecord:
+def get_workspace(
+    workspace_id: str,
+    x_ambrosia_role: str | None = Header(default=None, alias="X-Ambrosia-Role"),
+) -> WorkspaceRecord:
+    _require_role(TEAM_READ_ROLES, x_ambrosia_role, scope="team read")
     ws = store.get_workspace(workspace_id)
     if ws is None:
         raise HTTPException(status_code=404, detail="Workspace not found")
@@ -977,7 +1229,12 @@ def get_workspace(workspace_id: str) -> WorkspaceRecord:
 
 
 @app.post("/workspaces/{workspace_id}/packets", response_model=WorkspaceRecord)
-def add_packet_to_workspace(workspace_id: str, body: WorkspaceAddPacketRequest) -> WorkspaceRecord:
+def add_packet_to_workspace(
+    workspace_id: str,
+    body: WorkspaceAddPacketRequest,
+    x_ambrosia_role: str | None = Header(default=None, alias="X-Ambrosia-Role"),
+) -> WorkspaceRecord:
+    _require_role(TEAM_WRITE_ROLES, x_ambrosia_role, scope="team write")
     ws = store.add_packet_to_workspace(workspace_id, body.packetId)
     if ws is None:
         raise HTTPException(status_code=404, detail="Workspace not found")
@@ -989,7 +1246,12 @@ def add_packet_to_workspace(workspace_id: str, body: WorkspaceAddPacketRequest) 
 # ---------------------------------------------------------------------------
 
 @app.post("/packets/{packet_id}/comments", response_model=PacketComment)
-def add_packet_comment(packet_id: str, body: PacketCommentCreate) -> PacketComment:
+def add_packet_comment(
+    packet_id: str,
+    body: PacketCommentCreate,
+    x_ambrosia_role: str | None = Header(default=None, alias="X-Ambrosia-Role"),
+) -> PacketComment:
+    _require_role(TEAM_WRITE_ROLES, x_ambrosia_role, scope="team write")
     if store.get_packet(packet_id) is None:
         raise HTTPException(status_code=404, detail="Packet not found")
     comment = store.add_packet_comment(packet_id, body)
@@ -1004,7 +1266,11 @@ def add_packet_comment(packet_id: str, body: PacketCommentCreate) -> PacketComme
 
 
 @app.get("/packets/{packet_id}/comments", response_model=list[PacketComment])
-def list_packet_comments(packet_id: str) -> list[PacketComment]:
+def list_packet_comments(
+    packet_id: str,
+    x_ambrosia_role: str | None = Header(default=None, alias="X-Ambrosia-Role"),
+) -> list[PacketComment]:
+    _require_role(TEAM_READ_ROLES, x_ambrosia_role, scope="team read")
     if store.get_packet(packet_id) is None:
         raise HTTPException(status_code=404, detail="Packet not found")
     return store.list_packet_comments(packet_id)
@@ -1015,7 +1281,12 @@ def list_packet_comments(packet_id: str) -> list[PacketComment]:
 # ---------------------------------------------------------------------------
 
 @app.post("/packets/{packet_id}/approval", response_model=PacketApproval)
-def set_packet_approval(packet_id: str, body: PacketApprovalCreate) -> PacketApproval:
+def set_packet_approval(
+    packet_id: str,
+    body: PacketApprovalCreate,
+    x_ambrosia_role: str | None = Header(default=None, alias="X-Ambrosia-Role"),
+) -> PacketApproval:
+    _require_role(TEAM_APPROVAL_ROLES, x_ambrosia_role, scope="team approval")
     if store.get_packet(packet_id) is None:
         raise HTTPException(status_code=404, detail="Packet not found")
     approval = store.set_packet_approval(packet_id, body)
@@ -1030,7 +1301,11 @@ def set_packet_approval(packet_id: str, body: PacketApprovalCreate) -> PacketApp
 
 
 @app.get("/packets/{packet_id}/approval", response_model=PacketApproval)
-def get_packet_approval(packet_id: str) -> PacketApproval:
+def get_packet_approval(
+    packet_id: str,
+    x_ambrosia_role: str | None = Header(default=None, alias="X-Ambrosia-Role"),
+) -> PacketApproval:
+    _require_role(TEAM_READ_ROLES, x_ambrosia_role, scope="team read")
     if store.get_packet(packet_id) is None:
         raise HTTPException(status_code=404, detail="Packet not found")
     approval = store.get_packet_approval(packet_id)
@@ -1044,17 +1319,37 @@ def get_packet_approval(packet_id: str) -> PacketApproval:
 # ---------------------------------------------------------------------------
 
 @app.post("/workflows/templates", response_model=WorkflowTemplate)
-def create_workflow_template(body: WorkflowTemplateCreate) -> WorkflowTemplate:
+def create_workflow_template(
+    body: WorkflowTemplateCreate,
+    x_ambrosia_role: str | None = Header(default=None, alias="X-Ambrosia-Role"),
+) -> WorkflowTemplate:
+    actor_role = _require_role(ADMIN_ROLES, x_ambrosia_role, scope="admin")
+    actor = body.authorId or actor_role
+    store.add_admin_audit_event(
+        event_type="workflow.template.create.requested",
+        actor=actor,
+        target_id="workflow-template",
+        detail=f"Create workflow template requested for '{body.name}'",
+        severity="info",
+    )
     return store.create_workflow_template(body)
 
 
 @app.get("/workflows/templates", response_model=list[WorkflowTemplate])
-def list_workflow_templates(status: str | None = Query(default=None)) -> list[WorkflowTemplate]:
+def list_workflow_templates(
+    status: str | None = Query(default=None),
+    x_ambrosia_role: str | None = Header(default=None, alias="X-Ambrosia-Role"),
+) -> list[WorkflowTemplate]:
+    _require_role(ADMIN_ROLES, x_ambrosia_role, scope="admin")
     return store.list_workflow_templates(status=status)
 
 
 @app.get("/workflows/templates/{template_id}", response_model=WorkflowTemplate)
-def get_workflow_template(template_id: str) -> WorkflowTemplate:
+def get_workflow_template(
+    template_id: str,
+    x_ambrosia_role: str | None = Header(default=None, alias="X-Ambrosia-Role"),
+) -> WorkflowTemplate:
+    _require_role(ADMIN_ROLES, x_ambrosia_role, scope="admin")
     t = store.get_workflow_template(template_id)
     if t is None:
         raise HTTPException(status_code=404, detail="Workflow template not found")
@@ -1062,16 +1357,104 @@ def get_workflow_template(template_id: str) -> WorkflowTemplate:
 
 
 @app.post("/workflows/templates/{template_id}/publish", response_model=WorkflowTemplate)
-def publish_workflow_template(template_id: str) -> WorkflowTemplate:
+def publish_workflow_template(
+    template_id: str,
+    x_ambrosia_role: str | None = Header(default=None, alias="X-Ambrosia-Role"),
+) -> WorkflowTemplate:
+    actor = _require_role(ADMIN_ROLES, x_ambrosia_role, scope="admin")
     t = store.publish_workflow_template(template_id)
     if t is None:
         raise HTTPException(status_code=404, detail="Workflow template not found")
+    store.add_admin_audit_event(
+        event_type="workflow.template.publish.requested",
+        actor=actor,
+        target_id=template_id,
+        detail=f"Publish requested for workflow template '{template_id}'",
+        severity="warning",
+    )
     return t
 
 
 @app.post("/workflows/templates/{template_id}/archive", response_model=WorkflowTemplate)
-def archive_workflow_template(template_id: str) -> WorkflowTemplate:
+def archive_workflow_template(
+    template_id: str,
+    x_ambrosia_role: str | None = Header(default=None, alias="X-Ambrosia-Role"),
+) -> WorkflowTemplate:
+    actor = _require_role(ADMIN_ROLES, x_ambrosia_role, scope="admin")
     t = store.archive_workflow_template(template_id)
     if t is None:
         raise HTTPException(status_code=404, detail="Workflow template not found")
+    store.add_admin_audit_event(
+        event_type="workflow.template.archive.requested",
+        actor=actor,
+        target_id=template_id,
+        detail=f"Archive requested for workflow template '{template_id}'",
+        severity="warning",
+    )
     return t
+
+
+@app.get("/admin/policies", response_model=list[GuardrailPolicyProfile])
+def list_guardrail_policies(
+    x_ambrosia_role: str | None = Header(default=None, alias="X-Ambrosia-Role"),
+) -> list[GuardrailPolicyProfile]:
+    _require_role(ADMIN_ROLES, x_ambrosia_role, scope="admin")
+    return store.list_guardrail_profiles()
+
+
+@app.get("/admin/policies/active", response_model=GuardrailPolicyProfile)
+def get_active_guardrail_policy(
+    x_ambrosia_role: str | None = Header(default=None, alias="X-Ambrosia-Role"),
+) -> GuardrailPolicyProfile:
+    _require_role(ADMIN_ROLES, x_ambrosia_role, scope="admin")
+    profile = store.get_active_guardrail_profile()
+    if profile is None:
+        raise HTTPException(status_code=404, detail="No active guardrail policy configured")
+    return profile
+
+
+@app.post("/admin/policies", response_model=GuardrailPolicyProfile)
+def create_guardrail_policy(
+    body: GuardrailPolicyProfileCreate,
+    x_ambrosia_role: str | None = Header(default=None, alias="X-Ambrosia-Role"),
+) -> GuardrailPolicyProfile:
+    actor = _require_role(ADMIN_ROLES, x_ambrosia_role, scope="admin")
+    created = store.create_guardrail_profile(body)
+    store.add_admin_audit_event(
+        event_type="guardrail.policy.create.requested",
+        actor=body.updatedBy or actor,
+        target_id=created.id,
+        detail=f"Create requested for guardrail policy '{created.name}'",
+        severity="warning",
+    )
+    return created
+
+
+@app.patch("/admin/policies/{profile_id}/activate", response_model=GuardrailPolicyProfile)
+def activate_guardrail_policy(
+    profile_id: str,
+    body: GuardrailPolicyActivateRequest,
+    x_ambrosia_role: str | None = Header(default=None, alias="X-Ambrosia-Role"),
+) -> GuardrailPolicyProfile:
+    actor = _require_role(ADMIN_ROLES, x_ambrosia_role, scope="admin")
+    activated = store.activate_guardrail_profile(profile_id, updated_by=body.updatedBy)
+    if activated is None:
+        raise HTTPException(status_code=404, detail="Guardrail policy profile not found")
+    store.add_admin_audit_event(
+        event_type="guardrail.policy.activate.requested",
+        actor=body.updatedBy or actor,
+        target_id=profile_id,
+        detail=f"Activation requested for guardrail policy '{profile_id}'",
+        severity="critical",
+    )
+    return activated
+
+
+@app.get("/admin/audit", response_model=list[AdminAuditEvent])
+def list_admin_audit(
+    limit: int = Query(default=50, ge=1, le=200),
+    event_type: str | None = Query(default=None),
+    x_ambrosia_role: str | None = Header(default=None, alias="X-Ambrosia-Role"),
+) -> list[AdminAuditEvent]:
+    _require_role(ADMIN_ROLES, x_ambrosia_role, scope="admin")
+    return store.list_admin_audit_events(limit=limit, event_type=event_type)

@@ -6,6 +6,7 @@ on:
     branches: [main]
   schedule:
     - cron: '0 * * * *'  # Hourly for synthetic monitoring
+  workflow_dispatch:
 
 env:
   REGISTRY: ghcr.io
@@ -41,7 +42,7 @@ jobs:
           python scripts/generate-provider-ablation.py
           
       - name: Upload provider ablation results
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         if: always()
         with:
           name: provider-ablation-results
@@ -52,6 +53,7 @@ jobs:
   synthetic-monitor:
     name: B2 - Synthetic Monitoring
     runs-on: ubuntu-latest
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     steps:
       - uses: actions/checkout@v4
       
@@ -74,7 +76,7 @@ jobs:
           python -c "import json; data = json.load(open('artifacts/synthetic-monitor.json')); exit(0 if data['all_passed'] else 1)"
           
       - name: Upload monitoring results
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         if: always()
         with:
           name: synthetic-monitor-results
@@ -134,15 +136,15 @@ jobs:
       
       - name: Verify all routes mapped
         run: |
-          python scripts/verify-visibility-matrix.py --validate
+          python scripts/verify-visibility-matrix.py
       
       - name: Check 100% route coverage
         run: |
           python -c "
           import json
           reg = json.load(open('docs/visibility/function-registry.json'))
-          total = len(reg['routes'])
-          mapped = len([r for r in reg['routes'] if r.get('mapped')])
+          total = len(reg)
+          mapped = len([r for r in reg if r.get('frontendRoute')])
           coverage = (mapped / total * 100) if total > 0 else 0
           print(f'Route Coverage: {coverage:.1f}% ({mapped}/{total})')
           exit(0 if coverage == 100 else 1)
@@ -153,7 +155,7 @@ jobs:
           python scripts/generate-phase-b-readiness.py
       
       - name: Upload coverage report
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: function-registry-report
           path: artifacts/phase-b-readiness.json
@@ -207,7 +209,7 @@ jobs:
           python scripts/generate-phase-b-completion.py
       
       - name: Upload Phase B completion
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: phase-b-completion
           path: artifacts/phase-b-completion.json

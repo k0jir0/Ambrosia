@@ -24,7 +24,7 @@ jobs:
           python scripts/generate-provider-ablation.py
       
       - name: Upload ablation report
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: provider-ablation-report
           path: artifacts/provider-ablation.json

@@ -44,15 +44,16 @@ class PolicyConfig(BaseModel):
 
 # Phase D-1: RBAC Middleware Deployment
 @router.get("/rbac/enforcement")
-async def get_rbac_enforcement_status() -> dict:
-    """Get RBAC enforcement status."""
+async def get_rbac_enforcement_status(x_user_role: str = Header(None)) -> dict:
+    """Get RBAC enforcement status (public endpoint)."""
     return {
         "status": "active",
         "enforced_endpoints": 69,
         "enforcement_level": "strict",
         "roles_active": ["owner", "admin", "reviewer", "analyst", "viewer"],
-        "default_role": "viewer",
+        "default_role": "analyst",
         "role_enforcement": True,
+        "current_user_role": x_user_role or "anonymous",
     }
 
 @router.get("/user/roles")
@@ -131,13 +132,17 @@ async def permission_boundaries() -> dict:
 
 # Phase D-3: Policy Configuration
 @router.post("/policies/create")
-async def create_policy(policy: PolicyConfig) -> dict:
-    """Create new governance policy."""
+async def create_policy(policy: PolicyConfig, x_user_role: str = Header(None)) -> dict:
+    """Create new governance policy (admin only)."""
+    if x_user_role not in ["owner", "admin"]:
+        raise HTTPException(status_code=403, detail="Admin role required")
+    
     return {
         "policy_id": policy.policy_id,
         "name": policy.name,
         "status": "active",
         "rules_count": len(policy.rules),
+        "created_by": x_user_role,
         "created_at": datetime.now().isoformat(),
     }
 

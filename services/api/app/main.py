@@ -137,10 +137,11 @@ app.include_router(phase_e_router)
 # Include INDEX61 Completion Status & RBAC
 app.include_router(completion_router)
 
-# Add RBAC Middleware - Environment Controlled (Phase D+)
+# Add RBAC Middleware - Now Enabled by Default (Phase D Active)
 RBAC_ENABLED = os.getenv("RBAC_ENABLED", "true").lower() == "true"
 if RBAC_ENABLED:
     app.add_middleware(RBACMiddleware)
+    print("✅ RBAC Middleware ACTIVE - Role-based access control enforced")
 
 
 def _clock() -> str:

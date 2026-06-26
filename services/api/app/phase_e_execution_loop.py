@@ -6,7 +6,7 @@ Market data integration, attribution analysis, E2E certification
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from datetime import datetime, timedelta
-from typing import Optional, list
+from typing import Optional, List
 import random
 
 router = APIRouter(prefix="/execution", tags=["execution"])

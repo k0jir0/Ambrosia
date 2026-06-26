@@ -6,7 +6,7 @@ Scanner UI, report generation, analyst shortcuts, panel integration
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from datetime import datetime
-from typing import Optional, list
+from typing import Optional, List
 import json
 
 router = APIRouter(prefix="/discovery", tags=["discovery"])

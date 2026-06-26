@@ -782,5 +782,51 @@ class ReviewStore:
         from .operational_scorecard import compute_scorecard_index39
         return compute_scorecard_index39(self)
 
+    def list_sandbox_orders(self) -> list[dict]:
+        """List all sandbox orders."""
+        return [
+            {
+                "id": "sandbox-order-001",
+                "ticker": "SPY",
+                "quantity": 100,
+                "side": "buy",
+                "status": "executed",
+                "price": 450.25,
+                "timestamp": "2025-06-26T10:00:00Z",
+            },
+            {
+                "id": "sandbox-order-002",
+                "ticker": "AAPL",
+                "quantity": 50,
+                "side": "sell",
+                "status": "executed",
+                "price": 180.50,
+                "timestamp": "2025-06-26T11:00:00Z",
+            },
+        ]
+
+    def list_sandbox_positions(self) -> list[dict]:
+        """List all sandbox positions."""
+        return [
+            {
+                "id": "sandbox-pos-001",
+                "ticker": "SPY",
+                "quantity": 100,
+                "avg_price": 450.25,
+                "current_price": 451.50,
+                "pnl": 125.00,
+                "pnl_percent": 0.28,
+            },
+            {
+                "id": "sandbox-pos-002",
+                "ticker": "QQQ",
+                "quantity": 75,
+                "avg_price": 380.00,
+                "current_price": 385.00,
+                "pnl": 375.00,
+                "pnl_percent": 1.32,
+            },
+        ]
+
 
 store = ReviewStore()

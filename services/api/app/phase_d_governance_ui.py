@@ -6,7 +6,7 @@ RBAC enforcement, permission boundaries, policy UI, team management
 from fastapi import APIRouter, HTTPException, Header
 from pydantic import BaseModel
 from datetime import datetime
-from typing import Optional, list
+from typing import Optional, List
 from enum import Enum
 
 router = APIRouter(prefix="/governance", tags=["governance"])

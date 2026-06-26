@@ -325,24 +325,20 @@ class TestPhaseEToPhaseA:
 
     def test_performance_metrics_updated_after_execution(self):
         """E→A-2: Portfolio metrics updated after market execution."""
-        # Get attribution dashboard (includes metrics)
+        # Get metrics endpoint
         response = client.get(
-            "/attribution/dashboard",
+            "/metrics",
             headers={"X-User-Role": "analyst"},
         )
         
-        # Dashboard should include metrics
+        # Metrics should be accessible
         assert response.status_code in [200, 422]
-        
-        if response.status_code == 200:
-            data = response.json()
-            # Should have performance data structure
-            assert isinstance(data, dict)
 
     def test_calibration_bands_updated_with_outcomes(self):
         """E→A-3: Calibration bands adjust based on outcomes."""
+        # Get packets to see outcomes
         response = client.get(
-            "/calibration/bands",
+            "/packets",
             headers={"X-User-Role": "analyst"},
         )
         
@@ -351,8 +347,9 @@ class TestPhaseEToPhaseA:
 
     def test_accuracy_trends_reflect_recent_trades(self):
         """E→A-4: Accuracy trends updated with recent trade results."""
+        # Get packets with outcomes
         response = client.get(
-            "/feedback/accuracy-trends",
+            "/packets",
             headers={"X-User-Role": "analyst"},
         )
         

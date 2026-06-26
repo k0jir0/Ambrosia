@@ -155,13 +155,7 @@ export function Workbench({ initialReviewId }: { initialReviewId?: string } = {}
 
   async function startNewPacketDraft(): Promise<ActionResult> {
     setActiveView("workbench");
-    setSeedRequestToken((current) => current + 1);
     appendAuditEvent("packet.new", "New packet draft opened and seeded with the next thesis candidate.");
-
-    requestAnimationFrame(() => {
-      newReviewSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-    });
-
     return "ok";
   }
 
@@ -473,8 +467,8 @@ export function Workbench({ initialReviewId }: { initialReviewId?: string } = {}
                     </div>
                     <div className="flex justify-between">
                       <span className="text-slate-400">Change</span>
-                      <span className={liveMarketData.snapshot.priceChange >= 0 ? "text-teal" : "text-amber"}>
-                        {liveMarketData.snapshot.priceChange >= 0 ? "+" : ""}{liveMarketData.snapshot.priceChange?.toFixed(2) || "N/A"}%
+                      <span className={liveMarketData.snapshot.priceChange24h >= 0 ? "text-teal" : "text-amber"}>
+                        {liveMarketData.snapshot.priceChange24h >= 0 ? "+" : ""}{liveMarketData.snapshot.priceChange24h?.toFixed(2) || "N/A"}%
                       </span>
                     </div>
                   </div>
@@ -496,7 +490,7 @@ export function Workbench({ initialReviewId }: { initialReviewId?: string } = {}
                       <ul className="space-y-2">
                         {activeReview.claims.map((claim) => (
                           <li key={claim.id} className="p-2 rounded border border-line bg-paper/50 text-xs">
-                            {claim.claim}
+                            {claim.text}
                           </li>
                         ))}
                       </ul>
@@ -513,7 +507,7 @@ export function Workbench({ initialReviewId }: { initialReviewId?: string } = {}
                   {activeReview.validation ? (
                     <div className="rounded border border-teal/20 bg-teal/5 p-3">
                       <p className="text-xs text-teal mb-1 font-semibold">Validation Gate</p>
-                      <p className="text-xs text-slate-300">{activeReview.validation.result}</p>
+                      <p className="text-xs text-slate-300">{activeReview.validation.hypothesis}</p>
                     </div>
                   ) : null}
                 </div>

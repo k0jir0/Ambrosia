@@ -30,6 +30,7 @@ jobs:
         run: |
           cd services/api
           pip install -q -r requirements.txt
+          pip install -q pytest
           
       - name: Run provider ablation tests
         run: |

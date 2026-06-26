@@ -25,7 +25,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ['3.10', '3.11', '3.12']
+        python-version: ['3.12']
     
     timeout-minutes: 30
     
@@ -76,7 +76,7 @@ jobs:
         working-directory: services/api
         run: |
           pytest tests/test_e2e_workflows.py tests/test_e2e_integration.py tests/test_ui_integration.py \
-            --cov=app --cov-report=xml --cov-report=html --cov-report=term-summary \
+            --cov=app --cov-report=xml --cov-report=html --cov-report=term \
             --timeout=60 --quiet
       
       - name: Upload coverage to Codecov

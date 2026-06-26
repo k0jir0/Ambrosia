@@ -30,7 +30,7 @@ jobs:
         run: |
           cd services/api
           pip install -q -r requirements.txt
-          pip install -q pytest
+          pip install -q pytest httpx2
           
       - name: Run provider ablation tests
         run: |

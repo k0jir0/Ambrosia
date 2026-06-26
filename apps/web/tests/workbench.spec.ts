@@ -42,6 +42,7 @@ test("markets route renders ticker-bound charting workspace", async ({ page }) =
 });
 
 test("review route uses focused decision workbench", async ({ page }) => {
+  await page.route("http://localhost:8000/**", (route) => route.abort());
   await page.goto("/review/atr-003");
   await expect(page.getByRole("heading", { name: /Curve steepener after policy shift/i })).toBeVisible();
   await expect(page.getByText("Thesis and sources")).toBeVisible();
@@ -50,6 +51,14 @@ test("review route uses focused decision workbench", async ({ page }) => {
   await expect(page.getByText("Sticky decision strip")).toBeVisible();
   await expect(page.getByText("Core Actions")).toHaveCount(0);
   await expect(page.getByText("Run a thesis through Ambrosia")).toHaveCount(0);
+  const exportButton = page.getByRole("button", { name: "Generate / export report" });
+  await expect(exportButton).toBeEnabled();
+  const [download] = await Promise.all([
+    page.waitForEvent("download"),
+    exportButton.click()
+  ]);
+  expect(download.suggestedFilename()).toBe("tlt-investment-decision-report.md");
+  await expect(page.getByText("Report exported from local fallback").first()).toBeVisible();
 });
 
 test("sidebar navigation reaches core routes", async ({ page }) => {

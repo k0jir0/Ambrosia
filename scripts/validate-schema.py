@@ -17,14 +17,14 @@ import json
 from pathlib import Path
 
 
-def run_command(cmd: list[str], description: str) -> bool:
+def run_command(cmd: list[str], description: str, cwd: Path | None = None) -> bool:
     """Run a command and return True if successful."""
     print(f"\n{'='*70}")
     print(f"Validating: {description}")
     print(f"{'='*70}")
     
     try:
-        result = subprocess.run(cmd, check=True, capture_output=True, text=True)
+        result = subprocess.run(cmd, check=True, capture_output=True, text=True, cwd=cwd)
         print(result.stdout)
         print(f"✓ PASS: {description}")
         return True
@@ -58,7 +58,8 @@ def main() -> int:
     
     contract_result = run_command(
         [sys.executable, "-m", "pytest", "services/api/tests/test_contract_gates.py", "-v"],
-        "Contract gates validation"
+        "Contract gates validation",
+        cwd=root,
     )
     all_pass = all_pass and contract_result
 
@@ -71,7 +72,8 @@ def main() -> int:
     
     stack_result = run_command(
         [sys.executable, "-m", "unittest", "discover", "-s", "tests", "-p", "test_stack_contract.py", "-v"],
-        "Stack contracts validation"
+        "Stack contracts validation",
+        cwd=root,
     )
     all_pass = all_pass and stack_result
 
@@ -84,12 +86,13 @@ def main() -> int:
     
     lint_result = run_command(
         [sys.executable, "-m", "pip", "install", "ruff"],
-        "Ruff linter installation (pre-check)"
+        "Ruff linter installation (pre-check)",
     )
     if lint_result:
         lint_result = run_command(
             [sys.executable, "-m", "ruff", "check", "app", "tests"],
-            "API linting with Ruff"
+            "API linting with Ruff",
+            cwd=api_dir,
         )
     all_pass = all_pass and lint_result
 

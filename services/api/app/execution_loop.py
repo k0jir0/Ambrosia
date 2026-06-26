@@ -174,10 +174,10 @@ def generate_execution_loop_demo() -> dict:
     # Simulate a complete execution loop
     
     # Step 1: Place buy order based on thesis
-    order1 = sandbox.place_order("NVDA", "buy", 1000, 108.50)
+    sandbox.place_order("NVDA", "buy", 1000, 108.50)
     
     # Step 2: Record attribution factors
-    attribution1 = sandbox.record_attribution(
+    sandbox.record_attribution(
         ticker="NVDA",
         entry_thesis="Convergent bullish signals",
         factors=["RSI reversal", "Golden cross", "Earnings growth"],
@@ -190,13 +190,12 @@ def generate_execution_loop_demo() -> dict:
         sandbox.positions["NVDA"].current_price = 112.30
     
     # Step 4: Close position
-    order2 = sandbox.place_order("NVDA", "sell", 1000, 112.30)
+    sandbox.place_order("NVDA", "sell", 1000, 112.30)
     
     # Step 5: Record outcome attribution
-    pnl = (112.30 - 108.50) * 1000
     pnl_pct = ((112.30 - 108.50) / 108.50) * 100
     
-    attribution2 = sandbox.record_attribution(
+    sandbox.record_attribution(
         ticker="NVDA",
         entry_thesis="Convergent bullish signals",
         factors=["RSI reversal", "Golden cross", "Earnings growth"],
@@ -235,19 +234,19 @@ if __name__ == "__main__":
     print(f"Total Orders: {execution_data['total_orders']}")
     print(f"Total Executions: {execution_data['total_executions']}")
     
-    print(f"\nPortfolio Status:")
+    print("\nPortfolio Status:")
     print(f"  Cash: ${portfolio['cash_available']:,.2f}")
     print(f"  Market Value: ${portfolio['total_market_value']:,.2f}")
     print(f"  Total P&L: ${portfolio['total_realized_pnl'] + portfolio['total_unrealized_pnl']:,.2f}")
     print(f"  Return: {portfolio['return_pct']:.2f}%")
     
     if portfolio["positions"]:
-        print(f"\nOpen Positions:")
+        print("\nOpen Positions:")
         for pos in portfolio["positions"]:
             print(f"  {pos['ticker']}: {pos['quantity']} @ avg ${pos['avg_entry_price']:.2f}")
     
     if execution_data["execution_attributions"]:
-        print(f"\nExecution Attribution:")
+        print("\nExecution Attribution:")
         for attr in execution_data["execution_attributions"]:
             print(f"  {attr['execution_id']}: {attr['ticker']} - {attr['outcome']}")
     

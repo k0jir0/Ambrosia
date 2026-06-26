@@ -3,7 +3,7 @@ INDEX61 PHASE COMPLETION & RBAC STATUS ENDPOINTS
 Additional endpoints for phase status, RBAC configuration, and completion tracking
 """
 
-from fastapi import APIRouter, HTTPException, Header
+from fastapi import APIRouter, Header
 from datetime import datetime
 
 router = APIRouter(prefix="/index61", tags=["index61-completion"])

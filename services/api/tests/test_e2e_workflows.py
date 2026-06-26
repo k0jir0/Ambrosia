@@ -15,9 +15,6 @@ Coverage:
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta
-from typing import Optional
-from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 import pytest

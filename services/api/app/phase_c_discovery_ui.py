@@ -3,11 +3,9 @@ Phase C: Discovery & Intelligence UI Integration
 Scanner UI, report generation, analyst shortcuts, panel integration
 """
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 from pydantic import BaseModel
 from datetime import datetime
-from typing import Optional, List
-import json
 
 router = APIRouter(prefix="/discovery", tags=["discovery"])
 

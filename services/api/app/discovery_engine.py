@@ -189,7 +189,7 @@ if __name__ == "__main__":
     print(f"Theses Generated: {output['theses_count']}")
     
     if discovered_theses:
-        print(f"\nDiscovered Theses:")
+        print("\nDiscovered Theses:")
         for thesis in discovered_theses:
             print(f"\n  {thesis.thesis_id}: {thesis.title}")
             print(f"  Ticker: {thesis.ticker}")

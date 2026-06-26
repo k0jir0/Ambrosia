@@ -38,24 +38,6 @@ export function DashboardPage() {
         <PulseCard label="Outcome Queue" value={String(dueOutcomes)} note="Record feedback" />
       </section>
 
-      <Panel className="p-5">
-        <SectionTitle eyebrow="Operating model" title="Why Ambrosia is agentic investment decisioning" />
-        <div className="mt-4 grid gap-4 text-sm leading-6 text-ink/75 md:grid-cols-2">
-          <p>
-            <span className="font-semibold text-ink">Agentic AI for Investments:</span> Ambrosia turns a raw thesis into a stateful workflow with intake, retrieval, market context, critique, validation, confidence, audit, and outcome memory.
-          </p>
-          <p>
-            <span className="font-semibold text-ink">Investment Trading Decisions:</span> every review is structured around the human choice to pursue, watch, reject, or request more data before capital is put at risk.
-          </p>
-          <p>
-            <span className="font-semibold text-ink">Swarm Intelligence:</span> the product combines specialist lenses including market data, technicals, sentiment, bear case, risk, and synthesis instead of relying on one generic answer.
-          </p>
-          <p>
-            <span className="font-semibold text-ink">Agentic Swarm:</span> those specialist lenses participate in a coordinated packet workflow, producing bounded outputs that improve the final decision surface.
-          </p>
-        </div>
-      </Panel>
-
       <section className="grid gap-4 xl:grid-cols-3">
         <Panel className="p-5 xl:col-span-2">
           <SectionTitle eyebrow="Needs Your Attention" title="Priority queue" />

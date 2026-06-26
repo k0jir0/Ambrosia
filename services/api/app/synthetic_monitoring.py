@@ -232,7 +232,7 @@ if __name__ == "__main__":
         for reg in report["regressions_detected"]:
             print(f"  - {reg['probe_name']}: {len(reg['signals'])} signal(s)")
     
-    print(f"\nRecommendations:")
+    print("\nRecommendations:")
     for i, rec in enumerate(report["recommendations"], 1):
         print(f"  {i}. {rec}")
     

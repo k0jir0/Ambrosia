@@ -13,11 +13,8 @@ Coverage:
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
-from typing import Dict, List
 
 from fastapi.testclient import TestClient
-import pytest
 
 from app.main import app
 
@@ -33,13 +30,6 @@ class TestPhaseAToPhaseB:
 
     def test_signal_passes_through_provider_ablation(self):
         """A→B-1: Signals validated via provider ablation (B1)."""
-        # Create signal in Phase A
-        signal = {
-            "ticker": "AAPL",
-            "conviction": 0.75,
-            "data_sources": ["polygon", "twelvedata"],
-        }
-        
         # Verify providers are being ablated
         response = client.get(
             "/providers/ablation",
@@ -52,7 +42,7 @@ class TestPhaseAToPhaseB:
     def test_signal_monitored_by_synthetic_tests(self):
         """A→B-2: Signals monitored by synthetic monitoring (B2)."""
         # Create signal discovery request
-        response = client.post(
+        client.post(
             "/discovery/scan",
             json={
                 "universe": "all",
@@ -162,7 +152,7 @@ class TestPhaseCToPhaseD:
     def test_review_visibility_by_role(self):
         """C→D-1: Review visibility controlled by role hierarchy."""
         # Create thesis (C)
-        thesis_response = client.post(
+        client.post(
             "/discovery/signal/test-vis-001/create-thesis",
             json={"conviction": 0.80},
             headers={"X-User-Role": "analyst"},
@@ -197,7 +187,7 @@ class TestPhaseCToPhaseD:
     def test_review_creates_audit_trail(self):
         """C→D-3: Review creation recorded in audit trail."""
         # Create review
-        response = client.post(
+        client.post(
             "/discovery/signal/test-audit/create-thesis",
             json={"conviction": 0.75},
             headers={"X-User-Role": "analyst"},
@@ -509,7 +499,7 @@ class TestStateConsistency:
         signal_id = "immutable-001"
         
         # Create signal
-        create = client.post(
+        client.post(
             f"/discovery/signal/{signal_id}/create-thesis",
             json={"conviction": 0.80},
             headers={"X-User-Role": "analyst"},

@@ -6,7 +6,6 @@ Paper trading, market connectivity, attribution analysis
 from fastapi import APIRouter, HTTPException, Header
 from typing import Optional, List
 from datetime import datetime
-from decimal import Decimal
 
 router = APIRouter(prefix="/execution", tags=["execution"])
 

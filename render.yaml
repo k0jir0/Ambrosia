@@ -37,7 +37,7 @@ services:
     startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT --timeout-grace-period 30 --timeout-keep-alive 30
     healthCheckPath: /health
     healthCheckStartFailureThreshold: 10
-    preDeployCommand: python scripts/validate-schema.py
+    preDeployCommand: cd ../.. && python scripts/validate-schema.py
     envVars:
       - key: PYTHON_VERSION
         value: 3.12.10
@@ -78,7 +78,7 @@ services:
     startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT --timeout-grace-period 30 --timeout-keep-alive 30
     healthCheckPath: /health
     healthCheckStartFailureThreshold: 10
-    preDeployCommand: python scripts/validate-schema.py
+    preDeployCommand: cd ../.. && python scripts/validate-schema.py
     envVars:
       - key: PYTHON_VERSION
         value: 3.12.10

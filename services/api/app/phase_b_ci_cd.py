@@ -3,11 +3,9 @@ Phase B: CI/CD Industrialization Components
 Provider ablation, synthetic monitoring, evidence gates, function registry
 """
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 from pydantic import BaseModel
 from datetime import datetime
-from typing import Optional
-import json
 
 router = APIRouter(prefix="/ci-cd", tags=["ci-cd"])
 

@@ -3,10 +3,10 @@ Phase E: Execution Loop Completion
 Market data integration, attribution analysis, E2E certification
 """
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 from pydantic import BaseModel
-from datetime import datetime, timedelta
-from typing import Optional, List
+from datetime import datetime
+from typing import Optional
 import random
 
 router = APIRouter(prefix="/execution", tags=["execution"])

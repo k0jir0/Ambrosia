@@ -14,16 +14,19 @@ from fastapi.middleware.cors import CORSMiddleware
 from .market_data import build_market_snapshot, build_technicals
 from .models import (
     AgentRunRequest,
+    AttributionRequest,
     AlertQueueRecord,
     AuditEvent,
     AuditEventCreate,
     BacktestPrepareRequest,
     BacktestRunRequest,
+    BrokerSandboxOrderRequest,
     PacketApproval,
     PacketApprovalCreate,
     PacketComment,
     PacketCommentCreate,
     PacketOutcomeUpdate,
+    MobileAlertSubscriptionCreate,
     PortfolioContextUpdate,
     ConfidenceDeriveRequest,
     DecisionPacket,
@@ -74,13 +77,6 @@ from .tool_boundaries import list_tool_boundaries
 from .phase_c_discovery import router as discovery_router
 from .phase_d_rbac import (
     RBACMiddleware,
-    RoleChecker,
-    PermissionChecker,
-    require_role,
-    require_permission,
-    AuditLog,
-    ROLES,
-    PERMISSION_BOUNDARIES,
 )
 from .phase_e_execution import router as execution_router
 from .phase_index61_completion import router as completion_router
@@ -228,6 +224,7 @@ def _require_role(
     header_role: str | None,
     *,
     scope: str,
+    force: bool = False,
 ) -> str:
     # DISABLED FOR PHASE A - Will be enforced in Phase D (Week 8)
     # TODO: Re-enable role enforcement in Phase D deployment
@@ -235,7 +232,7 @@ def _require_role(
     
     # Check if RBAC is enabled via environment variable
     rbac_enabled = os.getenv("RBAC_ENABLED", "false").lower() == "true"
-    if not rbac_enabled:
+    if not force and not rbac_enabled:
         # Phase A: Return default role to allow all access
         return "analyst"
     
@@ -264,8 +261,8 @@ def health() -> dict:
     }
 
 
-@app.get("/health/detailed")
-def health_detailed() -> dict:
+@app.get("/health/phases")
+def health_phases() -> dict:
     """Detailed health check with all phase statuses"""
     return {
         "status": "ok",
@@ -491,7 +488,7 @@ def get_function_registry(
 def get_frontend_visibility_matrix(
     x_ambrosia_role: str | None = Header(default=None, alias="X-Ambrosia-Role"),
 ) -> dict[str, str]:
-    _require_role(ADVANCED_ROLES, x_ambrosia_role, scope="advanced")
+    _require_role(ADVANCED_ROLES, x_ambrosia_role, scope="advanced", force=True)
     return load_frontend_visibility_matrix()
 
 
@@ -499,7 +496,7 @@ def get_frontend_visibility_matrix(
 def get_admin_boundary_rules(
     x_ambrosia_role: str | None = Header(default=None, alias="X-Ambrosia-Role"),
 ) -> dict[str, str]:
-    _require_role(ADMIN_ROLES, x_ambrosia_role, scope="admin")
+    _require_role(ADMIN_ROLES, x_ambrosia_role, scope="admin", force=True)
     return load_admin_boundary_rules()
 
 
@@ -507,7 +504,7 @@ def get_admin_boundary_rules(
 def simulate_sandbox_order(
     body: BrokerSandboxOrderRequest,
     x_ambrosia_role: str | None = Header(default=None, alias="X-Ambrosia-Role"),
-) -> BrokerSandboxExecution:
+) -> dict:
     _require_role(ADVANCED_ROLES, x_ambrosia_role, scope="advanced")
     return store.simulate_sandbox_order(body)
 
@@ -515,7 +512,7 @@ def simulate_sandbox_order(
 @app.get("/sandbox/orders", response_model=list[dict])
 def list_sandbox_orders(
     x_ambrosia_role: str | None = Header(default=None, alias="X-Ambrosia-Role"),
-) -> list[BrokerSandboxExecution]:
+) -> list[dict]:
     _require_role(ADVANCED_ROLES, x_ambrosia_role, scope="advanced")
     return store.list_sandbox_orders()
 
@@ -523,7 +520,7 @@ def list_sandbox_orders(
 @app.get("/sandbox/positions", response_model=list[dict])
 def list_sandbox_positions(
     x_ambrosia_role: str | None = Header(default=None, alias="X-Ambrosia-Role"),
-) -> list[BrokerSandboxPosition]:
+) -> list[dict]:
     _require_role(ADVANCED_ROLES, x_ambrosia_role, scope="advanced")
     return store.list_sandbox_positions()
 
@@ -799,7 +796,7 @@ def compute_packet_attribution(
     packet_id: str,
     body: AttributionRequest,
     x_ambrosia_role: str | None = Header(default=None, alias="X-Ambrosia-Role"),
-) -> AttributionReport:
+) -> dict:
     _require_role(ADVANCED_ROLES, x_ambrosia_role, scope="advanced")
     report = store.compute_attribution_report(
         packet_id,
@@ -823,7 +820,7 @@ def compute_packet_attribution(
 def get_packet_attribution_latest(
     packet_id: str,
     x_ambrosia_role: str | None = Header(default=None, alias="X-Ambrosia-Role"),
-) -> AttributionReport:
+) -> dict:
     _require_role(ADVANCED_ROLES, x_ambrosia_role, scope="advanced")
     report = store.get_attribution_report(packet_id)
     if report is None:
@@ -835,7 +832,7 @@ def get_packet_attribution_latest(
 def create_mobile_alert_subscription(
     body: MobileAlertSubscriptionCreate,
     x_ambrosia_role: str | None = Header(default=None, alias="X-Ambrosia-Role"),
-) -> MobileAlertSubscription:
+) -> dict:
     _require_role(ADVANCED_ROLES, x_ambrosia_role, scope="advanced")
     return store.create_mobile_alert_subscription(body)
 
@@ -843,7 +840,7 @@ def create_mobile_alert_subscription(
 @app.get("/alerts/subscriptions", response_model=list[dict])
 def list_mobile_alert_subscriptions(
     x_ambrosia_role: str | None = Header(default=None, alias="X-Ambrosia-Role"),
-) -> list[MobileAlertSubscription]:
+) -> list[dict]:
     _require_role(ADVANCED_ROLES, x_ambrosia_role, scope="advanced")
     return store.list_mobile_alert_subscriptions()
 
@@ -852,7 +849,7 @@ def list_mobile_alert_subscriptions(
 def list_mobile_alert_events(
     limit: int = Query(default=50, ge=1, le=200),
     x_ambrosia_role: str | None = Header(default=None, alias="X-Ambrosia-Role"),
-) -> list[MobileAlertEvent]:
+) -> list[dict]:
     _require_role(ADVANCED_ROLES, x_ambrosia_role, scope="advanced")
     return store.list_mobile_alert_events(limit=limit)
 
@@ -1160,7 +1157,7 @@ def health_detailed() -> dict:
     if metrics_board.overall_status == "critical":
         alerts.append(f"Critical metrics detected: {metrics_board.overall_status.upper()}")
     if metrics_board.overall_status == "warning":
-        alerts.append(f"Warning: Some metrics below target")
+        alerts.append("Warning: Some metrics below target")
 
     overall = "degraded" if (alerts or metrics_board.overall_status != "ok") else "ok"
 
@@ -1515,12 +1512,13 @@ def create_guardrail_policy(
     x_ambrosia_role: str | None = Header(default=None, alias="X-Ambrosia-Role"),
 ) -> dict:
     actor = _require_role(ADMIN_ROLES, x_ambrosia_role, scope="admin")
+    updated_by = body.get("updatedBy") or actor
     created = store.create_guardrail_profile(body)
     store.add_admin_audit_event(
         event_type="guardrail.policy.create.requested",
-        actor=body.updatedBy or actor,
-        target_id=created.id,
-        detail=f"Create requested for guardrail policy '{created.name}'",
+        actor=updated_by,
+        target_id=created["id"],
+        detail=f"Create requested for guardrail policy '{created['name']}'",
         severity="warning",
     )
     return created
@@ -1533,12 +1531,13 @@ def activate_guardrail_policy(
     x_ambrosia_role: str | None = Header(default=None, alias="X-Ambrosia-Role"),
 ) -> dict:
     actor = _require_role(ADMIN_ROLES, x_ambrosia_role, scope="admin")
-    activated = store.activate_guardrail_profile(profile_id, updated_by=body.updatedBy)
+    updated_by = body.get("updatedBy") or actor
+    activated = store.activate_guardrail_profile(profile_id, updated_by=updated_by)
     if activated is None:
         raise HTTPException(status_code=404, detail="Guardrail policy profile not found")
     store.add_admin_audit_event(
         event_type="guardrail.policy.activate.requested",
-        actor=body.updatedBy or actor,
+        actor=updated_by,
         target_id=profile_id,
         detail=f"Activation requested for guardrail policy '{profile_id}'",
         severity="critical",

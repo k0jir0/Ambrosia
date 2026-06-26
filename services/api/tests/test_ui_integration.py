@@ -14,12 +14,8 @@ Coverage:
 
 from __future__ import annotations
 
-import json
-from datetime import datetime
-from typing import Dict, List
 
 from fastapi.testclient import TestClient
-import pytest
 
 from app.main import app
 

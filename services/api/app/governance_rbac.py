@@ -282,7 +282,7 @@ if __name__ == "__main__":
     print(f"Users Configured: {report['rbac_engine']['total_users']}")
     print(f"Permission Boundaries: {report['rbac_engine']['total_boundaries']}")
     
-    print(f"\nBoundary Tests:")
+    print("\nBoundary Tests:")
     for check in report["boundary_checks"]:
         status = "✓ PASS" if check["result"]["allowed"] else "✗ BLOCKED"
         print(f"  {status}: {check['scenario']}")

@@ -315,6 +315,27 @@ class AgentRunRequest(BaseModel):
     providerMode: Literal["deterministic", "ollama", "hosted", "hybrid"] = "deterministic"
 
 
+class BrokerSandboxOrderRequest(BaseModel):
+    ticker: str = Field(min_length=1)
+    quantity: float = Field(gt=0)
+    side: Literal["buy", "sell", "long", "short"]
+    price: float | None = None
+    source: str = "manual"
+
+
+class AttributionRequest(BaseModel):
+    pnl: float = 0.0
+    horizonDays: int = Field(default=20, ge=1, le=365)
+
+
+class MobileAlertSubscriptionCreate(BaseModel):
+    userId: str = "default-user"
+    channel: Literal["email", "sms", "push", "webhook", "in_app"] = "in_app"
+    target: str = ""
+    minSeverity: Literal["info", "warning", "critical"] = "warning"
+    enabled: bool = True
+
+
 class ToolBoundary(BaseModel):
     name: str
     description: str

@@ -5,8 +5,8 @@ Real market data feeds + paper trading execution
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
-from datetime import datetime, timedelta
-from typing import Optional, Dict, List
+from datetime import datetime
+from typing import Optional, List
 import aiohttp
 import os
 
@@ -56,8 +56,6 @@ async def get_market_quote(
     """Get real-time market data for ticker from configured providers."""
     
     providers_to_try = [source] if source else list(MARKET_PROVIDERS.keys())
-    last_error = None
-    
     for provider_name in providers_to_try:
         try:
             provider = MARKET_PROVIDERS.get(provider_name)
@@ -85,8 +83,7 @@ async def get_market_quote(
             elif provider_name == "tradingview":
                 return await _fetch_tradingview_quote(ticker, api_key)
                 
-        except Exception as e:
-            last_error = e
+        except Exception:
             continue
     
     # If all providers failed, return mock data

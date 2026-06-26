@@ -93,6 +93,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <NavSection items={top} pathname={pathname} />
             <NavSection items={middle} pathname={pathname} />
             <NavSection items={bottom} pathname={pathname} />
+            <OperatingModelPanel />
           </div>
         </aside>
 
@@ -124,6 +125,28 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
     </div>
+  );
+}
+
+function OperatingModelPanel() {
+  return (
+    <section className="rounded-lg border border-line bg-fog/70 p-3 text-[11px] leading-5 text-ink/70">
+      <p className="text-xs font-semibold uppercase tracking-wide text-teal">Operating Model</p>
+      <div className="mt-2 space-y-2">
+        <p>
+          <span className="font-semibold text-ink">Agentic AI for Investments:</span> Ambrosia turns a raw thesis into a stateful workflow with intake, retrieval, market context, critique, validation, confidence, audit, and outcome memory.
+        </p>
+        <p>
+          <span className="font-semibold text-ink">Investment Trading Decisions:</span> every review is structured around the human choice to pursue, watch, reject, or request more data before capital is put at risk.
+        </p>
+        <p>
+          <span className="font-semibold text-ink">Swarm Intelligence:</span> specialist lenses like market data, technicals, sentiment, bear case, risk, and synthesis work together instead of relying on one generic answer.
+        </p>
+        <p>
+          <span className="font-semibold text-ink">Agentic Swarm:</span> those specialist lenses participate in a coordinated packet workflow, producing bounded outputs that improve the decision surface.
+        </p>
+      </div>
+    </section>
   );
 }
 

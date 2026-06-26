@@ -3,9 +3,8 @@ PHASE D: RBAC (Role-Based Access Control) Middleware
 Enforces 4 roles: user, analyst, team_lead, admin
 """
 
-from fastapi import Request, HTTPException, Depends
+from fastapi import Request, HTTPException
 from functools import wraps
-from typing import List, Optional
 from datetime import datetime
 
 # Role definitions
@@ -51,7 +50,6 @@ class RBACMiddleware:
         auth_header = headers.get(b"authorization", b"").decode()
         
         if auth_header.startswith("Bearer "):
-            token = auth_header[7:]
             # In real implementation: decode JWT
             # For now, extract role from custom header
             user_role = headers.get(b"x-user-role", b"user").decode()

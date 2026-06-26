@@ -5,7 +5,6 @@ Endpoints for thesis generation, PDF/email exports, analyst workflows
 
 from fastapi import APIRouter, HTTPException, Header
 from typing import Optional, List
-import json
 from datetime import datetime
 
 router = APIRouter(prefix="/discovery", tags=["discovery"])

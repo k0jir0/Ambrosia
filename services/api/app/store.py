@@ -20,6 +20,7 @@ from .models import (
     ReviewStatus,
     TradeReview,
     AlertQueueRecord,
+    BrokerSandboxOrderRequest,
     WorkspaceMember,
     WorkspaceMemberRole,
     WorkspaceRecord,
@@ -52,6 +53,14 @@ class ReviewStore:
         self._packet_comments: dict[str, list[PacketComment]] = {}
         self._packet_approvals: dict[str, PacketApproval] = {}
         self._workflow_templates: dict[str, WorkflowTemplate] = {}
+        self._sandbox_orders: list[dict] = []
+        self._sandbox_positions: dict[str, dict] = {}
+        self._attribution_reports: dict[str, dict] = {}
+        self._mobile_alert_events: list[dict] = []
+        self._mobile_alert_subscriptions: list[dict] = []
+        self._admin_audit_events: list[dict] = []
+        self._guardrail_profiles: dict[str, dict] = {}
+        self._active_guardrail_profile_id: str | None = None
         self._trial_count = 0
         self._db_enabled = False
         self._review_db: PostgresReviewStore | None = None
@@ -306,6 +315,73 @@ class ReviewStore:
     def list_alerts(self) -> list[AlertQueueRecord]:
         return list(self._alerts)
 
+    def emit_mobile_alert(
+        self,
+        packet_id: str,
+        event_type: str,
+        severity: str,
+        message: str,
+    ) -> dict:
+        packet = self.get_packet(packet_id)
+        event = {
+            "id": f"mal-{uuid4().hex[:10]}",
+            "packetId": packet_id,
+            "ticker": packet.ticker if packet is not None else None,
+            "eventType": event_type,
+            "severity": severity,
+            "message": message,
+            "createdAt": datetime.now().isoformat(),
+            "delivered": bool(self._mobile_alert_subscriptions),
+            "subscriptionCount": len(self._mobile_alert_subscriptions),
+        }
+        self._mobile_alert_events.insert(0, event)
+        self._mobile_alert_events = self._mobile_alert_events[:200]
+        return event
+
+    def list_mobile_alert_events(self, limit: int = 50) -> list[dict]:
+        return list(self._mobile_alert_events[:limit])
+
+    def create_mobile_alert_subscription(self, create) -> dict:
+        payload = create.model_dump() if hasattr(create, "model_dump") else dict(create)
+        subscription = {
+            "id": f"mas-{uuid4().hex[:10]}",
+            "createdAt": datetime.now().isoformat(),
+            **payload,
+        }
+        self._mobile_alert_subscriptions.insert(0, subscription)
+        self._mobile_alert_subscriptions = self._mobile_alert_subscriptions[:200]
+        return subscription
+
+    def list_mobile_alert_subscriptions(self) -> list[dict]:
+        return list(self._mobile_alert_subscriptions)
+
+    def add_admin_audit_event(
+        self,
+        event_type: str,
+        actor: str,
+        target_id: str,
+        detail: str,
+        severity: str = "info",
+    ) -> dict:
+        event = {
+            "id": f"adm-audit-{uuid4().hex[:10]}",
+            "timestamp": datetime.now().isoformat(),
+            "eventType": event_type,
+            "actor": actor,
+            "targetId": target_id,
+            "detail": detail,
+            "severity": severity,
+        }
+        self._admin_audit_events.insert(0, event)
+        self._admin_audit_events = self._admin_audit_events[:500]
+        return event
+
+    def list_admin_audit_events(self, limit: int = 50, event_type: str | None = None) -> list[dict]:
+        events = self._admin_audit_events
+        if event_type:
+            events = [event for event in events if event["eventType"] == event_type]
+        return list(events[:limit])
+
     def record_workflow_run(
         self,
         review_id: str | None,
@@ -506,6 +582,53 @@ class ReviewStore:
         self._workflow_templates[template_id] = archived
         return archived
 
+    # ------------------------------------------------------------------
+    # Phase 5: Admin guardrail profiles
+    # ------------------------------------------------------------------
+
+    def create_guardrail_profile(self, body: dict) -> dict:
+        profile = {
+            "id": f"grp-{uuid4().hex[:10]}",
+            "name": body.get("name") or "Untitled guardrail policy",
+            "description": body.get("description", ""),
+            "rules": body.get("rules", []),
+            "status": "draft",
+            "createdAt": datetime.now().isoformat(),
+            "updatedAt": datetime.now().isoformat(),
+            "updatedBy": body.get("updatedBy", "admin"),
+            "active": False,
+        }
+        self._guardrail_profiles[profile["id"]] = profile
+        return profile
+
+    def list_guardrail_profiles(self) -> list[dict]:
+        return sorted(self._guardrail_profiles.values(), key=lambda profile: profile["createdAt"], reverse=True)
+
+    def get_active_guardrail_profile(self) -> dict | None:
+        if self._active_guardrail_profile_id is None:
+            return None
+        return self._guardrail_profiles.get(self._active_guardrail_profile_id)
+
+    def activate_guardrail_profile(self, profile_id: str, updated_by: str) -> dict | None:
+        profile = self._guardrail_profiles.get(profile_id)
+        if profile is None:
+            return None
+        for existing in self._guardrail_profiles.values():
+            existing["active"] = False
+            if existing["status"] == "active":
+                existing["status"] = "draft"
+        profile.update(
+            {
+                "active": True,
+                "status": "active",
+                "activatedAt": datetime.now().isoformat(),
+                "updatedAt": datetime.now().isoformat(),
+                "updatedBy": updated_by,
+            }
+        )
+        self._active_guardrail_profile_id = profile_id
+        return profile
+
     # ---------------------------------------------------------------
     # Feedback Storage Methods (from FeedbackStorageMixin)
     # ---------------------------------------------------------------
@@ -653,7 +776,6 @@ class ReviewStore:
     def get_band_calibration(self, ticker: str, confidence_band: str) -> CalibrationBand | None:
         """Get calibration for a specific confidence band across all time horizons."""
         # Aggregate across all cohorts for this ticker + band
-        from collections import defaultdict
         from .feedback import OutcomeResult
         
         band_data = {
@@ -782,51 +904,92 @@ class ReviewStore:
         from .operational_scorecard import compute_scorecard_index39
         return compute_scorecard_index39(self)
 
+    def simulate_sandbox_order(self, order: BrokerSandboxOrderRequest) -> dict:
+        """Execute a stateful paper order and update in-memory positions."""
+        ticker = order.ticker.upper()
+        normalized_side = "buy" if order.side in {"buy", "long"} else "sell"
+        execution_price = order.price or float(100 + (abs(hash(ticker)) % 250))
+        signed_quantity = order.quantity if normalized_side == "buy" else -order.quantity
+        order_record = {
+            "id": f"sbx-order-{uuid4().hex[:10]}",
+            "ticker": ticker,
+            "quantity": order.quantity,
+            "side": normalized_side,
+            "status": "executed",
+            "price": execution_price,
+            "executionPrice": execution_price,
+            "source": order.source,
+            "timestamp": datetime.now().isoformat(),
+        }
+
+        position = self._sandbox_positions.get(ticker)
+        if position is None:
+            position = {
+                "id": f"sbx-pos-{ticker}",
+                "ticker": ticker,
+                "quantity": 0.0,
+                "avg_price": execution_price,
+                "current_price": execution_price,
+                "pnl": 0.0,
+                "pnl_percent": 0.0,
+            }
+
+        previous_quantity = float(position["quantity"])
+        next_quantity = previous_quantity + signed_quantity
+        if next_quantity > 0 and normalized_side == "buy":
+            previous_cost = previous_quantity * float(position["avg_price"])
+            position["avg_price"] = (previous_cost + order.quantity * execution_price) / next_quantity
+        position["quantity"] = next_quantity
+        position["current_price"] = execution_price
+        position["pnl"] = (execution_price - float(position["avg_price"])) * next_quantity
+        position["pnl_percent"] = (
+            ((execution_price - float(position["avg_price"])) / float(position["avg_price"])) * 100
+            if position["avg_price"]
+            else 0.0
+        )
+
+        if next_quantity == 0:
+            self._sandbox_positions.pop(ticker, None)
+        else:
+            self._sandbox_positions[ticker] = position
+
+        self._sandbox_orders.insert(0, order_record)
+        self._sandbox_orders = self._sandbox_orders[:500]
+        return order_record
+
     def list_sandbox_orders(self) -> list[dict]:
         """List all sandbox orders."""
-        return [
-            {
-                "id": "sandbox-order-001",
-                "ticker": "SPY",
-                "quantity": 100,
-                "side": "buy",
-                "status": "executed",
-                "price": 450.25,
-                "timestamp": "2025-06-26T10:00:00Z",
-            },
-            {
-                "id": "sandbox-order-002",
-                "ticker": "AAPL",
-                "quantity": 50,
-                "side": "sell",
-                "status": "executed",
-                "price": 180.50,
-                "timestamp": "2025-06-26T11:00:00Z",
-            },
-        ]
+        return list(self._sandbox_orders)
 
     def list_sandbox_positions(self) -> list[dict]:
         """List all sandbox positions."""
-        return [
-            {
-                "id": "sandbox-pos-001",
-                "ticker": "SPY",
-                "quantity": 100,
-                "avg_price": 450.25,
-                "current_price": 451.50,
-                "pnl": 125.00,
-                "pnl_percent": 0.28,
-            },
-            {
-                "id": "sandbox-pos-002",
-                "ticker": "QQQ",
-                "quantity": 75,
-                "avg_price": 380.00,
-                "current_price": 385.00,
-                "pnl": 375.00,
-                "pnl_percent": 1.32,
-            },
-        ]
+        return sorted(self._sandbox_positions.values(), key=lambda position: position["ticker"])
+
+    def compute_attribution_report(self, packet_id: str, pnl: float, horizon_days: int) -> dict | None:
+        packet = self.get_packet(packet_id)
+        if packet is None:
+            return None
+        confidence_weight = round(packet.confidence / 100, 3)
+        report = {
+            "id": f"attr-{uuid4().hex[:10]}",
+            "packetId": packet_id,
+            "ticker": packet.ticker,
+            "pnl": pnl,
+            "horizonDays": horizon_days,
+            "computedAt": datetime.now().isoformat(),
+            "summary": "Attribution computed from packet confidence, thesis quality, and realized outcome.",
+            "factors": [
+                {"name": "confidence", "contribution": round(pnl * confidence_weight, 4)},
+                {"name": "market_context", "contribution": round(pnl * 0.25, 4)},
+                {"name": "risk_discipline", "contribution": round(pnl * 0.20, 4)},
+                {"name": "unexplained", "contribution": round(pnl * (0.55 - confidence_weight), 4)},
+            ],
+        }
+        self._attribution_reports[packet_id] = report
+        return report
+
+    def get_attribution_report(self, packet_id: str) -> dict | None:
+        return self._attribution_reports.get(packet_id)
 
 
 store = ReviewStore()

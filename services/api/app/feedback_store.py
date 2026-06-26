@@ -7,7 +7,6 @@ It maintains both in-memory and Postgres persistence layers.
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import datetime
 from typing import Optional
 
 from .feedback import (

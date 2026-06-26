@@ -26,6 +26,17 @@ test("markets route renders ticker-bound charting workspace", async ({ page }) =
   await expect(page.getByText("Efficient Frontier")).toBeVisible();
 });
 
+test("review route uses focused decision workbench", async ({ page }) => {
+  await page.goto("/review/atr-003");
+  await expect(page.getByRole("heading", { name: /Curve steepener after policy shift/i })).toBeVisible();
+  await expect(page.getByText("Thesis and sources")).toBeVisible();
+  await expect(page.getByText("Live workflow feed")).toBeVisible();
+  await expect(page.getByText("TLT market dock")).toBeVisible();
+  await expect(page.getByText("Sticky decision strip")).toBeVisible();
+  await expect(page.getByText("Core Actions")).toHaveCount(0);
+  await expect(page.getByText("Run a thesis through Ambrosia")).toHaveCount(0);
+});
+
 test("sidebar navigation reaches core routes", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("link", { name: "Decision History" }).click();

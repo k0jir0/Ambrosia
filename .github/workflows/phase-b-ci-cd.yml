@@ -241,13 +241,13 @@ jobs:
           print('✅ Phase B: All CI/CD components operational')
           "
       
-      - name: Generate Phase B completion report
+      - name: Generate Phase B readiness report
         run: |
-          python scripts/generate-phase-b-completion.py
+          python scripts/generate-phase-b-readiness.py
       
-      - name: Upload Phase B completion
+      - name: Upload Phase B readiness
         uses: actions/upload-artifact@v4
         with:
-          name: phase-b-completion
-          path: artifacts/phase-b-completion.json
+          name: phase-b-readiness
+          path: artifacts/phase-b-readiness.json
           retention-days: 90

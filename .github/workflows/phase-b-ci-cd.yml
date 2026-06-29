@@ -219,7 +219,7 @@ jobs:
       - name: Install dependencies
         run: |
           pnpm install --frozen-lockfile
-          cd services/api && pip install -q -r requirements.txt
+          cd services/api && pip install -q -r requirements.txt pytest httpx2
       
       - name: Run Phase B contract tests
         run: |

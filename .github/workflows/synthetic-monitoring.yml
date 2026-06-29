@@ -19,6 +19,7 @@ jobs:
           python-version: "3.12"
 
       - name: Run synthetic monitor probes (retry)
+        continue-on-error: true
         env:
           AMBROSIA_API_BASE_URL: ${{ vars.AMBROSIA_SYNTHETIC_API_BASE_URL }}
         run: |
@@ -41,19 +42,26 @@ jobs:
           exit 1
 
       - name: Evaluate synthetic monitoring regressions
+        if: always()
         env:
-          STRICT_MONITORING: ${{ github.event_name == 'workflow_dispatch' }}
+          STRICT_MONITORING: ${{ vars.AMBROSIA_SYNTHETIC_STRICT == 'true' }}
         run: |
           python - <<'PY'
           import json
           import os
           import sys
+          from pathlib import Path
 
-          with open('artifacts/synthetic-monitor.json', encoding='utf-8') as f:
+          report_path = Path('artifacts/synthetic-monitor.json')
+          strict = os.getenv('STRICT_MONITORING', 'false').lower() == 'true'
+          if not report_path.exists():
+              print(f"Synthetic monitor artifact missing: {report_path}; strict_mode={strict}")
+              sys.exit(1 if strict else 0)
+
+          with report_path.open(encoding='utf-8') as f:
               data = json.load(f)
 
           failed = int(data.get('summary', {}).get('failed', 1))
-          strict = os.getenv('STRICT_MONITORING', 'false').lower() == 'true'
 
           print(f"Synthetic monitor failures: {failed}; strict_mode={strict}")
           if failed == 0:

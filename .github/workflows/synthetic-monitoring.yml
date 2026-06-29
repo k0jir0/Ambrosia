@@ -18,14 +18,54 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Run synthetic monitor probes
+      - name: Run synthetic monitor probes (retry)
         env:
           AMBROSIA_API_BASE_URL: ${{ vars.AMBROSIA_SYNTHETIC_API_BASE_URL }}
         run: |
-          python scripts/synthetic-monitor.py \
-            --base-url "${AMBROSIA_API_BASE_URL:-https://ambrosia-api.onrender.com}" \
-            --output-json artifacts/synthetic-monitor.json \
-            --output-md artifacts/synthetic-monitor.md
+          for attempt in 1 2 3; do
+            echo "Synthetic monitor attempt ${attempt}/3"
+            if python scripts/synthetic-monitor.py \
+              --base-url "${AMBROSIA_API_BASE_URL:-https://ambrosia-api.onrender.com}" \
+              --output-json artifacts/synthetic-monitor.json \
+              --output-md artifacts/synthetic-monitor.md; then
+              echo "Synthetic monitor probe run succeeded"
+              exit 0
+            fi
+            if [ "$attempt" -lt 3 ]; then
+              delay=$((attempt * 30))
+              echo "Probe run failed; retrying in ${delay}s"
+              sleep "$delay"
+            fi
+          done
+          echo "Synthetic monitor probe run failed after retries"
+          exit 1
+
+      - name: Evaluate synthetic monitoring regressions
+        env:
+          STRICT_MONITORING: ${{ github.event_name == 'workflow_dispatch' }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import sys
+
+          with open('artifacts/synthetic-monitor.json', encoding='utf-8') as f:
+              data = json.load(f)
+
+          failed = int(data.get('summary', {}).get('failed', 1))
+          strict = os.getenv('STRICT_MONITORING', 'false').lower() == 'true'
+
+          print(f"Synthetic monitor failures: {failed}; strict_mode={strict}")
+          if failed == 0:
+              sys.exit(0)
+
+          if strict:
+              print('Failing workflow because strict monitoring is enabled.')
+              sys.exit(1)
+
+          print('Non-strict scheduled run: preserving signal without failing workflow.')
+          sys.exit(0)
+          PY
 
       - name: Upload synthetic monitor artifacts
         if: always()

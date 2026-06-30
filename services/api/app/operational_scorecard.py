@@ -128,7 +128,7 @@ def generate_scorecard(metrics_board) -> OperationalScorecard:
             name="Review Validity",
             actual_value=metrics_board.review_validity.conversion_rate,
             target_value=metrics_board.review_validity.target,
-            status=metrics_board.review_validity.status,
+            status=_normalize_metric_status(metrics_board.review_validity.status),
             gap_to_target=metrics_board.review_validity.conversion_rate - metrics_board.review_validity.target,
             acceptable=metrics_board.review_validity.status == "ok",
         ),
@@ -144,7 +144,7 @@ def generate_scorecard(metrics_board) -> OperationalScorecard:
             name="Packet Integrity",
             actual_value=metrics_board.packet_integrity.integrity_score,
             target_value=metrics_board.packet_integrity.target,
-            status=metrics_board.packet_integrity.status,
+            status=_normalize_metric_status(metrics_board.packet_integrity.status),
             gap_to_target=metrics_board.packet_integrity.integrity_score - metrics_board.packet_integrity.target,
             acceptable=metrics_board.packet_integrity.status == "ok",
         ),
@@ -152,7 +152,7 @@ def generate_scorecard(metrics_board) -> OperationalScorecard:
             name="Data Quality",
             actual_value=metrics_board.data_quality.quality_score,
             target_value=metrics_board.data_quality.target,
-            status=metrics_board.data_quality.status,
+            status=_normalize_metric_status(metrics_board.data_quality.status),
             gap_to_target=metrics_board.data_quality.quality_score - metrics_board.data_quality.target,
             acceptable=metrics_board.data_quality.status == "ok",
         ),
@@ -160,7 +160,7 @@ def generate_scorecard(metrics_board) -> OperationalScorecard:
             name="Agent Consensus",
             actual_value=metrics_board.agent_consensus.avg_consensus_score,
             target_value=metrics_board.agent_consensus.target,
-            status=metrics_board.agent_consensus.status,
+            status=_normalize_metric_status(metrics_board.agent_consensus.status),
             gap_to_target=metrics_board.agent_consensus.avg_consensus_score - metrics_board.agent_consensus.target,
             acceptable=metrics_board.agent_consensus.status == "ok",
         ),
@@ -168,7 +168,7 @@ def generate_scorecard(metrics_board) -> OperationalScorecard:
             name="Backtest Validity",
             actual_value=metrics_board.backtest_validity.avg_correlation,
             target_value=metrics_board.backtest_validity.target,
-            status=metrics_board.backtest_validity.status,
+            status=_normalize_metric_status(metrics_board.backtest_validity.status),
             gap_to_target=metrics_board.backtest_validity.avg_correlation - metrics_board.backtest_validity.target,
             acceptable=metrics_board.backtest_validity.status == "ok",
         ),
@@ -176,7 +176,7 @@ def generate_scorecard(metrics_board) -> OperationalScorecard:
             name="Risk Estimate Accuracy",
             actual_value=metrics_board.risk_estimate.estimate_accuracy,
             target_value=metrics_board.risk_estimate.target,
-            status=metrics_board.risk_estimate.status,
+            status=_normalize_metric_status(metrics_board.risk_estimate.status),
             gap_to_target=metrics_board.risk_estimate.estimate_accuracy - metrics_board.risk_estimate.target,
             acceptable=metrics_board.risk_estimate.status == "ok",
         ),
@@ -184,7 +184,7 @@ def generate_scorecard(metrics_board) -> OperationalScorecard:
             name="Confidence Calibration",
             actual_value=metrics_board.confidence_calibration.calibration_score,
             target_value=metrics_board.confidence_calibration.target,
-            status=metrics_board.confidence_calibration.status,
+            status=_normalize_metric_status(metrics_board.confidence_calibration.status),
             gap_to_target=metrics_board.confidence_calibration.calibration_score - metrics_board.confidence_calibration.target,
             acceptable=metrics_board.confidence_calibration.status == "ok",
         ),
@@ -259,6 +259,15 @@ def generate_scorecard(metrics_board) -> OperationalScorecard:
     )
     
     return scorecard
+
+
+def _normalize_metric_status(status: str) -> Literal["ok", "warning", "critical"]:
+    """Map calibration-specific states into scorecard certification states."""
+    if status == "ok":
+        return "ok"
+    if status == "critical":
+        return "critical"
+    return "warning"
 
 
 def _generate_comments(

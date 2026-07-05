@@ -608,6 +608,54 @@
     "auditEvent": "reviews.outcome.write"
   },
   {
+    "method": "POST",
+    "path": "/roadmap/decisions/{decision_id}/outcomes",
+    "exposure": "user",
+    "frontendRoute": "/",
+    "requiredRole": "user",
+    "auditEvent": "roadmap.decisions.outcomes.write"
+  },
+  {
+    "method": "GET",
+    "path": "/roadmap/plans",
+    "exposure": "user",
+    "frontendRoute": "/",
+    "requiredRole": "user",
+    "auditEvent": "roadmap.plans.read"
+  },
+  {
+    "method": "POST",
+    "path": "/roadmap/plans",
+    "exposure": "user",
+    "frontendRoute": "/",
+    "requiredRole": "user",
+    "auditEvent": "roadmap.plans.write"
+  },
+  {
+    "method": "GET",
+    "path": "/roadmap/plans/{plan_id}",
+    "exposure": "user",
+    "frontendRoute": "/",
+    "requiredRole": "user",
+    "auditEvent": "roadmap.plans.read"
+  },
+  {
+    "method": "POST",
+    "path": "/roadmap/plans/{plan_id}/decisions",
+    "exposure": "user",
+    "frontendRoute": "/",
+    "requiredRole": "user",
+    "auditEvent": "roadmap.plans.decisions.write"
+  },
+  {
+    "method": "POST",
+    "path": "/roadmap/sync-plans",
+    "exposure": "user",
+    "frontendRoute": "/",
+    "requiredRole": "user",
+    "auditEvent": "roadmap.sync-plans.write"
+  },
+  {
     "method": "GET",
     "path": "/sentiment/{ticker}",
     "exposure": "user",

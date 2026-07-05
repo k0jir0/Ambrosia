@@ -4,8 +4,10 @@ import { useEffect, useState } from "react";
 import { Panel, SectionTitle } from "@/components/ui";
 import { RouteLoading, RouteNotice, RouteStatusBadge, type RouteStatus } from "@/components/route-state";
 import { fetchControlPlane, mapStatus, textOrFallback } from "@/lib/index84-control-plane";
+import { getApiBaseUrl } from "@/lib/api";
 
 export default function AlphaPage() {
+  const apiBaseUrl = getApiBaseUrl();
   const [status, setStatus] = useState<RouteStatus>("loading");
   const [message, setMessage] = useState<string>("Loading alpha surfaces...");
   const [hypotheses, setHypotheses] = useState<Array<Record<string, unknown>>>([]);
@@ -86,8 +88,22 @@ export default function AlphaPage() {
         <ul className="mt-3 space-y-2 text-sm">
           {hypotheses.slice(0, 5).map((item) => (
             <li key={textOrFallback(item.hypothesisId)} className="rounded-md border border-line bg-fog/70 px-3 py-2">
-              <span className="font-semibold text-ink">{textOrFallback(item.title)}</span>
-              <span className="ml-2 text-ink/70">{textOrFallback(item.signalFamily)}</span>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <span className="font-semibold text-ink">{textOrFallback(item.title)}</span>
+                  <span className="ml-2 text-ink/70">{textOrFallback(item.signalFamily)}</span>
+                </div>
+                {apiBaseUrl ? (
+                  <a
+                    href={`${apiBaseUrl}/alpha/hypotheses/${encodeURIComponent(textOrFallback(item.hypothesisId, ""))}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="focus-ring rounded-md border border-line bg-paper/80 px-2 py-1 text-xs font-semibold text-teal"
+                  >
+                    Open data
+                  </a>
+                ) : null}
+              </div>
             </li>
           ))}
           {hypotheses.length === 0 ? <li className="rounded-md border border-dashed border-line bg-fog/50 px-3 py-2 text-ink/60">No hypotheses available.</li> : null}
@@ -99,8 +115,22 @@ export default function AlphaPage() {
         <ul className="mt-3 space-y-2 text-sm">
           {signals.slice(0, 5).map((item) => (
             <li key={textOrFallback(item.signalId)} className="rounded-md border border-line bg-fog/70 px-3 py-2">
-              <span className="font-semibold text-ink">{textOrFallback(item.name)}</span>
-              <span className="ml-2 text-ink/70">{textOrFallback(item.formula)}</span>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <span className="font-semibold text-ink">{textOrFallback(item.name)}</span>
+                  <span className="ml-2 text-ink/70">{textOrFallback(item.formula)}</span>
+                </div>
+                {apiBaseUrl ? (
+                  <a
+                    href={`${apiBaseUrl}/signals/${encodeURIComponent(textOrFallback(item.signalId, ""))}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="focus-ring rounded-md border border-line bg-paper/80 px-2 py-1 text-xs font-semibold text-teal"
+                  >
+                    Open data
+                  </a>
+                ) : null}
+              </div>
             </li>
           ))}
           {signals.length === 0 ? <li className="rounded-md border border-dashed border-line bg-fog/50 px-3 py-2 text-ink/60">No signals available.</li> : null}

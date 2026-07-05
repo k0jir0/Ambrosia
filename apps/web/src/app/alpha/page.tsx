@@ -13,6 +13,47 @@ export default function AlphaPage() {
   const [hypotheses, setHypotheses] = useState<Array<Record<string, unknown>>>([]);
   const [signals, setSignals] = useState<Array<Record<string, unknown>>>([]);
   const [decay, setDecay] = useState<Record<string, unknown> | null>(null);
+  const [openDataPanels, setOpenDataPanels] = useState<Record<string, boolean>>({});
+  const [openDataPayloads, setOpenDataPayloads] = useState<Record<string, Record<string, unknown>>>({});
+  const [openDataLoading, setOpenDataLoading] = useState<Record<string, boolean>>({});
+  const [openDataErrors, setOpenDataErrors] = useState<Record<string, string>>({});
+
+  function panelKey(kind: "hypothesis" | "signal", id: string): string {
+    return `${kind}:${id}`;
+  }
+
+  async function toggleOpenData(kind: "hypothesis" | "signal", id: string, path: string) {
+    const key = panelKey(kind, id);
+    const currentlyOpen = openDataPanels[key] === true;
+
+    if (currentlyOpen) {
+      setOpenDataPanels((previous) => ({ ...previous, [key]: false }));
+      return;
+    }
+
+    setOpenDataPanels((previous) => ({ ...previous, [key]: true }));
+
+    if (!apiBaseUrl || openDataPayloads[key] || openDataLoading[key]) {
+      return;
+    }
+
+    setOpenDataLoading((previous) => ({ ...previous, [key]: true }));
+    setOpenDataErrors((previous) => ({ ...previous, [key]: "" }));
+
+    try {
+      const response = await fetch(`${apiBaseUrl}${path}`);
+      if (!response.ok) {
+        throw new Error(`Request failed with status ${response.status}`);
+      }
+      const payload = (await response.json()) as Record<string, unknown>;
+      setOpenDataPayloads((previous) => ({ ...previous, [key]: payload }));
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : "Unable to load object details.";
+      setOpenDataErrors((previous) => ({ ...previous, [key]: detail }));
+    } finally {
+      setOpenDataLoading((previous) => ({ ...previous, [key]: false }));
+    }
+  }
 
   async function load() {
     setStatus("loading");
@@ -94,16 +135,44 @@ export default function AlphaPage() {
                   <span className="ml-2 text-ink/70">{textOrFallback(item.signalFamily)}</span>
                 </div>
                 {apiBaseUrl ? (
-                  <a
-                    href={`${apiBaseUrl}/alpha/hypotheses/${encodeURIComponent(textOrFallback(item.hypothesisId, ""))}`}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="focus-ring rounded-md border border-line bg-paper/80 px-2 py-1 text-xs font-semibold text-teal"
-                  >
-                    Open data
-                  </a>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        void toggleOpenData(
+                          "hypothesis",
+                          textOrFallback(item.hypothesisId, ""),
+                          `/alpha/hypotheses/${encodeURIComponent(textOrFallback(item.hypothesisId, ""))}`
+                        )
+                      }
+                      className="focus-ring rounded-md border border-line bg-paper/80 px-2 py-1 text-xs font-semibold text-teal"
+                    >
+                      Open data
+                    </button>
+                    <a
+                      href={`${apiBaseUrl}/alpha/hypotheses/${encodeURIComponent(textOrFallback(item.hypothesisId, ""))}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="focus-ring rounded-md border border-line bg-paper/80 px-2 py-1 text-xs font-semibold text-ink/80"
+                    >
+                      New tab
+                    </a>
+                  </div>
                 ) : null}
               </div>
+              {openDataPanels[panelKey("hypothesis", textOrFallback(item.hypothesisId, ""))] ? (
+                <div className="mt-3 rounded-md border border-line bg-paper/70 p-3">
+                  {openDataLoading[panelKey("hypothesis", textOrFallback(item.hypothesisId, ""))] ? (
+                    <p className="text-xs text-ink/70">Loading object data...</p>
+                  ) : null}
+                  {openDataErrors[panelKey("hypothesis", textOrFallback(item.hypothesisId, ""))] ? (
+                    <p className="text-xs text-coral">{openDataErrors[panelKey("hypothesis", textOrFallback(item.hypothesisId, ""))]}</p>
+                  ) : null}
+                  {openDataPayloads[panelKey("hypothesis", textOrFallback(item.hypothesisId, ""))] ? (
+                    <DataDropdown payload={openDataPayloads[panelKey("hypothesis", textOrFallback(item.hypothesisId, ""))]} />
+                  ) : null}
+                </div>
+              ) : null}
             </li>
           ))}
           {hypotheses.length === 0 ? <li className="rounded-md border border-dashed border-line bg-fog/50 px-3 py-2 text-ink/60">No hypotheses available.</li> : null}
@@ -121,16 +190,40 @@ export default function AlphaPage() {
                   <span className="ml-2 text-ink/70">{textOrFallback(item.formula)}</span>
                 </div>
                 {apiBaseUrl ? (
-                  <a
-                    href={`${apiBaseUrl}/signals/${encodeURIComponent(textOrFallback(item.signalId, ""))}`}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="focus-ring rounded-md border border-line bg-paper/80 px-2 py-1 text-xs font-semibold text-teal"
-                  >
-                    Open data
-                  </a>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        void toggleOpenData("signal", textOrFallback(item.signalId, ""), `/signals/${encodeURIComponent(textOrFallback(item.signalId, ""))}`)
+                      }
+                      className="focus-ring rounded-md border border-line bg-paper/80 px-2 py-1 text-xs font-semibold text-teal"
+                    >
+                      Open data
+                    </button>
+                    <a
+                      href={`${apiBaseUrl}/signals/${encodeURIComponent(textOrFallback(item.signalId, ""))}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="focus-ring rounded-md border border-line bg-paper/80 px-2 py-1 text-xs font-semibold text-ink/80"
+                    >
+                      New tab
+                    </a>
+                  </div>
                 ) : null}
               </div>
+              {openDataPanels[panelKey("signal", textOrFallback(item.signalId, ""))] ? (
+                <div className="mt-3 rounded-md border border-line bg-paper/70 p-3">
+                  {openDataLoading[panelKey("signal", textOrFallback(item.signalId, ""))] ? (
+                    <p className="text-xs text-ink/70">Loading object data...</p>
+                  ) : null}
+                  {openDataErrors[panelKey("signal", textOrFallback(item.signalId, ""))] ? (
+                    <p className="text-xs text-coral">{openDataErrors[panelKey("signal", textOrFallback(item.signalId, ""))]}</p>
+                  ) : null}
+                  {openDataPayloads[panelKey("signal", textOrFallback(item.signalId, ""))] ? (
+                    <DataDropdown payload={openDataPayloads[panelKey("signal", textOrFallback(item.signalId, ""))]} />
+                  ) : null}
+                </div>
+              ) : null}
             </li>
           ))}
           {signals.length === 0 ? <li className="rounded-md border border-dashed border-line bg-fog/50 px-3 py-2 text-ink/60">No signals available.</li> : null}
@@ -221,4 +314,33 @@ function tailValue(value: unknown): string {
   if (!Array.isArray(value) || value.length === 0) return "n/a";
   const tail = value[value.length - 1];
   return typeof tail === "number" ? String(tail) : "n/a";
+}
+
+function DataDropdown({ payload }: { payload: Record<string, unknown> }) {
+  const visibleEntries = Object.entries(payload).slice(0, 8);
+
+  return (
+    <div className="space-y-3">
+      <div className="grid gap-2 md:grid-cols-2">
+        {visibleEntries.map(([key, value]) => (
+          <div key={key} className="rounded-md border border-line bg-fog/60 px-2 py-1.5">
+            <p className="text-[11px] uppercase tracking-wide text-ink/60">{key}</p>
+            <p className="mt-1 break-words text-xs font-semibold text-ink">{formatDropdownValue(value)}</p>
+          </div>
+        ))}
+      </div>
+      <details className="rounded-md border border-line bg-fog/60 p-2">
+        <summary className="cursor-pointer text-xs font-semibold text-ink/80">Raw JSON</summary>
+        <pre className="mt-2 overflow-x-auto text-[11px] text-ink/80">{JSON.stringify(payload, null, 2)}</pre>
+      </details>
+    </div>
+  );
+}
+
+function formatDropdownValue(value: unknown): string {
+  if (value === null || value === undefined) return "n/a";
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") return String(value);
+  if (Array.isArray(value)) return `${value.length} items`;
+  if (typeof value === "object") return `${Object.keys(value as Record<string, unknown>).length} fields`;
+  return "n/a";
 }

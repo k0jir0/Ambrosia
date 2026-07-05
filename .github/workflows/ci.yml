@@ -361,6 +361,8 @@ jobs:
           python scripts/verify-production-evidence.py
           python scripts/verify-docs-consistency.py
           python scripts/verify-hotpath-design.py
+          python scripts/verify-index84-literal.py
+          python scripts/verify-index84-completion.py
           python scripts/verify-index86-closure.py
 
       - name: Verify Index84 completion

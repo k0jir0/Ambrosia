@@ -1,0 +1,24 @@
+{
+  "schemaVersion": "paper-decision-loop.v1",
+  "decisionId": "D-P-009-FIXTURE",
+  "paperTradeId": "paper-trade-001",
+  "ticker": "SOXX",
+  "side": "buy",
+  "quantity": 10,
+  "entryPlan": {
+    "referencePrice": 240.0,
+    "maxSlippageBps": 8,
+    "timeInForce": "paper-only"
+  },
+  "riskControls": ["paper_only", "no_live_order_route", "stop_review_if_drawdown_exceeds_5pct"],
+  "outcomePlan": {
+    "reviewDate": "2026-08-01",
+    "metrics": ["pnl", "implementation_shortfall", "thesis_validity"]
+  },
+  "auditEvents": [
+    {
+      "eventType": "paper_trade.created",
+      "detail": "Approved decision converted into a paper-only trade fixture."
+    }
+  ]
+}

@@ -18,6 +18,9 @@ from .models import (
     PacketComment,
     PacketCommentCreate,
     ReviewStatus,
+    RoadmapDecisionRecord,
+    RoadmapOutcomeRecord,
+    RoadmapPlanRecord,
     TradeReview,
     AlertQueueRecord,
     BrokerSandboxOrderRequest,
@@ -42,6 +45,12 @@ from .feedback import (
 
 logger = logging.getLogger(__name__)
 
+TRUE_ENV_VALUES = {"1", "true", "yes", "on"}
+
+
+def _env_flag(name: str) -> bool:
+    return os.getenv(name, "").strip().lower() in TRUE_ENV_VALUES
+
 
 class ReviewStore:
     def __init__(self) -> None:
@@ -56,6 +65,7 @@ class ReviewStore:
         self._sandbox_orders: list[dict] = []
         self._sandbox_positions: dict[str, dict] = {}
         self._attribution_reports: dict[str, dict] = {}
+        self._roadmap_plans: dict[str, RoadmapPlanRecord] = {}
         self._mobile_alert_events: list[dict] = []
         self._mobile_alert_subscriptions: list[dict] = []
         self._admin_audit_events: list[dict] = []
@@ -63,6 +73,8 @@ class ReviewStore:
         self._active_guardrail_profile_id: str | None = None
         self._trial_count = 0
         self._db_enabled = False
+        self._db_required = _env_flag("REQUIRE_DATABASE")
+        self._db_error: str | None = None
         self._review_db: PostgresReviewStore | None = None
         self._packet_db: PostgresPacketStore | None = None
         
@@ -72,6 +84,9 @@ class ReviewStore:
         self._calibration_alerts: list[CalibrationAlert] = []
 
         database_url = os.getenv("DATABASE_URL")
+        if self._db_required and not database_url:
+            raise RuntimeError("REQUIRE_DATABASE=true requires DATABASE_URL to be set")
+
         if database_url:
             try:
                 review_db = PostgresReviewStore(database_url)
@@ -82,14 +97,118 @@ class ReviewStore:
                 self._packet_db = packet_db
                 self._db_enabled = True
             except Exception as exc:  # pragma: no cover - environment dependent
+                self._db_error = str(exc)
+                if self._db_required:
+                    raise RuntimeError("REQUIRE_DATABASE=true but Postgres is unavailable") from exc
                 logger.warning("Falling back to in-memory review/packet store: %s", exc)
 
     def _disable_db(self, exc: Exception) -> None:
+        self._db_error = str(exc)
+        if self._db_required:
+            raise RuntimeError("REQUIRE_DATABASE=true but Postgres became unavailable") from exc
         if self._db_enabled:
             logger.warning("Disabling Postgres review/packet stores and using in-memory fallback: %s", exc)
         self._db_enabled = False
         self._review_db = None
         self._packet_db = None
+
+    def persistence_status(self) -> dict[str, object]:
+        return {
+            "mode": "postgres" if self._db_enabled else "memory",
+            "databaseConfigured": bool(os.getenv("DATABASE_URL")),
+            "databaseRequired": self._db_required,
+            "databaseConnected": self._db_enabled,
+            "lastError": self._db_error,
+        }
+
+    def sync_roadmap_plans(self, plans: list[RoadmapPlanRecord]) -> list[RoadmapPlanRecord]:
+        if self._db_enabled and self._review_db is not None:
+            try:
+                synced = [self._review_db.save_roadmap_plan(plan) for plan in plans]
+                self._roadmap_plans = {plan.plan_id: plan for plan in synced}
+                return synced
+            except Exception as exc:  # pragma: no cover - environment dependent
+                self._disable_db(exc)
+
+        synced: list[RoadmapPlanRecord] = []
+        for plan in plans:
+            existing = self._roadmap_plans.get(plan.plan_id)
+            if existing is not None:
+                plan = plan.model_copy(
+                    update={
+                        "decisions": existing.decisions if not plan.decisions else plan.decisions,
+                        "outcomes": existing.outcomes if not plan.outcomes else plan.outcomes,
+                    }
+                )
+            self._roadmap_plans[plan.plan_id] = plan
+            synced.append(plan)
+        return synced
+
+    def list_roadmap_plans(self) -> list[RoadmapPlanRecord]:
+        if self._db_enabled and self._review_db is not None:
+            try:
+                return self._review_db.list_roadmap_plans()
+            except Exception as exc:  # pragma: no cover - environment dependent
+                self._disable_db(exc)
+
+        return sorted(self._roadmap_plans.values(), key=lambda plan: plan.plan_id)
+
+    def get_roadmap_plan(self, plan_id: str) -> RoadmapPlanRecord | None:
+        if self._db_enabled and self._review_db is not None:
+            try:
+                return self._review_db.get_roadmap_plan(plan_id)
+            except Exception as exc:  # pragma: no cover - environment dependent
+                self._disable_db(exc)
+
+        return self._roadmap_plans.get(plan_id)
+
+    def upsert_roadmap_plan(self, plan: RoadmapPlanRecord) -> RoadmapPlanRecord:
+        if self._db_enabled and self._review_db is not None:
+            try:
+                return self._review_db.save_roadmap_plan(plan)
+            except Exception as exc:  # pragma: no cover - environment dependent
+                self._disable_db(exc)
+
+        self._roadmap_plans[plan.plan_id] = plan
+        return plan
+
+    def record_roadmap_decision(
+        self,
+        plan_id: str,
+        decision: RoadmapDecisionRecord,
+    ) -> RoadmapPlanRecord | None:
+        if self._db_enabled and self._review_db is not None:
+            try:
+                return self._review_db.save_roadmap_decision(plan_id, decision)
+            except Exception as exc:  # pragma: no cover - environment dependent
+                self._disable_db(exc)
+
+        plan = self._roadmap_plans.get(plan_id)
+        if plan is None:
+            return None
+        decisions = [item for item in plan.decisions if item.decision_id != decision.decision_id]
+        updated = plan.model_copy(update={"decisions": [*decisions, decision]})
+        self._roadmap_plans[plan_id] = updated
+        return updated
+
+    def record_roadmap_outcome(
+        self,
+        decision_id: str,
+        outcome: RoadmapOutcomeRecord,
+    ) -> RoadmapPlanRecord | None:
+        if self._db_enabled and self._review_db is not None:
+            try:
+                return self._review_db.save_roadmap_outcome(decision_id, outcome)
+            except Exception as exc:  # pragma: no cover - environment dependent
+                self._disable_db(exc)
+
+        for plan_id, plan in self._roadmap_plans.items():
+            if any(decision.decision_id == decision_id for decision in plan.decisions):
+                outcomes = [item for item in plan.outcomes if item.outcome_id != outcome.outcome_id]
+                updated = plan.model_copy(update={"outcomes": [*outcomes, outcome]})
+                self._roadmap_plans[plan_id] = updated
+                return updated
+        return None
 
     @property
     def next_trial_count(self) -> int:

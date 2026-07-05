@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ambrosia.local/schemas/paper-decision-loop.v1.json",
+  "title": "Ambrosia Paper Decision Loop",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "decisionId",
+    "paperTradeId",
+    "ticker",
+    "side",
+    "quantity",
+    "entryPlan",
+    "riskControls",
+    "outcomePlan",
+    "auditEvents"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "paper-decision-loop.v1" },
+    "decisionId": { "type": "string" },
+    "paperTradeId": { "type": "string" },
+    "ticker": { "type": "string" },
+    "side": { "enum": ["buy", "sell", "long", "short"] },
+    "quantity": { "type": "number" },
+    "entryPlan": { "type": "object" },
+    "riskControls": { "type": "array", "items": { "type": "string" } },
+    "outcomePlan": { "type": "object" },
+    "auditEvents": { "type": "array" }
+  }
+}

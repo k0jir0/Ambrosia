@@ -2,10 +2,12 @@ from fastapi.testclient import TestClient
 import hashlib
 import hmac
 import os
+import pytest
 import time as time_module
 
 from app import coordinator
 from app.main import app
+from app.store import ReviewStore
 
 
 client = TestClient(app)
@@ -609,6 +611,9 @@ def test_health_detailed_endpoint() -> None:
     assert health["service"] == "ambrosia-api"
     assert "checks" in health
     assert "store" in health["checks"]
+    assert health["checks"]["persistence"]["mode"] in {"memory", "postgres"}
+    assert health["checks"]["persistence"]["databaseRequired"] is False
+    assert health["checks"]["persistence"]["dbSchemaVersion"] == "v0004"
     assert "marketData" in health["checks"]
     assert "llmProviders" in health["checks"]
     assert "slo" in health
@@ -619,6 +624,64 @@ def test_health_detailed_endpoint() -> None:
     assert "jobsQueued" in slo
     assert "jobsCompleted" in slo
     assert "jobsFailed" in slo
+
+
+def test_required_database_mode_requires_database_url(monkeypatch) -> None:
+    monkeypatch.setenv("REQUIRE_DATABASE", "true")
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+
+    with pytest.raises(RuntimeError, match="requires DATABASE_URL"):
+        ReviewStore()
+
+
+def test_roadmap_seed_sync_exposes_index84_plans() -> None:
+    response = client.post("/roadmap/sync-plans")
+    assert response.status_code == 200
+    sync_result = response.json()
+    assert sync_result["plansSynced"] == 12
+    assert "P-001" in sync_result["planIds"]
+    assert "P-012" in sync_result["planIds"]
+
+    plans_response = client.get("/roadmap/plans")
+    assert plans_response.status_code == 200
+    plans = plans_response.json()
+    assert len(plans) == 12
+    assert plans[0]["plan_id"] == "P-001"
+    assert plans[-1]["plan_id"] == "P-012"
+
+
+def test_roadmap_decision_and_outcome_link_to_plan() -> None:
+    client.post("/roadmap/sync-plans")
+    decision_id = "D-P-001-TEST"
+
+    decision_response = client.post(
+        "/roadmap/plans/P-001/decisions",
+        json={
+            "decision_id": decision_id,
+            "chosen_path": "Use the Index84 seed ledger as the first executable control surface.",
+            "alternatives_considered": ["Keep the roadmap as markdown only"],
+            "evidence_links": ["docs/roadmap/pdo-ledger.seed.json"],
+            "risk_controls": ["Keep live trading out of scope"],
+            "review_date": "2026-07-04",
+        },
+    )
+    assert decision_response.status_code == 200
+    plan_after_decision = decision_response.json()
+    assert any(decision["decision_id"] == decision_id for decision in plan_after_decision["decisions"])
+
+    outcome_response = client.post(
+        f"/roadmap/decisions/{decision_id}/outcomes",
+        json={
+            "outcome_id": "O-P-001-TEST",
+            "actual_result": "Roadmap plan decision was captured through the API.",
+            "expected_vs_actual": "Expected one linked decision and outcome; API returned both on P-001.",
+            "metric_deltas": ["roadmap_decisions_api=1"],
+            "memory_update": "Roadmap work now has an executable P/D/O path.",
+        },
+    )
+    assert outcome_response.status_code == 200
+    plan_after_outcome = outcome_response.json()
+    assert any(outcome["outcome_id"] == "O-P-001-TEST" for outcome in plan_after_outcome["outcomes"])
 
 
 def test_scanner_async_job_enqueues_and_completes() -> None:

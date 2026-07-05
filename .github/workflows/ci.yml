@@ -116,6 +116,261 @@ jobs:
         run: python scripts/verify-visibility-matrix.py
 
   # -------------------------------------------------------------------------
+  # Gate 4a: Hot-path design boundary verification
+  # Ensures deterministic low-latency service boundary stays separate from API/LLM paths.
+  # -------------------------------------------------------------------------
+  hotpath-design:
+    name: Hot-path design verification
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify hot-path service design scaffold
+        run: python scripts/verify-hotpath-design.py
+
+  # -------------------------------------------------------------------------
+  # Gate 4b: Index84 route inventory + exposure-filtered OpenAPI
+  # Ensures route classification and public/internal contract artifacts do not drift.
+  # -------------------------------------------------------------------------
+  index84-route-contract:
+    name: Index84 route contract artifacts
+    runs-on: ubuntu-latest
+    needs: [api-tests]
+    defaults:
+      run:
+        working-directory: services/api
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Verify Index84 route inventory
+        run: uv run python ../../scripts/generate-index84-route-inventory.py --check
+
+      - name: Verify exposure-filtered OpenAPI artifacts
+        run: uv run python ../../scripts/generate-index84-route-inventory.py --check-openapi
+
+      - name: Upload Index84 route artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: index84-route-contract
+          path: |
+            artifacts/index84-route-inventory.json
+            artifacts/openapi/*.json
+          if-no-files-found: error
+
+  # -------------------------------------------------------------------------
+  # Gate 4c: Index84 SDK/CLI safe-read skeleton
+  # Ensures API automation surfaces remain importable and machine-readable.
+  # -------------------------------------------------------------------------
+  index84-sdk-cli:
+    name: Index84 SDK and CLI smoke
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify SDK and CLI skeleton
+        run: python scripts/verify-sdk-cli.py
+
+      - name: Upload SDK/CLI transcript
+        uses: actions/upload-artifact@v4
+        with:
+          name: index84-sdk-cli-transcript
+          path: artifacts/sdk-cli-transcript.json
+          if-no-files-found: error
+
+  # -------------------------------------------------------------------------
+  # Gate 4d: Index84 schemas + benchmark relay fixtures
+  # Proves alpha/paper schemas and benchmark traces remain machine-verifiable.
+  # -------------------------------------------------------------------------
+  index84-schemas-benchmark:
+    name: Index84 schemas and benchmark relays
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run FinanceBench relay fixture
+        run: python packages/evals/run_financebench_relay.py
+
+      - name: Run FinQA relay fixture
+        run: python packages/evals/run_finqa_relay.py
+
+      - name: Run TAT-QA relay fixture
+        run: python packages/evals/run_tatqa_relay.py
+
+      - name: Generate Open FinLLM routing map
+        run: python scripts/generate-open-finllm-routing-map.py
+
+      - name: Verify Index84 schemas
+        run: python scripts/verify-index84-schemas.py
+
+      - name: Verify Index85 benchmark coverage
+        run: python scripts/verify-index85-benchmarks.py
+
+      - name: Run decision memory fixture
+        run: python packages/evals/run_decision_memory_fixture.py
+
+      - name: Run alpha decay fixture
+        run: python packages/evals/run_alpha_decay_fixture.py
+
+      - name: Verify enterprise execution fixture
+        run: python scripts/verify-enterprise-execution.py
+
+      - name: Upload Index84 benchmark trace
+        uses: actions/upload-artifact@v4
+        with:
+          name: index84-financebench-relay-trace
+          path: |
+            artifacts/financebench-relay-trace.json
+            artifacts/finqa-relay-trace.json
+            artifacts/tatqa-relay-trace.json
+            artifacts/open-finllm-routing-map.json
+            artifacts/decision-memory-attribution.json
+            artifacts/alpha-decay-alerts.json
+            artifacts/enterprise-execution-readiness.json
+          if-no-files-found: error
+
+  # -------------------------------------------------------------------------
+  # Gate 4g: Release distribution and provenance readiness
+  # Produces checksums/release evidence and verifies Docker + provenance policy.
+  # -------------------------------------------------------------------------
+  index85-release-readiness:
+    name: Index85 release readiness
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Generate release evidence
+        run: python scripts/generate-release-evidence.py
+
+      - name: Verify release readiness
+        run: python scripts/verify-release-readiness.py
+
+      - name: Upload release readiness artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: index85-release-readiness
+          path: |
+            artifacts/release-checksums.sha256
+            artifacts/release-evidence.json
+          if-no-files-found: error
+
+  # -------------------------------------------------------------------------
+  # Gate 4h: Documentation consistency gate
+  # Ensures CLI/SDK docs and evidence matrix reflect implemented surfaces.
+  # -------------------------------------------------------------------------
+  index85-docs-consistency:
+    name: Index85 documentation consistency
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify docs consistency
+        run: python scripts/verify-docs-consistency.py
+
+  # -------------------------------------------------------------------------
+  # Gate 4e: Index84 web control-plane evidence
+  # Ensures the roadmap frontend matrix maps to implemented routes and tests.
+  # -------------------------------------------------------------------------
+  index84-web-control-plane:
+    name: Index84 web control-plane evidence
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify web control-plane matrix
+        run: python scripts/verify-web-control-plane.py
+
+      - name: Generate frontend quality evidence
+        run: python scripts/generate-frontend-quality-evidence.py
+
+      - name: Upload web control-plane evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: index84-web-control-plane-evidence
+          path: artifacts/web-control-plane-evidence.json
+          if-no-files-found: error
+
+      - name: Upload frontend quality evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: index86-frontend-quality-evidence
+          path: artifacts/frontend-quality-evidence.json
+          if-no-files-found: error
+
+  # -------------------------------------------------------------------------
+  # Gate 4f: Index84 completion evidence
+  # Verifies every roadmap plan maps to evidence before reporting 100%.
+  # -------------------------------------------------------------------------
+  index84-completion:
+    name: Index84 completion evidence
+    runs-on: ubuntu-latest
+    needs: [index84-route-contract, index84-sdk-cli, index84-schemas-benchmark, index84-web-control-plane, index85-release-readiness, index85-docs-consistency, migration-check]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+
+      - name: Install API dependencies
+        run: |
+          cd services/api
+          uv sync
+
+      - name: Regenerate Index84 evidence artifacts
+        run: |
+          cd services/api
+          uv run python ../../scripts/generate-index84-route-inventory.py --write --write-openapi
+          cd ../..
+          python scripts/verify-sdk-cli.py
+          python packages/evals/run_financebench_relay.py
+          python packages/evals/run_finqa_relay.py
+          python packages/evals/run_tatqa_relay.py
+          python scripts/generate-open-finllm-routing-map.py
+          python packages/evals/run_decision_memory_fixture.py
+          python scripts/verify-enterprise-execution.py
+          python scripts/generate-release-evidence.py
+          python scripts/verify-web-control-plane.py
+          python scripts/generate-frontend-quality-evidence.py
+          python scripts/verify-index84-schemas.py
+          python scripts/verify-index85-benchmarks.py
+          python packages/evals/run_alpha_decay_fixture.py
+          python scripts/verify-release-readiness.py
+          python scripts/verify-production-evidence.py
+          python scripts/verify-docs-consistency.py
+          python scripts/verify-hotpath-design.py
+          python scripts/verify-index86-closure.py
+
+      - name: Verify Index84 completion
+        run: python scripts/verify-index84-completion.py
+
+      - name: Upload Index84 completion packet
+        uses: actions/upload-artifact@v4
+        with:
+          name: index84-completion-packet
+          path: |
+            artifacts/index84-completion.json
+            artifacts/index84-completion.md
+            artifacts/rollout-evidence-packet.json
+          if-no-files-found: error
+
+  # -------------------------------------------------------------------------
   # Gate 5: Provider ablation evidence artifact
   # Generates cost/latency/quality tradeoff report for release evidence.
   # -------------------------------------------------------------------------

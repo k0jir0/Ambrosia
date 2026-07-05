@@ -1,0 +1,22 @@
+[
+  {
+    "questionId": "fb-open-001",
+    "question": "What is the gross margin implied by revenue of 1000 and gross profit of 420?",
+    "documents": [
+      {
+        "documentId": "doc-synthetic-income-statement",
+        "title": "Synthetic Income Statement",
+        "tables": [
+          {
+            "tableId": "income-statement",
+            "rows": [
+              { "metric": "Revenue", "value": 1000 },
+              { "metric": "Gross profit", "value": 420 }
+            ]
+          }
+        ]
+      }
+    ],
+    "expectedAnswer": "42.0%"
+  }
+]

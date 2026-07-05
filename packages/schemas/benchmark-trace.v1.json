@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ambrosia.local/schemas/benchmark-trace.v1.json",
+  "title": "Ambrosia Benchmark Trace",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "traceId",
+    "benchmark",
+    "questionId",
+    "retrievalEvents",
+    "tableExtractions",
+    "calculations",
+    "verification",
+    "grounding",
+    "abstention",
+    "modelRoute"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "benchmark-trace.v1" },
+    "traceId": { "type": "string" },
+    "benchmark": { "type": "string" },
+    "questionId": { "type": "string" },
+    "retrievalEvents": { "type": "array" },
+    "tableExtractions": { "type": "array" },
+    "calculations": { "type": "array" },
+    "verification": { "type": "object" },
+    "grounding": { "type": "object" },
+    "abstention": { "type": "object" },
+    "modelRoute": { "type": "object" }
+  }
+}

@@ -10,7 +10,14 @@ The product is organized around three connected surfaces:
 
 ## Current State
 
-Ambrosia is now a working monorepo with a Next.js frontend, a FastAPI backend, local full-stack scripts, CI validation, and production deployment wiring.
+Ambrosia is now a working monorepo with a Next.js frontend, a FastAPI backend, a Rust hot-path service boundary, local full-stack scripts, CI validation, and production deployment wiring.
+
+The Index84 implementation and closure chain is now fully wired and passing in repository scope:
+
+- Roadmap completion evidence gate passes.
+- Literal feature coverage gate passes.
+- Hot-path design/readiness gate passes.
+- Index86 closure gate passes.
 
 The frontend includes:
 
@@ -30,6 +37,15 @@ The backend includes:
 - Provider abstraction for deterministic, Ollama, hosted, and hybrid specialist runs
 - Stateful sandbox routes for advanced operating functions such as orders, positions, attribution, alerts, admin audit, and guardrail policy updates
 - PostgreSQL-ready schema and migration scaffolding for durable packet, audit, and memory storage
+- Index84 platform routes for relay, feature store MVP, signals, backtests, paper trades, execution intelligence, enterprise governance, and readiness/evidence flows
+- Extended alpha and execution intelligence surfaces including alpha hypothesis, alpha decay analytics, warm-path event processing, and enterprise security packet endpoints
+
+The hot-path service includes:
+
+- Separate Rust service boundary at `services/hotpath-rs/`
+- Deterministic pre-trade checks for order validity and notional limits
+- Kill-switch command path for immediate local reject behavior
+- Explicit no-LLM-in-live-order-loop boundary
 
 ## Product Thesis
 
@@ -46,6 +62,7 @@ Ambrosia is an Agentic Swarm because the workflow is not a static dashboard. Age
 - Monorepo root with pnpm workspaces
 - Next.js 15.1.0 frontend with React 19
 - FastAPI backend with Python 3.12
+- Rust hot-path execution service scaffold for deterministic low-latency order gating
 - SQLAlchemy and PostgreSQL-oriented schema patterns
 - Provider modes for deterministic local execution, Ollama, hosted models, and hybrid operation
 - Playwright, pytest, Ruff, visibility checks, eval scripts, and stack contract tests
@@ -57,6 +74,7 @@ The root is intentionally kept small. Configuration and entrypoint files stay at
 
 - `apps/web/` - Next.js frontend
 - `services/api/` - FastAPI backend
+- `services/hotpath-rs/` - Rust deterministic hot-path service (kill switch + pre-trade risk checks)
 - `packages/evals/` - evaluation and ablation runners
 - `packages/schemas/` - shared schema contracts
 - `scripts/` - deployment, validation, local stack, and automation scripts
@@ -118,6 +136,15 @@ pnpm m1:readiness
 pnpm test:stack
 ```
 
+Index84 and closure checks:
+
+```powershell
+pnpm roadmap:completion:check
+pnpm index84:literal:check
+pnpm hotpath:design:check
+python scripts/verify-index86-closure.py
+```
+
 Synthetic monitoring:
 
 ```powershell
@@ -160,6 +187,33 @@ GitHub production deploy wiring exists, but Render deploy hook secrets must be p
 5. Expand provider ablations, evaluation reporting, and regression gates.
 6. Harden enterprise governance, marketplace packaging, and permission boundaries.
 7. Add broker-sandbox workflows, advanced attribution, mobile alerting, and portfolio-level action loops.
+
+## Patch Notes
+
+### Index84 Upgrade (Current Baseline)
+
+This release consolidates the Index84 roadmap into executable code and evidence gates.
+
+What shipped:
+
+- Route/OpenAPI contract hardening and exposure-filtered artifacts
+- SDK/CLI expansion with enterprise and execution operations
+- Feature store MVP, signal workflows, and structured backtest path
+- Relay and benchmark chain with FinanceBench, FinQA, and TAT-QA fixtures
+- Open FinLLM routing map artifact generation and validation
+- Decision-memory attribution and alpha-decay evidence fixtures
+- Enterprise lifecycle controls (service account create/rotate/revoke), SSO configuration, audit export, offline bundle manifest, and support/security packet
+- Release provenance and packaging evidence (checksums, release evidence, rollout packet)
+- Frontend control-plane matrix and frontend quality evidence generation
+- Rust hot-path service boundary scaffold with deterministic order gating and kill switch
+
+Key verification artifacts:
+
+- `artifacts/index84-completion.json`
+- `artifacts/index84-literal-completion.json`
+- `artifacts/hotpath-readiness.json`
+- `artifacts/rollout-evidence-packet.json`
+- `artifacts/enterprise-execution-readiness.json`
 
 ## Repository
 

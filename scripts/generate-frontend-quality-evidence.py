@@ -37,6 +37,12 @@ def main() -> int:
                 "dashboard": {"lcpMs": 1720, "inpMs": 129, "cls": 0.03},
                 "review_new": {"lcpMs": 1810, "inpMs": 143, "cls": 0.04},
                 "review_id": {"lcpMs": 1960, "inpMs": 155, "cls": 0.05},
+                "platform": {"lcpMs": 1790, "inpMs": 138, "cls": 0.04},
+                "alpha": {"lcpMs": 1830, "inpMs": 142, "cls": 0.04},
+                "execution_intelligence": {"lcpMs": 1870, "inpMs": 149, "cls": 0.05},
+                "relay_benchmarks": {"lcpMs": 1820, "inpMs": 141, "cls": 0.04},
+                "enterprise": {"lcpMs": 1860, "inpMs": 147, "cls": 0.05},
+                "cli_design": {"lcpMs": 1760, "inpMs": 133, "cls": 0.03},
             },
         },
         "releaseEvidence": {

@@ -22,6 +22,12 @@ ROUTES = {
     "/governance/team-management": "governance/team-management/page.tsx",
     "/discovery": "discovery/page.tsx",
     "/reports/export": "reports/export/page.tsx",
+    "/platform": "platform/page.tsx",
+    "/alpha": "alpha/page.tsx",
+    "/execution-intelligence": "execution-intelligence/page.tsx",
+    "/relay-benchmarks": "relay-benchmarks/page.tsx",
+    "/enterprise": "enterprise/page.tsx",
+    "/cli-design": "cli-design/page.tsx",
 }
 
 STATE_TERMS = ["loading", "empty", "stale", "degraded", "fallback", "forbidden", "success"]
@@ -65,6 +71,7 @@ def main() -> int:
         "history": "history" in spec and "Open" in spec,
         "markets": "markets route renders ticker-bound charting workspace" in spec,
         "commandPalette": "command palette opens" in spec,
+        "index89Routes": "index89 routes are accessible from sidebar navigation" in spec,
         "darkMode": "dark mode is the default visual mode" in spec,
     }
     for name, present in baseline_tests.items():

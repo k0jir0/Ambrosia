@@ -72,6 +72,34 @@ test("sidebar navigation reaches core routes", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "Performance scorecard" })).toBeVisible();
 });
 
+test("index89 routes are accessible from sidebar navigation", async ({ page }) => {
+  await page.goto("/");
+
+  await page.getByRole("link", { name: "Platform" }).click();
+  await expect(page).toHaveURL(/\/platform/);
+  await expect(page.getByRole("heading", { name: "Platform" })).toBeVisible();
+
+  await page.getByRole("link", { name: "Alpha Lab" }).click();
+  await expect(page).toHaveURL(/\/alpha/);
+  await expect(page.getByRole("heading", { name: "Alpha Lab" })).toBeVisible();
+
+  await page.getByRole("link", { name: "Execution Intelligence" }).click();
+  await expect(page).toHaveURL(/\/execution-intelligence/);
+  await expect(page.getByRole("heading", { name: "Execution Intelligence" })).toBeVisible();
+
+  await page.getByRole("link", { name: "Relay + Benchmarks" }).click();
+  await expect(page).toHaveURL(/\/relay-benchmarks/);
+  await expect(page.getByRole("heading", { name: "Relay \+ Benchmarks" })).toBeVisible();
+
+  await page.getByRole("link", { name: "CLI Design" }).click();
+  await expect(page).toHaveURL(/\/cli-design/);
+  await expect(page.getByRole("heading", { name: "CLI Design" })).toBeVisible();
+
+  await page.getByRole("link", { name: "Enterprise" }).click();
+  await expect(page).toHaveURL(/\/enterprise/);
+  await expect(page.getByRole("heading", { name: "Enterprise" })).toBeVisible();
+});
+
 test("command palette opens and routes ticker jump", async ({ page }) => {
   await page.goto("/");
   await page.keyboard.press("Control+k");

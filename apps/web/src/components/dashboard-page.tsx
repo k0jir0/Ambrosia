@@ -3,19 +3,40 @@
 import Link from "next/link";
 import { ArrowRight, BellRing, FileSearch, TrendingUp } from "lucide-react";
 import { useReviewArchive } from "@/lib/review-store";
-import type { TradeReview } from "@/lib/types";
 import { Badge, Panel, SectionTitle } from "./ui";
-
-function averageConfidence(reviews: TradeReview[]) {
-  if (reviews.length === 0) return 0;
-  return Math.round(reviews.reduce((sum, review) => sum + review.confidence, 0) / reviews.length);
-}
 
 export function DashboardPage() {
   const { reviews, source, loading } = useReviewArchive();
   const reviewsAwaitingDecision = reviews.filter((review) => review.decisionState === null).length;
   const dueOutcomes = reviews.filter((review) => review.decisionState !== null).length;
+  const reportReady = reviews.filter((review) => review.status === "synthesis" || review.status === "decision_recorded").length;
   const recent = reviews.slice(0, 4);
+  const queue = reviews
+    .map((review) => {
+      if (review.decisionState === null) {
+        return {
+          id: `${review.id}-decision`,
+          label: `${review.ticker} ${review.title} is awaiting decision`,
+          cta: "Continue",
+          href: `/review/${review.id}`,
+        };
+      }
+      if (review.status === "decision_recorded") {
+        return {
+          id: `${review.id}-outcome`,
+          label: `${review.ticker} ${review.title} has outcome follow-up due`,
+          cta: "Record",
+          href: "/calibration",
+        };
+      }
+      return {
+        id: `${review.id}-review`,
+        label: `${review.ticker} ${review.title} has a fresh review update`,
+        cta: "Open",
+        href: `/review/${review.id}`,
+      };
+    })
+    .slice(0, 3);
 
   return (
     <div className="space-y-6">
@@ -34,7 +55,7 @@ export function DashboardPage() {
       <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <PulseCard label="Reviews" value={String(reviews.length)} note={loading ? "Syncing archive" : `Archive source: ${source}`} />
         <PulseCard label="Pending Decisions" value={String(reviewsAwaitingDecision)} note="Need your action" />
-        <PulseCard label="Average Confidence" value={`${averageConfidence(reviews)}%`} note="Across recent reviews" />
+        <PulseCard label="Reports Ready" value={String(reportReady)} note="Synthesized and decision-ready" />
         <PulseCard label="Outcome Queue" value={String(dueOutcomes)} note="Record feedback" />
       </section>
 
@@ -48,24 +69,18 @@ export function DashboardPage() {
         <Panel className="p-5 xl:col-span-2">
           <SectionTitle eyebrow="Needs Your Attention" title="Priority queue" />
           <ul className="mt-4 space-y-3">
-            <li className="flex items-center justify-between rounded-md border border-line bg-fog/70 p-3 text-sm">
-              <span>TLT curve steepener is awaiting decision</span>
-              <Link href="/review/atr-003" className="focus-ring inline-flex items-center gap-1 text-teal">
-                Continue <ArrowRight className="h-4 w-4" />
-              </Link>
-            </li>
-            <li className="flex items-center justify-between rounded-md border border-line bg-fog/70 p-3 text-sm">
-              <span>AAPL intelligence update available with fresh market bars</span>
-              <Link href="/markets/AAPL" className="focus-ring inline-flex items-center gap-1 text-teal">
-                Open <ArrowRight className="h-4 w-4" />
-              </Link>
-            </li>
-            <li className="flex items-center justify-between rounded-md border border-line bg-fog/70 p-3 text-sm">
-              <span>Two outcomes due for calibration update</span>
-              <Link href="/calibration" className="focus-ring inline-flex items-center gap-1 text-teal">
-                Record <ArrowRight className="h-4 w-4" />
-              </Link>
-            </li>
+            {queue.length > 0 ? (
+              queue.map((item) => (
+                <li key={item.id} className="flex items-center justify-between rounded-md border border-line bg-fog/70 p-3 text-sm">
+                  <span>{item.label}</span>
+                  <Link href={item.href} className="focus-ring inline-flex items-center gap-1 text-teal">
+                    {item.cta} <ArrowRight className="h-4 w-4" />
+                  </Link>
+                </li>
+              ))
+            ) : (
+              <li className="rounded-md border border-line bg-fog/70 p-3 text-sm text-ink/70">No queued actions yet. Create a review to start the decision pipeline.</li>
+            )}
           </ul>
         </Panel>
 

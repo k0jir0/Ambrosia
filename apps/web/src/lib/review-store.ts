@@ -44,14 +44,15 @@ export function upsertLocalReview(review: TradeReview) {
 }
 
 export async function loadReviewArchive(): Promise<{ reviews: TradeReview[]; source: "api" | "local" | "sample" }> {
-  const local = getLocalReviews();
   try {
     const apiReviews = await listReviews();
     return {
-      reviews: dedupeAndSort([...local, ...apiReviews, ...sampleReviews]),
+      // When API is reachable, prefer canonical server data for a real-model dashboard.
+      reviews: dedupeAndSort(apiReviews),
       source: "api"
     };
   } catch {
+    const local = getLocalReviews();
     return {
       reviews: dedupeAndSort([...local, ...sampleReviews]),
       source: local.length > 0 ? "local" : "sample"
@@ -86,8 +87,8 @@ export async function resolveReview(reviewId: string): Promise<TradeReview | nul
 }
 
 export function useReviewArchive() {
-  const [reviews, setReviews] = useState<TradeReview[]>(() => dedupeAndSort([...getLocalReviews(), ...sampleReviews]));
-  const [source, setSource] = useState<"api" | "local" | "sample">("sample");
+  const [reviews, setReviews] = useState<TradeReview[]>([]);
+  const [source, setSource] = useState<"api" | "local" | "sample">("api");
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {

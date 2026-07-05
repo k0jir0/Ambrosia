@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Activity, ArrowRightLeft, BarChart2, RefreshCw } from "lucide-react";
+import { Activity, ArrowRightLeft, BarChart2, RefreshCw, Search } from "lucide-react";
+import { useRouter } from "next/navigation";
 import {
   Bar,
   BarChart,
@@ -48,8 +49,10 @@ const TABS: Array<{ id: Tab; label: string }> = [
 ];
 
 export function MarketIntelligencePage({ ticker, compare = [] }: { ticker: string; compare?: string[] }) {
+  const router = useRouter();
   const [activeTab, setActiveTab] = useState<Tab>("primary");
   const [priceStyle, setPriceStyle] = useState<PriceStyle>("candlestick");
+  const [searchTicker, setSearchTicker] = useState(ticker.toUpperCase());
   const [snapshot, setSnapshot] = useState<MarketSnapshot | null>(null);
   const [technicals, setTechnicals] = useState<TechnicalIndicators | null>(null);
   const [sentiment, setSentiment] = useState<SentimentData | null>(null);
@@ -83,6 +86,22 @@ export function MarketIntelligencePage({ ticker, compare = [] }: { ticker: strin
   const latest = series[series.length - 1];
   const prev = series[series.length - 2] ?? latest;
   const delta = (((latest.close - prev.close) / prev.close) * 100).toFixed(2);
+
+  useEffect(() => {
+    setSearchTicker(ticker.toUpperCase());
+  }, [ticker]);
+
+  function normalizeTickerInput(value: string): string {
+    return value.trim().toUpperCase().replace(/\s+/g, "");
+  }
+
+  function handleTickerSearch(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const nextTicker = normalizeTickerInput(searchTicker);
+    if (!nextTicker) return;
+    if (nextTicker === ticker.toUpperCase()) return;
+    router.push(`/markets/${encodeURIComponent(nextTicker)}`);
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -141,6 +160,24 @@ export function MarketIntelligencePage({ ticker, compare = [] }: { ticker: strin
             <p className={cn("text-sm", Number(displayDelta) >= 0 ? "text-teal" : "text-coral")}>{Number(displayDelta) >= 0 ? "+" : ""}{displayDelta}%</p>
           </div>
         </div>
+        <form onSubmit={handleTickerSearch} className="mt-4 flex flex-wrap items-center gap-2">
+          <label htmlFor="market-ticker-search" className="text-xs uppercase tracking-wide text-ink/60">
+            Search ticker
+          </label>
+          <input
+            id="market-ticker-search"
+            type="text"
+            value={searchTicker}
+            onChange={(event) => setSearchTicker(event.target.value)}
+            placeholder="AAPL"
+            className="focus-ring h-9 w-36 rounded-md border border-line bg-fog px-3 text-sm text-ink"
+            aria-label="Search stock ticker"
+          />
+          <button type="submit" className="focus-ring inline-flex h-9 items-center gap-2 rounded-md border border-line px-3 text-sm text-ink/80 hover:border-teal/60 hover:text-teal">
+            <Search className="h-4 w-4" />
+            Open
+          </button>
+        </form>
       </Panel>
 
       <Panel className="p-3">

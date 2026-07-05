@@ -152,8 +152,14 @@ jobs:
       - name: Install dependencies
         run: uv sync
 
+      - name: Generate Index84 route inventory artifact
+        run: uv run python ../../scripts/generate-index84-route-inventory.py --write
+
       - name: Verify Index84 route inventory
         run: uv run python ../../scripts/generate-index84-route-inventory.py --check
+
+      - name: Generate exposure-filtered OpenAPI artifacts
+        run: uv run python ../../scripts/generate-index84-route-inventory.py --write-openapi
 
       - name: Verify exposure-filtered OpenAPI artifacts
         run: uv run python ../../scripts/generate-index84-route-inventory.py --check-openapi

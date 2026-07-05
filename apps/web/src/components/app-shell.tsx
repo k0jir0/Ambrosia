@@ -16,7 +16,6 @@ type NavItem = {
 const NAV_ITEMS: NavItem[] = [
   { href: "/", label: "Dashboard", icon: Home, group: "top" },
   { href: "/review/new", label: "New Review", icon: ClipboardPlus, group: "top" },
-  { href: "/platform", label: "Platform", icon: Layers3, group: "top" },
   { href: "/markets/AAPL", label: "Market Intelligence", icon: Activity, group: "middle" },
   { href: "/alpha", label: "Alpha Lab", icon: FlaskConical, group: "middle" },
   { href: "/execution-intelligence", label: "Execution Intelligence", icon: Radar, group: "middle" },
@@ -27,7 +26,8 @@ const NAV_ITEMS: NavItem[] = [
   { href: "/enterprise", label: "Enterprise", icon: Building2, group: "bottom" },
   { href: "/team", label: "Team", icon: Users, group: "bottom" },
   { href: "/admin", label: "Admin", icon: Settings, group: "bottom" },
-  { href: "/advanced", label: "Advanced", icon: SlidersHorizontal, group: "bottom" }
+  { href: "/advanced", label: "Advanced", icon: SlidersHorizontal, group: "bottom" },
+  { href: "/platform", label: "Platform", icon: Layers3, group: "bottom" }
 ];
 
 const MOBILE_ITEMS = [

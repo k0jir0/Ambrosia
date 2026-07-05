@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -65,7 +66,7 @@ def main() -> int:
     help_result = subprocess.run(
         [sys.executable, "-m", "ambrosia_cli.main", "--help"],
         cwd=str(CLI_PATH),
-        env={"PYTHONPATH": f"{SDK_PATH};{CLI_PATH}"},
+        env={"PYTHONPATH": os.pathsep.join((str(SDK_PATH), str(CLI_PATH)))},
         check=False,
         capture_output=True,
         text=True,

@@ -902,8 +902,6 @@ function RunbookStrip({
             step={step}
             index={index}
             displayStatus={getRunbookDisplayStatus(step, nextStep, runbookState)}
-            review={review}
-            packet={packet}
             reportArtifact={reportArtifact}
             activeAction={activeAction}
             onExportReport={onExportReport}
@@ -918,8 +916,6 @@ function RunbookStepCard({
   step,
   index,
   displayStatus,
-  review,
-  packet,
   reportArtifact,
   activeAction,
   onExportReport
@@ -927,8 +923,6 @@ function RunbookStepCard({
   step: RunbookStep;
   index: number;
   displayStatus: { label: string; tone: "neutral" | "good" | "warn" | "info"; active: boolean };
-  review: TradeReview;
-  packet: DecisionPacket | null;
   reportArtifact: ReportArtifact | null;
   activeAction: string | null;
   onExportReport: () => void;
@@ -947,40 +941,20 @@ function RunbookStepCard({
         </div>
         <Badge tone={displayStatus.tone}>{displayStatus.label}</Badge>
       </div>
-      <details className="mt-2 rounded-md border border-line bg-paper/70 p-2">
-        <summary className="cursor-pointer list-none font-semibold text-teal">View evidence</summary>
-        <dl className="mt-2 space-y-1 text-[11px] leading-4 text-slate-300">
-          <EvidenceLine label="Action" value={step.actionLabel} />
-          <EvidenceLine label="Endpoint" value={step.endpoint} />
-          <EvidenceLine label="Artifact" value={resolveRunbookArtifact(step, review, packet)} />
-          <EvidenceLine label="Audit" value={step.latestAudit ? `${step.latestAudit.eventType}: ${step.latestAudit.detail}` : step.auditEvents.join(" or ")} />
-          {step.id === "agents" ? <EvidenceLine label="Provider" value={packet?.providerInfo ? `${packet.providerInfo.name} / fallback=${packet.providerInfo.fallbackUsed ? "yes" : "no"}` : "Pending agent run"} /> : null}
-          {step.manualGate ? <EvidenceLine label="Gate" value={step.manualGate} /> : null}
-        </dl>
-        {step.id === "report" ? (
-          <div className="mt-3 border-t border-line pt-2">
-            <button
-              type="button"
-              onClick={onExportReport}
-              disabled={Boolean(activeAction)}
-              className="focus-ring inline-flex items-center gap-1 rounded-md border border-line bg-fog/80 px-2 py-1 text-[11px] font-semibold text-slate-200 transition hover:border-teal/50 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              <Download className="h-3 w-3" />
-              {activeAction === "Generate report" ? "Generating..." : reportArtifact ? "Download Markdown report" : "Generate and download report"}
-            </button>
-          </div>
-        ) : null}
-      </details>
+      {step.id === "report" ? (
+        <div className="mt-3 border-t border-line pt-2">
+          <button
+            type="button"
+            onClick={onExportReport}
+            disabled={Boolean(activeAction)}
+            className="focus-ring inline-flex items-center gap-1 rounded-md border border-line bg-fog/80 px-2 py-1 text-[11px] font-semibold text-slate-200 transition hover:border-teal/50 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <Download className="h-3 w-3" />
+            {activeAction === "Generate report" ? "Generating..." : reportArtifact ? "Download Markdown report" : "Generate and download report"}
+          </button>
+        </div>
+      ) : null}
     </li>
-  );
-}
-
-function EvidenceLine({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="grid grid-cols-[64px_1fr] gap-2">
-      <dt className="font-semibold text-slate-500">{label}</dt>
-      <dd className="break-words text-slate-300">{value}</dd>
-    </div>
   );
 }
 
@@ -1115,29 +1089,6 @@ function getRunbookDisplayStatus(step: RunbookStep, nextStep: RunbookStep | null
   }
 
   return { label: "Pending", tone: "neutral", active: false };
-}
-
-function resolveRunbookArtifact(step: RunbookStep, review: TradeReview, packet: DecisionPacket | null): string {
-  switch (step.id) {
-    case "intake":
-      return `${review.id} / ${review.ticker}`;
-    case "market":
-      return packet?.marketSnapshot ? `${review.ticker} snapshot at ${packet.marketSnapshot.timestamp}` : step.artifact;
-    case "agents":
-      return packet?.agentOutputs ? `${Object.values(packet.agentOutputs).filter(Boolean).length}/${expectedAgentRoles.length} role outputs` : step.artifact;
-    case "risk":
-      return packet?.riskMonitor ? `${packet.riskMonitor.status}; max drawdown ${Math.round(packet.riskMonitor.maxDrawdownThreshold * 100)}%` : step.artifact;
-    case "confidence":
-      return packet?.confidenceBreakdown ? `${packet.confidenceBreakdown.overallConfidence}% with ${packet.confidenceBreakdown.blockers.length} blocker(s)` : step.artifact;
-    case "decision":
-      return review.decisionState ? decisionLabels[review.decisionState] : step.artifact;
-    case "outcome":
-      return step.latestAudit?.detail ?? step.artifact;
-    case "report":
-      return step.latestAudit?.detail ?? step.artifact;
-    default:
-      return step.artifact;
-  }
 }
 
 function ContextPanel({ review, recentReviews, onSelectReview }: { review: TradeReview; recentReviews: TradeReview[]; onSelectReview: (reviewId: string) => void }) {

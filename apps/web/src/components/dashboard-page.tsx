@@ -139,11 +139,6 @@ type ProofCardModel = {
   claim: string;
   action: string;
   href: string;
-  endpoint: string;
-  state: string;
-  audit: string;
-  tests: string;
-  mode: string;
   caveat?: string;
 };
 
@@ -152,46 +147,26 @@ const PROOF_CARDS: ProofCardModel[] = [
     title: "Agentic AI for Investments",
     claim: "Typed thesis intake becomes claims, sources, validation, critique, and audit under human decision control.",
     action: "Create Review",
-    href: "/review/new",
-    endpoint: "POST /reviews",
-    state: "TradeReview",
-    audit: "intake.normalized / decision.recorded",
-    tests: "test_contract_gates.py:99-148",
-    mode: "API-first with local deterministic fallback"
+    href: "/review/new"
   },
   {
     title: "Investment Trading Decisions",
     claim: "One packet carries market context, backtest, risk, confidence, outcome memory, and reportable state.",
     action: "Run Workflow",
-    href: "/review/new",
-    endpoint: "POST /packets/{id}/metrics/refresh, /risk/evaluate, /confidence/derive",
-    state: "DecisionPacket",
-    audit: "metrics.refreshed / risk.evaluated / confidence.derived",
-    tests: "test_contract_gates.py:171-343",
-    mode: "Live, fallback, or demo provenance labels"
+    href: "/review/new"
   },
   {
     title: "Swarm Intelligence",
     claim: "Specialist roles are preserved and coordinated into PM synthesis rather than flattened into one answer.",
     action: "Run Agent Swarm",
     href: "/review/atr-003",
-    endpoint: "POST /packets/{id}/agents/run",
-    state: "agentOutputs + providerInfo",
-    audit: "agents.completed",
-    tests: "test_reviews.py:309-366",
-    mode: "deterministic / ollama / hosted / hybrid",
     caveat: "Known limitation: formal pairwise disagreement score is pending."
   },
   {
     title: "Agentic Swarm",
     claim: "Provider-routed specialist actions mutate packet state, emit audit, and surface operator proof.",
     action: "Open Advanced",
-    href: "/advanced",
-    endpoint: "/providers/status, /visibility/frontend-matrix, /jobs, /admin/audit",
-    state: "workflow run + audit + guardrails",
-    audit: "provider fallback and workflow events",
-    tests: "test_stack_contract.py + CI visibility-proof",
-    mode: "Control-plane status and fallback transparency"
+    href: "/advanced"
   }
 ];
 
@@ -211,29 +186,10 @@ function ProofCard({ card }: { card: ProofCardModel }) {
             <Badge tone="warn">{card.caveat}</Badge>
           </div>
         ) : null}
-        <details className="mt-4 rounded-md border border-line bg-fog/70 p-3 text-xs text-ink/70">
-          <summary className="cursor-pointer font-semibold text-ink">Proof</summary>
-          <div className="mt-3 space-y-2">
-            <ProofRow label="Endpoint" value={card.endpoint} />
-            <ProofRow label="State" value={card.state} />
-            <ProofRow label="Audit" value={card.audit} />
-            <ProofRow label="Test" value={card.tests} />
-            <ProofRow label="Mode" value={card.mode} />
-          </div>
-        </details>
         <Link href={card.href} className="focus-ring mt-4 inline-flex w-fit items-center gap-1 rounded-md border border-line px-3 py-2 text-sm font-semibold text-teal hover:border-teal/50">
           {card.action} <ArrowRight className="h-4 w-4" />
         </Link>
       </div>
     </Panel>
-  );
-}
-
-function ProofRow({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="grid gap-1 sm:grid-cols-[70px_1fr]">
-      <span className="font-semibold text-ink">{label}</span>
-      <span>{value}</span>
-    </div>
   );
 }

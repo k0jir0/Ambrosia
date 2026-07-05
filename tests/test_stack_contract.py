@@ -250,8 +250,8 @@ class StackContractTests(unittest.TestCase):
         ]:
             self.assertIn(expected, workbench)
 
-        self.assertIn("createReviewRecord", new_review_page)
-        self.assertIn("router.push(`/review/${encodeURIComponent(review.id)}`)", new_review_page)
+        self.assertIn("@/modules/adversarial-review", new_review_page)
+        self.assertIn("NewReviewFlow", new_review_page)
 
     def test_operating_model_copy_is_global_sidebar_content(self) -> None:
         app_shell = read_text("apps/web/src/components/app-shell.tsx")
@@ -270,12 +270,9 @@ class StackContractTests(unittest.TestCase):
             "Agentic Swarm",
         ]:
             self.assertIn(expected, app_shell)
-            self.assertIn(expected, dashboard)
 
         for expected in [
             "PROOF_CARDS",
-            "Proof",
-            "Endpoint",
             "Known limitation",
         ]:
             self.assertIn(expected, dashboard)

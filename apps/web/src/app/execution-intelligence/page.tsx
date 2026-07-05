@@ -36,14 +36,23 @@ export default function ExecutionIntelligencePage() {
       <Panel className="p-6">
         <div className="flex items-center justify-between gap-3">
           <SectionTitle eyebrow="Index84 Surface" title="Execution Intelligence" />
-          <RouteStatusBadge status={status} />
+          <div className="flex items-center gap-2">
+            <RouteStatusBadge status={status} />
+            <button
+              type="button"
+              onClick={() => void load()}
+              className="focus-ring rounded-md border border-line bg-fog/70 px-3 py-1 text-xs font-semibold text-ink/80"
+            >
+              Refresh module data
+            </button>
+          </div>
         </div>
         <p className="mt-3 max-w-3xl text-sm text-ink/75">
           Monitor warm-path events and execution diagnostics under human-supervised risk boundaries.
         </p>
       </Panel>
 
-      {status === "empty" || status === "forbidden" || status === "error" ? <RouteNotice status={status} message={message} retry={() => void load()} /> : null}
+      {status !== "success" ? <RouteNotice status={status} message={message} retry={() => void load()} /> : null}
 
       <Panel className="p-6">
         <SectionTitle eyebrow="Warm Path" title="Recent events" />
@@ -56,6 +65,15 @@ export default function ExecutionIntelligencePage() {
             </li>
           ))}
           {events.length === 0 ? <li className="rounded-md border border-dashed border-line bg-fog/50 px-3 py-2 text-ink/60">No warm-path events yet.</li> : null}
+        </ul>
+      </Panel>
+
+      <Panel className="p-6">
+        <SectionTitle eyebrow="Diagnostics" title="Execution checks surfaced" />
+        <ul className="mt-3 space-y-2 text-sm text-ink/80">
+          <li className="rounded-md border border-line bg-fog/70 px-3 py-2">Latency and notional checks per warm-path event.</li>
+          <li className="rounded-md border border-line bg-fog/70 px-3 py-2">Kill-switch and risk-check pass/fail context.</li>
+          <li className="rounded-md border border-line bg-fog/70 px-3 py-2">Operator read path for pre-trade and post-fill diagnostics.</li>
         </ul>
       </Panel>
     </div>

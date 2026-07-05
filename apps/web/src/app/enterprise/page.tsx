@@ -48,14 +48,23 @@ export default function EnterprisePage() {
       <Panel className="p-6">
         <div className="flex items-center justify-between gap-3">
           <SectionTitle eyebrow="Index84 Surface" title="Enterprise" />
-          <RouteStatusBadge status={status} />
+          <div className="flex items-center gap-2">
+            <RouteStatusBadge status={status} />
+            <button
+              type="button"
+              onClick={() => void load()}
+              className="focus-ring rounded-md border border-line bg-fog/70 px-3 py-1 text-xs font-semibold text-ink/80"
+            >
+              Refresh module data
+            </button>
+          </div>
         </div>
         <p className="mt-3 max-w-3xl text-sm text-ink/75">
           Service-account, SSO, audit-export, and security-packet posture for governed enterprise operations.
         </p>
       </Panel>
 
-      {status === "forbidden" || status === "error" ? <RouteNotice status={status} message={message} retry={() => void load()} /> : null}
+      {status !== "success" ? <RouteNotice status={status} message={message} retry={() => void load()} /> : null}
 
       <Panel className="p-6">
         <SectionTitle eyebrow="Readiness" title="Enterprise readiness summary" />
@@ -75,6 +84,15 @@ export default function EnterprisePage() {
           <Metric label="Support SLA" value={textOrFallback((data.security?.supportPolicy as Record<string, unknown> | undefined)?.sla)} />
           <Metric label="Audit retention" value={textOrFallback((data.security?.retentionPolicy as Record<string, unknown> | undefined)?.auditDays)} />
         </div>
+      </Panel>
+
+      <Panel className="p-6">
+        <SectionTitle eyebrow="Operational Actions" title="Enterprise checklist" />
+        <ul className="mt-3 space-y-2 text-sm text-ink/80">
+          <li className="rounded-md border border-line bg-fog/70 px-3 py-2">Create scoped service accounts for CI and internal automations.</li>
+          <li className="rounded-md border border-line bg-fog/70 px-3 py-2">Rotate and revoke credentials through lifecycle operations.</li>
+          <li className="rounded-md border border-line bg-fog/70 px-3 py-2">Use audit export and security packet outputs for governance review.</li>
+        </ul>
       </Panel>
     </div>
   );

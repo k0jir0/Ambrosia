@@ -43,14 +43,23 @@ export default function PlatformPage() {
       <Panel className="p-6">
         <div className="flex items-center justify-between gap-3">
           <SectionTitle eyebrow="Index84 Surface" title="Platform" />
-          <RouteStatusBadge status={status} />
+          <div className="flex items-center gap-2">
+            <RouteStatusBadge status={status} />
+            <button
+              type="button"
+              onClick={() => void load()}
+              className="focus-ring rounded-md border border-line bg-fog/70 px-3 py-1 text-xs font-semibold text-ink/80"
+            >
+              Refresh module data
+            </button>
+          </div>
         </div>
         <p className="mt-3 max-w-3xl text-sm text-ink/75">
           Index84 platform overview with readiness and control-plane operating status across research, execution, and governance modules.
         </p>
       </Panel>
 
-      {status !== "success" && status !== "degraded" ? (
+      {status !== "success" ? (
         <RouteNotice status={status} message={message} retry={() => void load()} />
       ) : null}
 
@@ -62,6 +71,16 @@ export default function PlatformPage() {
           <Metric label="SLO snapshot" value={textOrFallback((data?.health as Record<string, unknown> | undefined)?.status)} />
           <Metric label="Phases" value={textOrFallback((data?.phases as Record<string, unknown> | undefined)?.status)} />
         </div>
+      </Panel>
+
+      <Panel className="p-6">
+        <SectionTitle eyebrow="Workstreams" title="Index84 control-plane modules" />
+        <ul className="mt-3 grid gap-2 text-sm text-ink/80 md:grid-cols-2">
+          <li className="rounded-md border border-line bg-fog/70 px-3 py-2">Alpha research and decay analytics</li>
+          <li className="rounded-md border border-line bg-fog/70 px-3 py-2">Execution warm-path telemetry and diagnostics</li>
+          <li className="rounded-md border border-line bg-fog/70 px-3 py-2">Relay benchmark quality and routing evidence</li>
+          <li className="rounded-md border border-line bg-fog/70 px-3 py-2">Enterprise readiness and security packet posture</li>
+        </ul>
       </Panel>
     </div>
   );

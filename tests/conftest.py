@@ -41,11 +41,23 @@ def pytest_collection_modifyitems(config, items):
     """Skip tests marked with requires_api if server is not available."""
     if not API_AVAILABLE:
         skip_api = pytest.mark.skip(reason="API server not running on port 8001")
+        api_dependent_nodeid_tokens = {
+            "test_certification",
+            "test_scorecard",
+            "test_index39",
+            "test_phase_e",
+            "test_zero_downtime",
+            "test_stack_contract",
+            "test_calibration_metrics",
+            "test_feedback_loops",
+            "test_index96_e2e",
+        }
         for item in items:
-            if "requires_api" in item.keywords or "test_certification" in item.nodeid or \
-               "test_scorecard" in item.nodeid or "test_index39" in item.nodeid or \
-               "test_phase_e" in item.nodeid or "test_zero_downtime" in item.nodeid or \
-               "test_stack_contract" in item.nodeid:
+            if "requires_api" in item.keywords:
+                item.add_marker(skip_api)
+                continue
+
+            if any(token in item.nodeid for token in api_dependent_nodeid_tokens):
                 item.add_marker(skip_api)
 
 

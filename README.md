@@ -12,7 +12,7 @@ The product is organized around three connected surfaces:
 
 Ambrosia is now a working monorepo with a Next.js frontend, a FastAPI backend, a Rust hot-path service boundary, local full-stack scripts, CI validation, and production deployment wiring.
 
-The Index84 implementation and closure chain is now fully wired and passing in repository scope:
+The Index84 implementation and closure chain is fully wired and passing in repository scope:
 
 - Roadmap completion evidence gate passes.
 - Literal feature coverage gate passes.
@@ -20,12 +20,24 @@ The Index84 implementation and closure chain is now fully wired and passing in r
 - Phase 7 hot-path governance go/no-go gate passes.
 - Index86 closure gate passes.
 
+Recent implementation developments (July 2026):
+
+- Index95 implementation baseline is live in repository scope, including durable signal lifecycle storage, idempotent write behavior, and expanded control-plane contracts.
+- A dedicated Signals page is now available at `/signals` and linked in the left navigation.
+- Market Scanner now supports natural alpha formation with a primary `Promote to Alpha` action and lifecycle-aware candidate controls.
+- New backend convenience route `POST /scanner/candidates/promote-alpha` creates hypothesis + signal + link in one call.
+- Scanner promotion lifecycle visibility is available at `GET /scanner/candidates/promotions`.
+- Review intake now supports an optional `Create Alpha from Review` path for intentional thesis-origin alpha creation.
+
 The frontend includes:
 
 - Dashboard and review workbench
 - New Review flow with review creation and re-access paths
 - Review detail pages at `/review/[id]`
 - Discovery / market intelligence surface
+- Market Scanner lifecycle actions including `Promote to Alpha`, `Create Review`, and validation queueing
+- Alpha Lab origin visibility for scanner-promoted objects (origin, source ticker/signal, promotion metadata)
+- Signals inventory surface at `/signals`
 - History, calibration, team, reports, governance, admin, and advanced operations pages
 - Global navigation with the Operating Model panel visible beneath the Admin pressable banner
 - API-first behavior with deterministic local fallback when services are unavailable
@@ -40,6 +52,8 @@ The backend includes:
 - PostgreSQL-ready schema and migration scaffolding for durable packet, audit, and memory storage
 - Index84 platform routes for relay, feature store MVP, signals, backtests, paper trades, execution intelligence, enterprise governance, and readiness/evidence flows
 - Extended alpha and execution intelligence surfaces including alpha hypothesis, alpha decay analytics, warm-path event processing, and enterprise security packet endpoints
+- Scanner-to-alpha promotion routes with durable lifecycle snapshots and promotion record persistence
+- Expanded signal writeback and lifecycle endpoints for validation, policy transitions, and outcome rollups
 
 The hot-path service includes:
 
@@ -156,6 +170,7 @@ Recent verification status:
 
 - Web build and lint were brought back to green locally.
 - API test suite was brought to green locally.
+- Scanner promotion endpoint and promotion listing tests are passing locally.
 - Visibility and provider workflow gates are green in GitHub Actions.
 - The production web surface is live at `https://ambrosia-5aec.onrender.com/`.
 - The split production web/API stack is live at `https://ambrosia-web-c3ax.onrender.com/` and `https://ambrosia-api-69t6.onrender.com/health`.
@@ -176,6 +191,8 @@ Live product:
 - Existing web: `https://ambrosia-5aec.onrender.com/`
 - Split-stack web: `https://ambrosia-web-c3ax.onrender.com/`
 - API health target: `https://ambrosia-api-69t6.onrender.com/health`
+- Staging web: `https://ambrosia-web-staging.onrender.com/`
+- Staging API service is configured with required database mode enabled.
 
 GitHub production deploy wiring exists, but Render deploy hook secrets must be populated for automated hook-triggered deployment. When the hook variables are empty, the GitHub deploy workflow can pass while skipping the Render trigger steps.
 

@@ -260,7 +260,7 @@ class StackContractTests(unittest.TestCase):
 
         self.assertIn("<OperatingModelPanel />", app_shell)
         self.assertIn('href: "/advanced"', app_shell)
-        self.assertIn("Operator and instrumentation surface", advanced_page)
+        self.assertIn("Module directory", advanced_page)
         self.assertLess(app_shell.index('href: "/admin"'), app_shell.index('href: "/advanced"'))
         self.assertLess(app_shell.index("NavSection items={bottom}"), app_shell.index("<OperatingModelPanel />"))
         for expected in [
@@ -279,9 +279,9 @@ class StackContractTests(unittest.TestCase):
 
         for expected in [
             "Admin & Monitoring",
-            "defaultOpen: true",
-            "25 panels / 6 groups",
-            "Provider path is visible",
+            "26 panels / 7 destinations",
+            "Provider Modes",
+            "Moved to",
         ]:
             self.assertIn(expected, advanced_page)
 

@@ -184,6 +184,7 @@ export interface BacktestResult {
   samplePeriod: string;
   validityScore: "high" | "medium" | "low" | "refused";
   hygienIssues: string[];
+  hygieneIssues?: string[];
 }
 
 export interface RiskMonitor {

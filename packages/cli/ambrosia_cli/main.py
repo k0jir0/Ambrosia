@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import functools
 import json
 import os
 from pathlib import Path
@@ -195,10 +196,18 @@ def build_parser() -> argparse.ArgumentParser:
     enterprise_sub.add_parser("security-packet", help="Read enterprise support/security packet")
     enterprise_sub.add_parser("readiness", help="Read enterprise readiness")
 
+    commands = subcommands.add_parser("commands", help="List numbered CLI functions")
+    commands_sub = commands.add_subparsers(dest="action", required=True)
+    commands_sub.add_parser("list", help="List all runnable commands with numeric IDs")
+    commands_show = commands_sub.add_parser("show", help="Show one command by ID or command path")
+    commands_show.add_argument("selector", help="Numeric command ID or command path (for example: reviews create)")
+
     return parser
 
 
 def dispatch(args: argparse.Namespace, client: AmbrosiaClient) -> Any:
+    if args.resource == "commands":
+        return dispatch_commands(args)
     if args.resource == "auth":
         return dispatch_auth(args, client)
     if args.resource == "config":
@@ -316,6 +325,47 @@ def dispatch(args: argparse.Namespace, client: AmbrosiaClient) -> Any:
     raise AmbrosiaApiError(f"Unsupported command: {args.resource}")
 
 
+@functools.lru_cache(maxsize=1)
+def get_command_catalog() -> list[dict[str, Any]]:
+    parser = build_parser()
+    leaves: list[tuple[str, str]] = []
+
+    def walk(node: argparse.ArgumentParser, prefix: list[str], help_hint: str = "") -> None:
+        subparser_actions = [action for action in node._actions if isinstance(action, argparse._SubParsersAction)]
+        if not subparser_actions:
+            if prefix:
+                description = help_hint or node.description or "Run command"
+                leaves.append((" ".join(prefix), description))
+            return
+
+        for sub_action in subparser_actions:
+            help_lookup = {choice.dest: choice.help or "" for choice in sub_action._choices_actions}
+            for name, child in sub_action.choices.items():
+                walk(child, prefix + [name], help_lookup.get(name, ""))
+
+    walk(parser, [])
+    return [{"id": index, "command": command, "description": description} for index, (command, description) in enumerate(leaves, start=1)]
+
+
+def dispatch_commands(args: argparse.Namespace) -> dict[str, Any]:
+    catalog = get_command_catalog()
+    if args.action == "list":
+        return {"count": len(catalog), "commands": catalog}
+
+    selector = args.selector.strip()
+    match: dict[str, Any] | None = None
+    if selector.isdigit():
+        command_id = int(selector)
+        match = next((item for item in catalog if item["id"] == command_id), None)
+    else:
+        normalized = " ".join(selector.split())
+        match = next((item for item in catalog if item["command"] == normalized), None)
+
+    if match is None:
+        raise AmbrosiaApiError(f"Unknown command selector: {selector}")
+    return match
+
+
 def dispatch_auth(args: argparse.Namespace, client: AmbrosiaClient) -> dict[str, Any]:
     has_token = bool(client.token)
     if args.action == "login":
@@ -358,6 +408,16 @@ def print_json(payload: Any) -> None:
 
 
 def print_human(payload: Any) -> None:
+    if isinstance(payload, dict) and "commands" in payload and isinstance(payload["commands"], list):
+        commands = payload["commands"]
+        print(f"{payload.get('count', len(commands))} command(s)")
+        for command in commands:
+            print(f"{command['id']:>2}. {command['command']} - {command['description']}")
+        return
+    if isinstance(payload, dict) and {"id", "command", "description"}.issubset(payload.keys()):
+        print(f"{payload['id']}. {payload['command']}")
+        print(f"Description: {payload['description']}")
+        return
     if isinstance(payload, list):
         print(f"{len(payload)} item(s)")
         for item in payload[:20]:

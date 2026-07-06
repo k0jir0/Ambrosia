@@ -867,7 +867,7 @@ export function Workbench({ initialReviewId }: { initialReviewId?: string } = {}
     if (activeAlphaDecay?.decayDetected) {
       reasons.push(`Alpha decay detected for linked signal ${activeAlphaDecay.signalId}; recommended action: ${activeAlphaDecay.recommendedAction}.`);
     }
-    const hygieneIssues = activePacketData?.backtestResult?.hygienIssues ?? [];
+    const hygieneIssues = activePacketData?.backtestResult?.hygieneIssues ?? activePacketData?.backtestResult?.hygienIssues ?? [];
     if (hygieneIssues.length > 0) {
       reasons.push(`Backtest hygiene issues present: ${hygieneIssues.join(", ")}.`);
     }

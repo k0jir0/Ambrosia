@@ -156,7 +156,7 @@ export default function MarketScannerPage() {
       });
       await refreshPromotions();
       setStatus("success");
-      setMessage(`${candidate.ticker} promoted into Alpha Lab.`);
+      setMessage(`Alpha hypothesis created for ${candidate.ticker}.`);
     } catch (error) {
       setStatus("error");
       setMessage(error instanceof Error ? error.message : "Failed to promote scanner candidate.");
@@ -228,7 +228,7 @@ export default function MarketScannerPage() {
           <div>
             <SectionTitle eyebrow="Market Intelligence" title="Market Scanner" />
             <p className="mt-3 max-w-3xl text-sm leading-6 text-ink/75">
-              Scan liquid watchlists for momentum and mean-reversion candidates, then promote the strongest setups into review.
+              Scan liquid watchlists for momentum and mean-reversion candidates, then create reviews or formalize the strongest setups as Alpha Lab hypotheses.
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -442,7 +442,7 @@ function CandidateRow({
           className="focus-ring inline-flex items-center gap-1 rounded-md bg-teal px-2 py-1 text-xs font-semibold text-fog disabled:opacity-60"
         >
           {promoteBusy ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : null}
-          Promote to Alpha
+          Create Alpha Hypothesis
         </button>
         <Link href={buildReviewHref(candidate, promotion)} className="focus-ring rounded-md border border-line bg-paper px-2 py-1 text-xs font-semibold text-ink/85">
           Create Review

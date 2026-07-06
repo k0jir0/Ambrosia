@@ -97,6 +97,61 @@ test("command palette covers secondary modules", async ({ page }) => {
   }
 });
 
+test("market scanner presents Alpha as a hypothesis workflow", async ({ page }) => {
+  await page.unroute(LOCAL_API_ROUTE);
+  await page.route(LOCAL_API_ROUTE, async (route) => {
+    const request = route.request();
+    const url = new URL(request.url());
+
+    if (request.method() === "POST" && url.pathname === "/scanner/run") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          candidates: [
+            {
+              ticker: "AAPL",
+              signal: "momentum_up",
+              thesisSuggestion: "AAPL momentum is improving after a constructive base.",
+              score: 0.82,
+              price: 221.34,
+              trend: "uptrend",
+              rsi: 61,
+              volume24h: 32400000,
+              dataSource: "test-fixture",
+              dataMode: "demo",
+              scannedAt: "2026-07-06T00:00:00.000Z"
+            }
+          ],
+          scannedAt: "2026-07-06T00:00:00.000Z",
+          universe: ["AAPL"],
+          totalScanned: 1,
+          dataMode: "demo"
+        })
+      });
+      return;
+    }
+
+    if (request.method() === "GET" && url.pathname === "/jobs") {
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([]) });
+      return;
+    }
+
+    if (request.method() === "GET" && url.pathname === "/scanner/candidates/promotions") {
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([]) });
+      return;
+    }
+
+    await route.abort();
+  });
+
+  await page.goto("/market-scanner");
+  await expect(page.getByRole("heading", { name: "Market Scanner" })).toBeVisible();
+  await expect(page.getByText("formalize the strongest setups as Alpha Lab hypotheses")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Create Alpha Hypothesis" })).toBeVisible();
+  await expect(page.getByText("Promote to Alpha")).toHaveCount(0);
+});
+
 test("market intelligence labels fallback provenance", async ({ page }) => {
   await page.goto("/markets/AAPL");
   await expect(page.getByRole("heading", { name: /AAPL intelligence/i })).toBeVisible();

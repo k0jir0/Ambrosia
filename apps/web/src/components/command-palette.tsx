@@ -24,6 +24,7 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
     const base: ActionItem[] = [
       { id: "new-review", label: "New Review", hint: "Open thesis intake", run: () => navigateTo("/review/new") },
       { id: "dashboard", label: "Dashboard", hint: "Go to command center", run: () => navigateTo("/") },
+      { id: "market-scanner", label: "Market Scanner", hint: "Scan watchlists for ranked trade candidates", run: () => navigateTo("/market-scanner") },
       { id: "platform", label: "Platform", hint: "Open Index84 platform overview", run: () => navigateTo("/platform") },
       { id: "alpha-lab", label: "Alpha Lab", hint: "Open hypothesis and decay monitor", run: () => navigateTo("/alpha") },
       { id: "execution-intelligence", label: "Execution Intelligence", hint: "Open warm-path and execution diagnostics", run: () => navigateTo("/execution-intelligence") },

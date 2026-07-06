@@ -52,11 +52,11 @@ const MODULE_ROUTES: ModuleRoute[] = [
     panels: "1 panel"
   },
   {
-    title: "Async Jobs",
-    eyebrow: "Execution Queue",
-    description: "Background scanner, backtest, and report job controls with progress visibility.",
-    href: "/execution-intelligence",
-    destination: "Execution Intelligence",
+    title: "Market Scanner",
+    eyebrow: "Discovery Queue",
+    description: "Watchlist scanning, technical filters, candidate ranking, and scanner job visibility.",
+    href: "/market-scanner",
+    destination: "Market Scanner",
     panels: "3 panels"
   },
   {

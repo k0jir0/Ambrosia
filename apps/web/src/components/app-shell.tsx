@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { Activity, BarChart3, Binary, Building2, ClipboardPlus, Command, FlaskConical, Gauge, History, Home, Layers3, Radar, Settings, SlidersHorizontal, TerminalSquare, Users } from "lucide-react";
+import { Activity, BarChart3, Binary, Building2, ClipboardPlus, Command, FlaskConical, Gauge, History, Home, Layers3, Radar, Search, Settings, SlidersHorizontal, TerminalSquare, Users } from "lucide-react";
 import { cn } from "./ui";
 import { CommandPalette } from "./command-palette";
 
@@ -17,6 +17,7 @@ const NAV_ITEMS: NavItem[] = [
   { href: "/", label: "Dashboard", icon: Home, group: "top" },
   { href: "/review/new", label: "New Review", icon: ClipboardPlus, group: "top" },
   { href: "/markets/AAPL", label: "Market Intelligence", icon: Activity, group: "middle" },
+  { href: "/market-scanner", label: "Market Scanner", icon: Search, group: "middle" },
   { href: "/alpha", label: "Alpha Lab", icon: FlaskConical, group: "middle" },
   { href: "/history", label: "Decision History", icon: History, group: "middle" },
   { href: "/calibration", label: "Calibration", icon: BarChart3, group: "middle" },

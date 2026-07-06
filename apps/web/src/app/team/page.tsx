@@ -165,13 +165,17 @@ export default function TeamPage() {
             <p className="mt-3 max-w-4xl text-sm leading-6 text-ink/75">
               {activeWorkspace.focus} across {activeWorkspace.members} members.
             </p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <Badge tone="info">Live membership admin</Badge>
+              <Badge tone="warn">Workspace workflow demo</Badge>
+            </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <Link href="/governance/team-management" className="focus-ring inline-flex items-center gap-2 rounded-md border border-line bg-fog/70 px-3 py-2 text-sm font-semibold text-teal">
               <Users className="h-4 w-4" />
               Team admin
             </Link>
-            <button type="button" className="focus-ring inline-flex items-center gap-2 rounded-md bg-teal px-3 py-2 text-sm font-semibold text-fog">
+            <button type="button" disabled className="focus-ring inline-flex items-center gap-2 rounded-md bg-teal px-3 py-2 text-sm font-semibold text-fog opacity-60">
               <Plus className="h-4 w-4" />
               New workspace
             </button>
@@ -186,9 +190,10 @@ export default function TeamPage() {
               <button
                 key={workspace.name}
                 type="button"
+                disabled={index !== 0}
                 className={cn(
                   "focus-ring rounded-md border p-3 text-left transition",
-                  index === 0 ? "border-teal/40 bg-teal/10" : "border-line bg-fog/60 hover:border-teal/40"
+                  index === 0 ? "border-teal/40 bg-teal/10" : "border-line bg-fog/60 opacity-60"
                 )}
               >
                 <div className="flex items-start justify-between gap-2">
@@ -196,7 +201,7 @@ export default function TeamPage() {
                     <p className="text-sm font-semibold text-ink">{workspace.name}</p>
                     <p className="mt-1 min-h-8 text-xs leading-4 text-ink/65">{workspace.focus}</p>
                   </div>
-                  <Badge tone={workspace.approvalsDue > 2 ? "warn" : "neutral"}>{workspace.approvalsDue} due</Badge>
+                  <Badge tone={index === 0 ? workspace.approvalsDue > 2 ? "warn" : "neutral" : "warn"}>{index === 0 ? `${workspace.approvalsDue} due` : "demo"}</Badge>
                 </div>
                 <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-ink/65">
                   <span>{workspace.members} members</span>
@@ -266,7 +271,7 @@ export default function TeamPage() {
                 </div>
               ))}
             </div>
-            <button type="button" className="focus-ring mt-4 inline-flex w-full items-center justify-center gap-2 rounded-md bg-teal px-3 py-2 text-sm font-semibold text-fog">
+            <button type="button" disabled className="focus-ring mt-4 inline-flex w-full items-center justify-center gap-2 rounded-md bg-teal px-3 py-2 text-sm font-semibold text-fog opacity-60">
               <ShieldCheck className="h-4 w-4" />
               Request sign-off
             </button>
@@ -275,9 +280,9 @@ export default function TeamPage() {
           <Panel className="p-5">
             <div className="flex items-center justify-between gap-3">
               <SectionTitle eyebrow="Members" title="Coverage" />
-              <button type="button" className="focus-ring rounded-md border border-line bg-fog/70 p-2 text-ink/70" aria-label="Invite member">
+              <Link href="/governance/team-management" className="focus-ring rounded-md border border-line bg-fog/70 p-2 text-ink/70" aria-label="Invite member">
                 <UserPlus className="h-4 w-4" />
-              </button>
+              </Link>
             </div>
             <div className="mt-4 grid gap-2">
               {MEMBERS.map((member) => (
@@ -318,8 +323,8 @@ export default function TeamPage() {
             ))}
           </div>
           <div className="mt-4 flex gap-2">
-            <input className="focus-ring min-w-0 flex-1 rounded-md border border-line bg-fog/70 px-3 py-2 text-sm" placeholder="Add a packet note..." />
-            <button type="button" className="focus-ring inline-flex shrink-0 items-center gap-2 rounded-md bg-teal px-3 py-2 text-sm font-semibold text-fog">
+            <input disabled className="focus-ring min-w-0 flex-1 rounded-md border border-line bg-fog/70 px-3 py-2 text-sm opacity-60" placeholder="Thread demo is read-only" />
+            <button type="button" disabled className="focus-ring inline-flex shrink-0 items-center gap-2 rounded-md bg-teal px-3 py-2 text-sm font-semibold text-fog opacity-60">
               <Send className="h-4 w-4" />
               Send
             </button>
@@ -329,7 +334,7 @@ export default function TeamPage() {
         <Panel className="p-5">
           <div className="flex items-center justify-between gap-3">
             <SectionTitle eyebrow="Templates" title="Reusable workflows" />
-            <button type="button" className="focus-ring rounded-md border border-line bg-fog/70 p-2 text-ink/70" aria-label="Create template">
+            <button type="button" disabled className="focus-ring rounded-md border border-line bg-fog/70 p-2 text-ink/70 opacity-60" aria-label="Create template">
               <Plus className="h-4 w-4" />
             </button>
           </div>
@@ -351,7 +356,7 @@ export default function TeamPage() {
               </div>
             ))}
           </div>
-          <button type="button" className="focus-ring mt-4 inline-flex w-full items-center justify-center gap-2 rounded-md border border-line bg-fog/70 px-3 py-2 text-sm font-semibold text-ink/80">
+          <button type="button" disabled className="focus-ring mt-4 inline-flex w-full items-center justify-center gap-2 rounded-md border border-line bg-fog/70 px-3 py-2 text-sm font-semibold text-ink/80 opacity-60">
             <FileText className="h-4 w-4" />
             Save current packet as template
           </button>

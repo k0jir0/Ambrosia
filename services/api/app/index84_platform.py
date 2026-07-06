@@ -893,6 +893,8 @@ def seed_index97_signals() -> dict:
             SignalCreateRequest(**signal_payload),
             _index97_idempotency_key(signal_id, "create-signal"),
         )
+        _signals[signal_id]["demoSeed"] = "index97"
+        _signals[signal_id]["sourceLabel"] = "Demo Lifecycle"
         signal_version = int(signal.get("activeVersion", signal.get("version", 1)))
 
         hypothesis_payload = scenario["hypothesis"]
@@ -901,6 +903,8 @@ def seed_index97_signals() -> dict:
             _index97_idempotency_key(signal_id, "create-hypothesis"),
         )
         hypothesis_id = str(hypothesis.get("hypothesisId"))
+        _alpha_hypotheses[hypothesis_id]["demoSeed"] = "index97"
+        _alpha_hypotheses[hypothesis_id]["sourceLabel"] = "Demo Lifecycle"
         link_alpha_hypothesis_signal(
             hypothesis_id,
             AlphaHypothesisSignalLinkRequest(signalId=signal_id, signalVersion=signal_version),

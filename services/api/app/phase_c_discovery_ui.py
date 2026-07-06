@@ -6,7 +6,7 @@ Scanner UI, report generation, analyst shortcuts, panel integration
 from datetime import datetime
 import os
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Body, HTTPException
 from pydantic import BaseModel
 
 router = APIRouter(prefix="/discovery", tags=["discovery"])
@@ -33,6 +33,13 @@ class ReportExportRequest(BaseModel):
     review_id: str
     format: str  # "pdf" or "html"
     include_charts: bool = True
+
+class ReportExportOptions(BaseModel):
+    format: str | None = None
+    include_charts: bool = True
+
+class EmailReportRequest(BaseModel):
+    recipient: str
 
 class ReportExportResult(BaseModel):
     report_id: str
@@ -87,22 +94,26 @@ async def generate_thesis_from_signal(signal_id: str) -> dict:
 
 # C2: Report Generation & Export
 @router.post("/reports/{review_id}/export")
-async def export_report(review_id: str, format: str = "pdf") -> ReportExportResult:
+async def export_report(review_id: str, request: ReportExportOptions | None = Body(default=None), format: str = "pdf") -> ReportExportResult:
     """Export review as PDF or HTML."""
+    export_format = request.format if request and request.format else format
     return ReportExportResult(
         report_id=f"rpt-{review_id}",
         status="generated",
-        format=format,
-        url=f"{public_api_base_url()}/reports/{review_id}.{format}",
+        format=export_format,
+        url=f"{public_api_base_url()}/reports/{review_id}.{export_format}",
         generated_at=datetime.now().isoformat(),
     )
 
 @router.post("/reports/{review_id}/email")
-async def email_report(review_id: str, recipient: str) -> dict:
+async def email_report(review_id: str, request: EmailReportRequest | None = Body(default=None), recipient: str | None = None) -> dict:
     """Email review report to recipient."""
+    report_recipient = recipient or (request.recipient if request else None)
+    if not report_recipient:
+        raise HTTPException(status_code=422, detail="recipient is required")
     return {
         "report_id": f"rpt-{review_id}",
-        "recipient": recipient,
+        "recipient": report_recipient,
         "sent_at": datetime.now().isoformat(),
         "status": "sent",
     }

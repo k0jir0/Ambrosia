@@ -18,6 +18,9 @@ export default function TeamManagementPage() {
   const [showInviteForm, setShowInviteForm] = useState(false);
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteRole, setInviteRole] = useState("analyst");
+  const [status, setStatus] = useState<string | null>(null);
+  const [editingMemberId, setEditingMemberId] = useState<string | null>(null);
+  const [editingRole, setEditingRole] = useState("analyst");
 
   // Fetch team members
   useEffect(() => {
@@ -58,6 +61,8 @@ export default function TeamManagementPage() {
     }
 
     try {
+      setError(null);
+      setStatus(null);
       const apiBaseUrl = getApiBaseUrl();
       if (!apiBaseUrl) throw new Error("Ambrosia API URL is not configured");
       const response = await fetch(
@@ -90,7 +95,65 @@ export default function TeamManagementPage() {
       ]);
       setInviteEmail("");
       setShowInviteForm(false);
-      alert("✅ Invitation sent to " + inviteEmail);
+      setStatus(`Invitation sent to ${inviteEmail}.`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unknown error");
+    }
+  };
+
+  const startEdit = (member: TeamMember) => {
+    setEditingMemberId(member.user_id);
+    setEditingRole(member.role);
+    setError(null);
+    setStatus(null);
+  };
+
+  const saveMemberRole = async (member: TeamMember) => {
+    try {
+      setError(null);
+      setStatus(null);
+      const apiBaseUrl = getApiBaseUrl();
+      if (!apiBaseUrl) throw new Error("Ambrosia API URL is not configured");
+      const response = await fetch(`${apiBaseUrl}/governance/team/${member.user_id}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          "X-User-Role": "admin",
+        },
+        body: JSON.stringify({ role: editingRole }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Update failed: ${response.statusText}`);
+      }
+
+      setTeamMembers((current) => current.map((item) => item.user_id === member.user_id ? { ...item, role: editingRole } : item));
+      setEditingMemberId(null);
+      setStatus(`${member.name} updated to ${editingRole}.`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unknown error");
+    }
+  };
+
+  const removeMember = async (member: TeamMember) => {
+    try {
+      setError(null);
+      setStatus(null);
+      const apiBaseUrl = getApiBaseUrl();
+      if (!apiBaseUrl) throw new Error("Ambrosia API URL is not configured");
+      const response = await fetch(`${apiBaseUrl}/governance/team/${member.user_id}`, {
+        method: "DELETE",
+        headers: {
+          "X-User-Role": "admin",
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error(`Remove failed: ${response.statusText}`);
+      }
+
+      setTeamMembers((current) => current.filter((item) => item.user_id !== member.user_id));
+      setStatus(`${member.name} removed from the team.`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unknown error");
     }
@@ -186,41 +249,74 @@ export default function TeamManagementPage() {
           </Panel>
         )}
 
+        {status && (
+          <Panel className="mb-8 border border-teal/30 bg-teal/5">
+            <p className="text-teal font-semibold">{status}</p>
+          </Panel>
+        )}
+
         {/* Team Members Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-8">
           {teamMembers.map((member) => (
-            <Panel key={member.user_id} className="border border-line">
-              <div className="flex justify-between items-start mb-3">
-                <div>
-                  <h3 className="text-base font-bold text-ink">{member.name}</h3>
-                  <p className="text-xs text-muted font-mono">{member.user_id}</p>
+            <div key={member.user_id} data-testid={`team-member-${member.user_id}`}>
+              <Panel className="border border-line">
+                <div className="flex justify-between items-start mb-3">
+                  <div>
+                    <h3 className="text-base font-bold text-ink">{member.name}</h3>
+                    <p className="text-xs text-muted font-mono">{member.user_id}</p>
+                  </div>
+                  <Badge tone={getRoleColor(member.role)}>
+                    {member.role}
+                  </Badge>
                 </div>
-                <Badge tone={getRoleColor(member.role)}>
-                  {member.role}
-                </Badge>
-              </div>
-              <div className="flex items-center gap-2 mb-4">
-                {member.active ? (
-                  <>
-                    <span className="text-teal">●</span>
-                    <span className="text-sm text-muted">Active</span>
-                  </>
-                ) : (
-                  <>
-                    <span className="text-line">●</span>
-                    <span className="text-sm text-muted">Pending</span>
-                  </>
+                <div className="flex items-center gap-2 mb-4">
+                  {member.active ? (
+                    <>
+                      <span className="h-2 w-2 rounded-full bg-teal" aria-hidden="true" />
+                      <span className="text-sm text-muted">Active</span>
+                    </>
+                  ) : (
+                    <>
+                      <span className="h-2 w-2 rounded-full bg-line" aria-hidden="true" />
+                      <span className="text-sm text-muted">Pending</span>
+                    </>
+                  )}
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <button onClick={() => startEdit(member)} className="px-3 py-2 border border-line rounded text-sm font-semibold hover:bg-fog">
+                    Edit
+                  </button>
+                  <button onClick={() => void removeMember(member)} className="px-3 py-2 border border-coral/30 text-coral rounded text-sm font-semibold hover:bg-coral/5">
+                    Remove
+                  </button>
+                </div>
+                {editingMemberId === member.user_id && (
+                  <div className="mt-3 rounded border border-line bg-fog/70 p-3">
+                    <label className="text-xs font-semibold uppercase text-muted">
+                      Role
+                      <select
+                        value={editingRole}
+                        onChange={(e) => setEditingRole(e.target.value)}
+                        className="mt-2 w-full px-3 py-2 border border-line rounded text-sm normal-case text-ink"
+                      >
+                        <option value="viewer">Viewer</option>
+                        <option value="analyst">Analyst</option>
+                        <option value="reviewer">Reviewer</option>
+                        <option value="admin">Admin</option>
+                      </select>
+                    </label>
+                    <div className="mt-3 grid grid-cols-2 gap-2">
+                      <button onClick={() => void saveMemberRole(member)} className="px-3 py-2 bg-teal text-white rounded text-sm font-semibold hover:bg-teal/90">
+                        Save
+                      </button>
+                      <button onClick={() => setEditingMemberId(null)} className="px-3 py-2 border border-line rounded text-sm font-semibold hover:bg-fog">
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
                 )}
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                <button className="px-3 py-2 border border-line rounded text-sm font-semibold hover:bg-fog">
-                  Edit
-                </button>
-                <button className="px-3 py-2 border border-coral/30 text-coral rounded text-sm font-semibold hover:bg-coral/5">
-                  Remove
-                </button>
-              </div>
-            </Panel>
+              </Panel>
+            </div>
           ))}
         </div>
 

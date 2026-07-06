@@ -24,7 +24,9 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
     const base: ActionItem[] = [
       { id: "new-review", label: "New Review", hint: "Open thesis intake", run: () => navigateTo("/review/new") },
       { id: "dashboard", label: "Dashboard", hint: "Go to command center", run: () => navigateTo("/") },
+      { id: "market-intelligence", label: "Market Intelligence", hint: "Open AAPL market workspace", run: () => navigateTo("/markets/AAPL") },
       { id: "market-scanner", label: "Market Scanner", hint: "Scan watchlists for ranked trade candidates", run: () => navigateTo("/market-scanner") },
+      { id: "signals", label: "Signals", hint: "Open signal lifecycle monitor", run: () => navigateTo("/signals") },
       { id: "platform", label: "Platform", hint: "Open Index84 platform overview", run: () => navigateTo("/platform") },
       { id: "alpha-lab", label: "Alpha Lab", hint: "Open hypothesis and decay monitor", run: () => navigateTo("/alpha") },
       { id: "execution-intelligence", label: "Execution Intelligence", hint: "Open warm-path and execution diagnostics", run: () => navigateTo("/execution-intelligence") },
@@ -32,7 +34,13 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
       { id: "calibration", label: "Calibration", hint: "Open performance analytics", run: () => navigateTo("/calibration") },
       { id: "relay-benchmarks", label: "Relay + Benchmarks", hint: "Open relay and benchmark evidence", run: () => navigateTo("/relay-benchmarks") },
       { id: "cli-design", label: "CLI Design", hint: "Open CLI architecture and command surface", run: () => navigateTo("/cli-design") },
-      { id: "enterprise", label: "Enterprise", hint: "Open enterprise readiness and governance", run: () => navigateTo("/enterprise") }
+      { id: "enterprise", label: "Enterprise", hint: "Open enterprise readiness and governance", run: () => navigateTo("/enterprise") },
+      { id: "team", label: "Team", hint: "Open collaboration workspace", run: () => navigateTo("/team") },
+      { id: "admin", label: "Admin", hint: "Open operational controls", run: () => navigateTo("/admin") },
+      { id: "advanced", label: "Advanced", hint: "Open advanced module directory", run: () => navigateTo("/advanced") },
+      { id: "reports-export", label: "Reports Export", hint: "Open report export for the seeded review", run: () => navigateTo("/reports/export?id=atr-003") },
+      { id: "discovery", label: "Discovery", hint: "Open discovery scanner", run: () => navigateTo("/discovery") },
+      { id: "governance-team-management", label: "Governance Team Management", hint: "Open team membership controls", run: () => navigateTo("/governance/team-management") }
     ];
 
     if (maybeTicker) {

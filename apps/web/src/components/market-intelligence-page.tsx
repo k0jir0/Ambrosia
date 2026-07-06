@@ -139,6 +139,9 @@ export function MarketIntelligencePage({ ticker, compare = [] }: { ticker: strin
   const displayPrice = snapshot?.price ?? latest.close;
   const displayDelta = snapshot ? (snapshot.priceChange24h * 100).toFixed(2) : delta;
   const providerBadge = snapshot ? `${snapshot.dataSource} ${snapshot.timestamp}` : "Simulated feed";
+  const priceProvenance = snapshot ? formatProvenance(snapshot.dataSourceConfidence, snapshot.timestamp) : "Fallback simulated";
+  const technicalProvenance = technicals ? formatProvenance(technicals.dataMode, technicals.updateTime) : "Fallback deterministic";
+  const sentimentProvenance = sentiment ? formatProvenance(sentiment.dataMode, sentiment.lastUpdated) : "Fallback unavailable";
 
   return (
     <div className="space-y-4">
@@ -158,6 +161,7 @@ export function MarketIntelligencePage({ ticker, compare = [] }: { ticker: strin
             <p className="text-xs uppercase tracking-wide text-ink/60">Last Price</p>
             <p className="text-2xl font-semibold">${displayPrice.toFixed(2)}</p>
             <p className={cn("text-sm", Number(displayDelta) >= 0 ? "text-teal" : "text-coral")}>{Number(displayDelta) >= 0 ? "+" : ""}{displayDelta}%</p>
+            <p className="mt-1 text-[11px] text-ink/55">{priceProvenance}</p>
           </div>
         </div>
         <form onSubmit={handleTickerSearch} className="mt-4 flex flex-wrap items-center gap-2">
@@ -262,13 +266,13 @@ export function MarketIntelligencePage({ ticker, compare = [] }: { ticker: strin
           <Panel className="p-4">
             <SectionTitle eyebrow="Intelligence" title="Technical and risk snapshot" />
             <div className="mt-3 space-y-2 text-sm">
-              <Stat label="MA20" value={technicals?.movingAverage30 ? technicals.movingAverage30.toFixed(2) : latest.sma20.toFixed(2)} />
-              <Stat label="MA50" value={technicals?.movingAverage50 ? technicals.movingAverage50.toFixed(2) : latest.sma50.toFixed(2)} />
-              <Stat label="RSI" value={technicals?.rsi ? technicals.rsi.toFixed(1) : "N/A"} />
-              <Stat label="Volume" value={snapshot?.volume24h ? Math.round(snapshot.volume24h).toLocaleString() : latest.volume.toLocaleString()} />
-              <Stat label="Regime" value={technicals?.trend ? technicals.trend : latest.close > latest.sma50 ? "Trend above MA50" : "Below MA50"} />
-              <Stat label="Sentiment" value={sentiment ? `${sentiment.sentiment} (${sentiment.overallScore.toFixed(2)})` : "N/A"} />
-              <Stat label="Ticker Coherence" value="Active ticker synchronized" />
+              <Stat label="MA20" value={technicals?.movingAverage30 ? technicals.movingAverage30.toFixed(2) : latest.sma20.toFixed(2)} provenance={technicalProvenance} />
+              <Stat label="MA50" value={technicals?.movingAverage50 ? technicals.movingAverage50.toFixed(2) : latest.sma50.toFixed(2)} provenance={technicalProvenance} />
+              <Stat label="RSI" value={technicals?.rsi ? technicals.rsi.toFixed(1) : "N/A"} provenance={technicalProvenance} />
+              <Stat label="Volume" value={snapshot?.volume24h ? Math.round(snapshot.volume24h).toLocaleString() : latest.volume.toLocaleString()} provenance={priceProvenance} />
+              <Stat label="Regime" value={technicals?.trend ? technicals.trend : latest.close > latest.sma50 ? "Trend above MA50" : "Below MA50"} provenance={technicalProvenance} />
+              <Stat label="Sentiment" value={sentiment ? `${sentiment.sentiment} (${sentiment.overallScore.toFixed(2)})` : "N/A"} provenance={sentimentProvenance} />
+              <Stat label="Ticker Coherence" value="Active ticker synchronized" provenance="Route-derived" />
             </div>
           </Panel>
 
@@ -399,13 +403,22 @@ export function MarketIntelligencePage({ ticker, compare = [] }: { ticker: strin
   );
 }
 
-function Stat({ label, value }: { label: string; value: string }) {
+function Stat({ label, value, provenance }: { label: string; value: string; provenance?: string }) {
   return (
-    <div className="flex items-center justify-between rounded-md border border-line bg-fog/70 px-3 py-2">
+    <div className="flex items-center justify-between gap-3 rounded-md border border-line bg-fog/70 px-3 py-2">
       <span className="text-ink/70">{label}</span>
-      <span className="font-medium">{value}</span>
+      <span className="text-right">
+        <span className="block font-medium">{value}</span>
+        {provenance ? <span className="block text-[11px] text-ink/55">{provenance}</span> : null}
+      </span>
     </div>
   );
+}
+
+function formatProvenance(mode: string, timestamp?: string): string {
+  const normalized = mode === "live" ? "Live" : mode === "demo" ? "Demo" : "Fallback";
+  if (!timestamp) return normalized;
+  return `${normalized} ${timestamp}`;
 }
 
 function Heatmap({ symbols, values, primary }: { symbols: string[]; values: Array<{ row: string; col: string; value: number }>; primary: string }) {

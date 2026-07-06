@@ -2,10 +2,11 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { Panel, SectionTitle } from "@/components/ui";
+import { Database, LoaderCircle } from "lucide-react";
+import { Badge, Panel, SectionTitle } from "@/components/ui";
 import { RouteLoading, RouteNotice, RouteStatusBadge, type RouteStatus } from "@/components/route-state";
 import { fetchControlPlane, mapStatus, numberOrFallback, textOrFallback } from "@/lib/index84-control-plane";
-import { constrainSignal, getApiBaseUrl, getSignalsProgramMetrics, listSignalPolicyEvents, listSignalValidationRuns, promoteSignal, retireSignal, validateSignal } from "@/lib/api";
+import { constrainSignal, getApiBaseUrl, getSignalsProgramMetrics, listSignalPolicyEvents, listSignalValidationRuns, promoteSignal, retireSignal, seedIndex97Reviews, seedIndex97Signals, validateSignal } from "@/lib/api";
 
 export default function AlphaPage() {
   const apiBaseUrl = getApiBaseUrl();
@@ -20,6 +21,7 @@ export default function AlphaPage() {
   const [openDataErrors, setOpenDataErrors] = useState<Record<string, string>>({});
   const [signalActionBusy, setSignalActionBusy] = useState(false);
   const [signalActionMessage, setSignalActionMessage] = useState<string | null>(null);
+  const [seeding, setSeeding] = useState(false);
   const [latestValidationStatus, setLatestValidationStatus] = useState<string>("n/a");
   const [latestPolicyEvent, setLatestPolicyEvent] = useState<string>("n/a");
   const [programMetrics, setProgramMetrics] = useState<Record<string, unknown> | null>(null);
@@ -108,7 +110,24 @@ export default function AlphaPage() {
     setSignals(signalItems);
     setDecay(decayData);
     setStatus(alphaItems.length === 0 && signalItems.length === 0 ? "empty" : "success");
-    setMessage("Alpha data loaded.");
+    setMessage(alphaItems.length === 0 && signalItems.length === 0 ? "No alpha or signal lifecycle objects yet." : "Alpha data loaded.");
+  }
+
+  async function seedDemoLifecycleData() {
+    setSeeding(true);
+    setStatus("loading");
+    setSignalActionMessage(null);
+    try {
+      const response = await seedIndex97Signals();
+      await seedIndex97Reviews();
+      await load();
+      setSignalActionMessage(`Seeded ${numberOrFallback(response.signalsSeeded, "0")} demo lifecycle signals.`);
+    } catch (error) {
+      setStatus("error");
+      setMessage(error instanceof Error ? error.message : "Unable to seed demo lifecycle data.");
+    } finally {
+      setSeeding(false);
+    }
   }
 
   async function runSignalLifecycleAction(action: "validate" | "promote" | "constrain" | "retire") {
@@ -152,6 +171,15 @@ export default function AlphaPage() {
           <SectionTitle eyebrow="Index84 Surface" title="Alpha Lab" />
           <div className="flex items-center gap-2">
             <RouteStatusBadge status={status} />
+            <button
+              type="button"
+              onClick={() => void seedDemoLifecycleData()}
+              disabled={seeding}
+              className="focus-ring inline-flex items-center gap-2 rounded-md bg-teal px-3 py-1 text-xs font-semibold text-fog disabled:opacity-60"
+            >
+              {seeding ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <Database className="h-3.5 w-3.5" />}
+              Seed demo lifecycle
+            </button>
             <button
               type="button"
               onClick={() => void load()}
@@ -201,6 +229,7 @@ export default function AlphaPage() {
                 <div>
                   <span className="font-semibold text-ink">{textOrFallback(item.title)}</span>
                   <span className="ml-2 text-ink/70">{textOrFallback(item.signalFamily)}</span>
+                  {textOrFallback(item.demoSeed, "") ? <span className="ml-2"><Badge tone="warn">Demo Lifecycle</Badge></span> : null}
                 </div>
                 {apiBaseUrl ? (
                   <div className="flex items-center gap-2">
@@ -267,6 +296,7 @@ export default function AlphaPage() {
                 <div>
                   <span className="font-semibold text-ink">{textOrFallback(item.name)}</span>
                   <span className="ml-2 text-ink/70">{textOrFallback(item.formula)}</span>
+                  {textOrFallback(item.demoSeed, "") ? <span className="ml-2"><Badge tone="warn">Demo Lifecycle</Badge></span> : null}
                 </div>
                 {apiBaseUrl ? (
                   <div className="flex items-center gap-2">

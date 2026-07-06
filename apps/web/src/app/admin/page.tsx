@@ -18,13 +18,20 @@ export default function AdminPage() {
           <div>
             <SectionTitle eyebrow="Admin" title="Operational control center" />
             <p className="mt-3 max-w-3xl text-sm leading-6 text-ink/75">
-              System health, provider availability, alerting, tool limits, and certification controls for operators.
+              System health, provider availability, alerting, tool limits, and certification evidence for operators.
             </p>
           </div>
-          <Badge tone="info">6 panels</Badge>
+          <div className="flex flex-wrap gap-2">
+            <Badge tone="info">Status evidence</Badge>
+            <Badge tone="warn">Controls require API wiring</Badge>
+          </div>
         </div>
       </Panel>
 
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <SectionTitle eyebrow="Read-only" title="Live status and evidence" />
+        <Badge tone="neutral">operator safe</Badge>
+      </div>
       <section className="grid gap-4 xl:grid-cols-2">
         <SystemHealthPanel />
         <MetricsScoreboardPanel />

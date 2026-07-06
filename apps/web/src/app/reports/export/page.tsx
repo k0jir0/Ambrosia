@@ -1,13 +1,24 @@
 "use client";
 
-import React, { useState } from "react";
-import { useParams } from "next/navigation";
+import React, { Suspense, useState } from "react";
+import { CheckCircle2 } from "lucide-react";
+import { useParams, useSearchParams } from "next/navigation";
 import { Badge, Panel, SectionTitle, cn } from "@/components/ui";
 import { getApiBaseUrl } from "@/lib/api";
 
 export default function ReportExportPage() {
+  return (
+    <Suspense fallback={<ReportExportShell reviewId="atr-003" />}>
+      <ReportExportClient />
+    </Suspense>
+  );
+}
+
+function ReportExportClient() {
   const params = useParams();
-  const reviewId = params?.id as string;
+  const searchParams = useSearchParams();
+  const routeReviewId = typeof params?.id === "string" ? params.id : "";
+  const reviewId = routeReviewId || searchParams.get("id") || "atr-003";
 
   const [exportFormat, setExportFormat] = useState<"pdf" | "html" | "email">(
     "pdf"
@@ -38,15 +49,11 @@ export default function ReportExportPage() {
         }
 
         const response = await fetch(
-          `${apiBaseUrl}/discovery/reports/${reviewId}/email`,
+          `${apiBaseUrl}/discovery/reports/${reviewId}/email?recipient=${encodeURIComponent(
+            recipientEmail
+          )}`,
           {
             method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              recipient: recipientEmail,
-            }),
           }
         );
 
@@ -58,7 +65,9 @@ export default function ReportExportPage() {
         setRecipientEmail("");
       } else {
         const response = await fetch(
-          `${apiBaseUrl}/discovery/reports/${reviewId}/export`,
+          `${apiBaseUrl}/discovery/reports/${reviewId}/export?format=${encodeURIComponent(
+            exportFormat
+          )}`,
           {
             method: "POST",
             headers: {
@@ -90,6 +99,34 @@ export default function ReportExportPage() {
     }
   };
 
+  return <ReportExportShell reviewId={reviewId} exportFormat={exportFormat} setExportFormat={setExportFormat} includeCharts={includeCharts} setIncludeCharts={setIncludeCharts} recipientEmail={recipientEmail} setRecipientEmail={setRecipientEmail} loading={loading} error={error} success={success} handleExport={handleExport} />;
+}
+
+function ReportExportShell({
+  reviewId,
+  exportFormat = "pdf",
+  setExportFormat,
+  includeCharts = true,
+  setIncludeCharts,
+  recipientEmail = "",
+  setRecipientEmail,
+  loading = false,
+  error,
+  success = false,
+  handleExport,
+}: {
+  reviewId: string;
+  exportFormat?: "pdf" | "html" | "email";
+  setExportFormat?: (format: "pdf" | "html" | "email") => void;
+  includeCharts?: boolean;
+  setIncludeCharts?: (includeCharts: boolean) => void;
+  recipientEmail?: string;
+  setRecipientEmail?: (email: string) => void;
+  loading?: boolean;
+  error?: string | null;
+  success?: boolean;
+  handleExport?: () => void;
+}) {
   return (
     <div className="min-h-screen bg-fog p-8">
       <div className="max-w-2xl mx-auto">
@@ -117,7 +154,7 @@ export default function ReportExportPage() {
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 {/* PDF Option */}
                 <div
-                  onClick={() => setExportFormat("pdf")}
+                  onClick={() => setExportFormat?.("pdf")}
                   className={cn(
                     "p-4 rounded border-2 cursor-pointer transition-all",
                     exportFormat === "pdf"
@@ -133,7 +170,7 @@ export default function ReportExportPage() {
 
                 {/* HTML Option */}
                 <div
-                  onClick={() => setExportFormat("html")}
+                  onClick={() => setExportFormat?.("html")}
                   className={cn(
                     "p-4 rounded border-2 cursor-pointer transition-all",
                     exportFormat === "html"
@@ -147,7 +184,7 @@ export default function ReportExportPage() {
 
                 {/* Email Option */}
                 <div
-                  onClick={() => setExportFormat("email")}
+                  onClick={() => setExportFormat?.("email")}
                   className={cn(
                     "p-4 rounded border-2 cursor-pointer transition-all",
                     exportFormat === "email"
@@ -168,7 +205,7 @@ export default function ReportExportPage() {
                   type="checkbox"
                   id="charts"
                   checked={includeCharts}
-                  onChange={(e) => setIncludeCharts(e.target.checked)}
+                  onChange={(e) => setIncludeCharts?.(e.target.checked)}
                   className="w-4 h-4 cursor-pointer"
                 />
                 <label htmlFor="charts" className="text-sm cursor-pointer">
@@ -187,7 +224,7 @@ export default function ReportExportPage() {
                   type="email"
                   placeholder="recipient@example.com"
                   value={recipientEmail}
-                  onChange={(e) => setRecipientEmail(e.target.value)}
+                  onChange={(e) => setRecipientEmail?.(e.target.value)}
                   className="w-full px-4 py-2 border border-line rounded font-mono text-sm"
                 />
               </div>
@@ -204,7 +241,7 @@ export default function ReportExportPage() {
             {/* Success Alert */}
             {success && (
               <Panel className="border border-teal/30 bg-teal/5">
-                <p className="text-teal font-semibold">✅ Export successful!</p>
+                <p className="text-teal font-semibold">Export successful</p>
                 <p className="text-sm text-teal mt-1">
                   Check your browser or email.
                 </p>
@@ -235,26 +272,14 @@ export default function ReportExportPage() {
             <div className="bg-line/20 rounded p-4">
               <h3 className="font-semibold text-ink mb-3">Report Contents</h3>
               <ul className="space-y-2 text-sm text-muted">
-                <li className="flex items-center gap-2">
-                  <span className="text-teal">✓</span> Thesis Summary
-                </li>
-                <li className="flex items-center gap-2">
-                  <span className="text-teal">✓</span> Risk Assessment
-                </li>
-                <li className="flex items-center gap-2">
-                  <span className="text-teal">✓</span> Market Analysis
-                </li>
-                <li className="flex items-center gap-2">
-                  <span className="text-teal">✓</span> Confidence Score
-                </li>
+                <ReportContentItem label="Thesis Summary" />
+                <ReportContentItem label="Risk Assessment" />
+                <ReportContentItem label="Market Analysis" />
+                <ReportContentItem label="Confidence Score" />
                 {includeCharts && (
                   <>
-                    <li className="flex items-center gap-2">
-                      <span className="text-teal">✓</span> Performance Charts
-                    </li>
-                    <li className="flex items-center gap-2">
-                      <span className="text-teal">✓</span> Data Visualizations
-                    </li>
+                    <ReportContentItem label="Performance Charts" />
+                    <ReportContentItem label="Data Visualizations" />
                   </>
                 )}
               </ul>
@@ -278,5 +303,14 @@ export default function ReportExportPage() {
         </Panel>
       </div>
     </div>
+  );
+}
+
+function ReportContentItem({ label }: { label: string }) {
+  return (
+    <li className="flex items-center gap-2">
+      <CheckCircle2 className="h-4 w-4 text-teal" />
+      {label}
+    </li>
   );
 }

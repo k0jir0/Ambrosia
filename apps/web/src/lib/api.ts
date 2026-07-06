@@ -614,3 +614,13 @@ export async function seedIndex97Signals(): Promise<Record<string, unknown>> {
   });
   return readJsonResponse<Record<string, unknown>>(response);
 }
+
+export async function seedIndex97Reviews(): Promise<Record<string, unknown>> {
+  const apiBaseUrl = getApiBaseUrl();
+  if (!apiBaseUrl) throw new ApiUnavailableError();
+  const response = await fetchWithTimeout(`${apiBaseUrl}/reviews/seed-index97`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+  });
+  return readJsonResponse<Record<string, unknown>>(response);
+}

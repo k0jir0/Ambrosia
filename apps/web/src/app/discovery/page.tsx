@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import { Badge, Panel, SectionTitle, cn } from "@/components/ui";
 import { getApiBaseUrl } from "@/lib/api";
 
@@ -13,41 +14,65 @@ interface Signal {
   data_sources: string[];
 }
 
+type DiscoveryScanConfig = {
+  universe: string;
+  signal_type: string;
+  min_conviction: number;
+  lookback_days: number;
+};
+
+const INITIAL_SCAN_CONFIG: DiscoveryScanConfig = {
+  universe: "all",
+  signal_type: "all",
+  min_conviction: 0.7,
+  lookback_days: 20,
+};
+
+async function fetchDiscoverySignals(config: DiscoveryScanConfig): Promise<Signal[]> {
+  const apiBaseUrl = getApiBaseUrl();
+  if (!apiBaseUrl) throw new Error("Ambrosia API URL is not configured");
+  const response = await fetch(`${apiBaseUrl}/discovery/scan`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(config),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Discovery scan failed: ${response.statusText}`);
+  }
+
+  return response.json();
+}
+
 export default function DiscoveryPage() {
+  const router = useRouter();
   const [signals, setSignals] = useState<Signal[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [status, setStatus] = useState<string | null>(null);
   const [selectedSignal, setSelectedSignal] = useState<Signal | null>(null);
+  const [showFilters, setShowFilters] = useState(false);
+  const [universe, setUniverse] = useState("all");
+  const [signalType, setSignalType] = useState("all");
+  const [minConviction, setMinConviction] = useState(0.7);
+  const [lookbackDays, setLookbackDays] = useState(20);
 
   // Fetch signals from backend discovery API
   const runDiscoveryScan = async () => {
     setLoading(true);
     setError(null);
+    setStatus(null);
     try {
-      const apiBaseUrl = getApiBaseUrl();
-      if (!apiBaseUrl) throw new Error("Ambrosia API URL is not configured");
-      const response = await fetch(
-        `${apiBaseUrl}/discovery/scan`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            universe: "all",
-            signal_type: "all",
-            min_conviction: 0.7,
-            lookback_days: 20,
-          }),
-        }
-      );
-
-      if (!response.ok) {
-        throw new Error(`Discovery scan failed: ${response.statusText}`);
-      }
-
-      const data = await response.json();
+      const data = await fetchDiscoverySignals({
+        universe,
+        signal_type: signalType,
+        min_conviction: minConviction,
+        lookback_days: lookbackDays,
+      });
       setSignals(data);
+      setStatus(`Discovery scan returned ${data.length} candidates.`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unknown error");
     } finally {
@@ -75,7 +100,17 @@ export default function DiscoveryPage() {
       }
 
       const data = await response.json();
-      alert(`✅ Thesis created: ${data.review_id}`);
+      const params = new URLSearchParams({
+        source: "scanner",
+        ticker: signal.ticker,
+        assetClass: "Equities",
+        timeHorizon: "2-6 weeks",
+        expression: `Long ${signal.ticker}`,
+        thesis: typeof data.thesis === "string" ? data.thesis : `Evaluate ${signal.ticker} ${signal.signal_type.replace(/_/g, " ")} signal for review readiness.`,
+        sourcePointer: `discovery:signal:${signal.id}`,
+      });
+      setStatus(`Thesis staged for review intake: ${signal.ticker}`);
+      router.push(`/review/new?${params.toString()}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unknown error");
     }
@@ -112,8 +147,21 @@ export default function DiscoveryPage() {
   };
 
   useEffect(() => {
-    // Auto-run discovery scan on page load
-    runDiscoveryScan();
+    async function loadInitialScan() {
+      setLoading(true);
+      setError(null);
+      try {
+        const data = await fetchDiscoverySignals(INITIAL_SCAN_CONFIG);
+        setSignals(data);
+        setStatus(`Discovery scan returned ${data.length} candidates.`);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Unknown error");
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    void loadInitialScan();
   }, []);
 
   return (
@@ -138,12 +186,43 @@ export default function DiscoveryPage() {
               {loading ? "Scanning..." : "Run Discovery Scan"}
             </button>
             <button
-              disabled
-              className="px-4 py-2 border border-line text-muted rounded font-semibold hover:bg-fog disabled:opacity-50"
+              type="button"
+              onClick={() => setShowFilters((value) => !value)}
+              className="px-4 py-2 border border-line text-ink rounded font-semibold hover:bg-fog"
             >
-              Advanced Filters
+              {showFilters ? "Hide Filters" : "Advanced Filters"}
             </button>
           </div>
+          {showFilters && (
+            <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-4">
+              <label className="text-sm font-semibold text-ink">
+                Universe
+                <select value={universe} onChange={(event) => setUniverse(event.target.value)} className="mt-2 w-full rounded border border-line bg-paper px-3 py-2 text-sm font-normal">
+                  <option value="all">All</option>
+                  <option value="equities">Equities</option>
+                  <option value="etf">ETF</option>
+                  <option value="rates">Rates</option>
+                </select>
+              </label>
+              <label className="text-sm font-semibold text-ink">
+                Signal Type
+                <select value={signalType} onChange={(event) => setSignalType(event.target.value)} className="mt-2 w-full rounded border border-line bg-paper px-3 py-2 text-sm font-normal">
+                  <option value="all">All</option>
+                  <option value="momentum">Momentum</option>
+                  <option value="mean_reversion">Mean reversion</option>
+                  <option value="technical">Technical</option>
+                </select>
+              </label>
+              <label className="text-sm font-semibold text-ink">
+                Minimum Conviction
+                <input type="number" min="0" max="1" step="0.05" value={minConviction} onChange={(event) => setMinConviction(Number(event.target.value))} className="mt-2 w-full rounded border border-line bg-paper px-3 py-2 text-sm font-normal" />
+              </label>
+              <label className="text-sm font-semibold text-ink">
+                Lookback Days
+                <input type="number" min="1" max="90" value={lookbackDays} onChange={(event) => setLookbackDays(Number(event.target.value))} className="mt-2 w-full rounded border border-line bg-paper px-3 py-2 text-sm font-normal" />
+              </label>
+            </div>
+          )}
         </Panel>
 
         {/* Error Alert */}
@@ -151,6 +230,12 @@ export default function DiscoveryPage() {
           <Panel className="mt-6 border border-coral/30 bg-coral/10">
             <p className="text-coral font-semibold">Error</p>
             <p className="text-sm text-coral">{error}</p>
+          </Panel>
+        )}
+
+        {status && (
+          <Panel className="mt-6 border border-teal/30 bg-teal/5">
+            <p className="text-teal font-semibold">{status}</p>
           </Panel>
         )}
 
@@ -189,13 +274,19 @@ export default function DiscoveryPage() {
                 </div>
                 <div className="flex gap-2">
                   <button
-                    onClick={() => createThesisFromSignal(signal)}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      createThesisFromSignal(signal);
+                    }}
                     className="flex-1 px-3 py-2 bg-teal text-white rounded text-sm font-semibold hover:bg-teal/90"
                   >
                     Create Thesis
                   </button>
                   <button
-                    onClick={() => exportSignalReport(signal)}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      exportSignalReport(signal);
+                    }}
                     className="flex-1 px-3 py-2 border border-line text-ink rounded text-sm font-semibold hover:bg-fog"
                   >
                     Export

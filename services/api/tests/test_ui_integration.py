@@ -158,29 +158,27 @@ class TestReportExportUI:
     def test_export_page_format_selection_html(self):
         """UI-C2-2: HTML export format selection works."""
         response = client.post(
-            "/discovery/reports/ui-export-002/export",
+            "/discovery/reports/ui-export-002/export?format=html",
             json={
-                "format": "html",
                 "include_charts": True,
             },
             headers={"X-User-Role": "analyst"},
         )
         
         assert response.status_code in [200, 201, 422]
+        if response.status_code in [200, 201]:
+            assert response.json()["format"] == "html"
 
     def test_export_page_format_selection_email(self):
         """UI-C2-3: Email export format works."""
         response = client.post(
-            "/discovery/reports/ui-export-003/export",
-            json={
-                "format": "email",
-                "recipient": "analyst@example.com",
-                "subject": "Test Report",
-            },
+            "/discovery/reports/ui-export-003/email?recipient=analyst@example.com",
             headers={"X-User-Role": "analyst"},
         )
         
         assert response.status_code in [200, 201, 422]
+        if response.status_code in [200, 201]:
+            assert response.json()["recipient"] == "analyst@example.com"
 
     def test_export_page_preview_generates(self):
         """UI-C2-4: Export preview generates successfully."""
@@ -262,6 +260,22 @@ class TestTeamManagementUI:
         )
         
         assert create_resp.status_code in [200, 201, 422]
+        if create_resp.status_code in [200, 201]:
+            user_id = create_resp.json()["user_id"]
+            update_resp = client.patch(
+                f"/governance/team/{user_id}",
+                json={"role": "reviewer", "active": True},
+                headers={"X-User-Role": "admin"},
+            )
+            assert update_resp.status_code == 200
+            assert update_resp.json()["member"]["role"] == "reviewer"
+
+            delete_resp = client.delete(
+                f"/governance/team/{user_id}",
+                headers={"X-User-Role": "admin"},
+            )
+            assert delete_resp.status_code == 200
+            assert delete_resp.json()["status"] == "removed"
 
     def test_role_assignment_workflow(self):
         """UI-D1-3: Role assignment updates correctly."""
@@ -314,6 +328,22 @@ class TestTeamManagementUI:
         )
         
         assert response.status_code in [200, 403, 422]
+
+
+class TestDemoSeedDataUI:
+    """Seed data support for staging/demo validation."""
+
+    def test_index97_review_seed_populates_history_archive(self):
+        """UI-SEED-1: Index97 review seed writes canonical review archive records."""
+        seed_response = client.post("/reviews/seed-index97")
+        assert seed_response.status_code == 200
+        payload = seed_response.json()
+        assert payload["reviewsSeeded"] >= 1
+
+        list_response = client.get("/reviews")
+        assert list_response.status_code == 200
+        review_ids = {item["id"] for item in list_response.json()}
+        assert set(payload["reviewIds"]).issubset(review_ids)
 
 
 # ═══════════════════════════════════════════════════════════════════════════

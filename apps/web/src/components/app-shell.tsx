@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { Activity, BarChart3, Binary, Building2, ClipboardPlus, Command, FlaskConical, Gauge, History, Home, Layers3, Radar, Search, Signal, Settings, SlidersHorizontal, TerminalSquare, Users } from "lucide-react";
+import { Activity, BarChart3, Binary, Building2, ClipboardPlus, Command, FlaskConical, History, Home, Layers3, Menu, Radar, Search, Signal, Settings, SlidersHorizontal, TerminalSquare, Users, X } from "lucide-react";
 import { cn } from "./ui";
 import { CommandPalette } from "./command-palette";
 
@@ -36,8 +36,7 @@ const MOBILE_ITEMS = [
   { href: "/", label: "Dashboard", icon: Home },
   { href: "/review/new", label: "New", icon: ClipboardPlus },
   { href: "/markets/AAPL", label: "Markets", icon: Activity },
-  { href: "/history", label: "History", icon: History },
-  { href: "/calibration", label: "More", icon: Gauge }
+  { href: "/history", label: "History", icon: History }
 ];
 
 function isActivePath(pathname: string | null, href: string) {
@@ -49,6 +48,7 @@ function isActivePath(pathname: string | null, href: string) {
 export function AppShell({ children }: { children: React.ReactNode }) {
   const [pathname, setPathname] = useState<string>(typeof window === "undefined" ? "/" : window.location.pathname);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
@@ -129,8 +129,63 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               </li>
             );
           })}
+          <li>
+            <button
+              type="button"
+              onClick={() => setMobileMenuOpen(true)}
+              className={cn(
+                "focus-ring flex w-full flex-col items-center gap-1 rounded-md px-2 py-2 text-[11px] font-medium transition",
+                mobileMenuOpen ? "bg-teal/15 text-teal" : "text-ink/75 hover:bg-white/5"
+              )}
+            >
+              <Menu className="h-4 w-4" />
+              <span>More</span>
+            </button>
+          </li>
         </ul>
       </nav>
+
+      {mobileMenuOpen ? (
+        <div className="fixed inset-0 z-50 bg-black/45 p-3 lg:hidden" onClick={() => setMobileMenuOpen(false)}>
+          <section
+            className="ml-auto flex max-h-[calc(100vh-1.5rem)] w-full max-w-sm flex-col rounded-lg border border-line bg-paper p-3 shadow-xl"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="mb-3 flex items-center justify-between">
+              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-teal">Modules</p>
+              <button
+                type="button"
+                onClick={() => setMobileMenuOpen(false)}
+                className="focus-ring rounded border border-line p-2 text-ink/70"
+                aria-label="Close module navigation"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <ul className="grid gap-1 overflow-y-auto pb-2">
+              {NAV_ITEMS.map((item) => {
+                const active = isActivePath(pathname, item.href);
+                const Icon = item.icon;
+                return (
+                  <li key={item.href}>
+                    <Link
+                      href={item.href}
+                      onClick={() => setMobileMenuOpen(false)}
+                      className={cn(
+                        "focus-ring flex items-center gap-3 rounded-md px-3 py-2.5 text-sm transition",
+                        active ? "bg-teal/10 text-teal" : "text-ink/80 hover:bg-white/5 hover:text-ink"
+                      )}
+                    >
+                      <Icon className="h-4 w-4" />
+                      <span>{item.label}</span>
+                    </Link>
+                  </li>
+                );
+              })}
+            </ul>
+          </section>
+        </div>
+      ) : null}
 
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
     </div>

@@ -3,10 +3,11 @@ Phase D: Enterprise Governance & RBAC
 RBAC enforcement, permission boundaries, policy UI, team management
 """
 
-from fastapi import APIRouter, HTTPException, Header
+from fastapi import APIRouter, Body, HTTPException, Header
 from pydantic import BaseModel
 from datetime import datetime
 from enum import Enum
+import hashlib
 
 router = APIRouter(prefix="/governance", tags=["governance"])
 
@@ -64,6 +65,35 @@ class PolicyConfig(BaseModel):
     name: str
     rules: list[PolicyRule]
     enabled: bool
+
+class TeamInviteRequest(BaseModel):
+    email: str
+    role: Role
+
+class TeamMemberUpdateRequest(BaseModel):
+    name: str | None = None
+    role: Role | None = None
+    active: bool | None = None
+
+_TEAM_MEMBERS: dict[str, dict] = {
+    "usr-001": {"user_id": "usr-001", "name": "Owner", "role": "owner", "active": True},
+    "usr-002": {"user_id": "usr-002", "name": "Admin", "role": "admin", "active": True},
+    "usr-003": {"user_id": "usr-003", "name": "Reviewer", "role": "reviewer", "active": True},
+    "usr-004": {"user_id": "usr-004", "name": "Analyst", "role": "analyst", "active": True},
+}
+
+def _team_member_id(email: str) -> str:
+    digest = hashlib.sha256(email.lower().encode("utf-8")).hexdigest()[:8]
+    return f"usr-{digest}"
+
+def _resolved_role(x_ambrosia_role: str | None, x_user_role: str | None) -> str:
+    return (x_ambrosia_role or x_user_role or "analyst").lower()
+
+def _require_admin_role(x_ambrosia_role: str | None, x_user_role: str | None) -> str:
+    user_role = _resolved_role(x_ambrosia_role, x_user_role)
+    if user_role not in ["owner", "admin"]:
+        raise HTTPException(status_code=403, detail="Only admins can manage team members")
+    return user_role
 
 # Phase D-1: RBAC Middleware Deployment
 @router.get("/rbac/enforcement")
@@ -199,32 +229,93 @@ async def list_policies() -> dict:
 
 # Phase D-4: Team & Admin Surfaces
 @router.get("/team/members")
-async def list_team_members(x_ambrosia_role: str = Header(None)) -> dict:
+async def list_team_members(x_ambrosia_role: str = Header(None), x_user_role: str = Header(None)) -> dict:
     """List team members with role visibility."""
+    team = list(_TEAM_MEMBERS.values())
     return {
-        "team": [
-            {"user_id": "usr-001", "name": "Owner", "role": "owner", "active": True},
-            {"user_id": "usr-002", "name": "Admin", "role": "admin", "active": True},
-            {"user_id": "usr-003", "name": "Reviewer", "role": "reviewer", "active": True},
-            {"user_id": "usr-004", "name": "Analyst", "role": "analyst", "active": True},
-        ],
-        "total_members": 4,
-        "active_members": 4,
+        "team": team,
+        "total_members": len(team),
+        "active_members": sum(1 for member in team if member.get("active") is True),
+        "current_user_role": _resolved_role(x_ambrosia_role, x_user_role),
     }
 
 @router.post("/team/invite")
 async def invite_team_member(
-    email: str, role: Role, x_ambrosia_role: str = Header(None)
+    payload: TeamInviteRequest | None = Body(default=None),
+    email: str | None = None,
+    role: Role | None = None,
+    x_ambrosia_role: str = Header(None),
+    x_user_role: str = Header(None),
 ) -> dict:
     """Invite new team member (admin only)."""
-    if x_ambrosia_role not in ["owner", "admin"]:
-        raise HTTPException(status_code=403, detail="Only admins can invite members")
+    invited_by = _require_admin_role(x_ambrosia_role, x_user_role)
+    invite_email = payload.email if payload else email
+    invite_role = payload.role if payload else role
+
+    if not invite_email or invite_role is None:
+        raise HTTPException(status_code=422, detail="email and role are required")
+
+    user_id = _team_member_id(invite_email)
+    _TEAM_MEMBERS[user_id] = {
+        "user_id": user_id,
+        "name": invite_email,
+        "role": str(invite_role.value),
+        "active": False,
+    }
     
     return {
-        "email": email,
-        "role": role,
+        "user_id": user_id,
+        "email": invite_email,
+        "role": invite_role,
         "status": "invited",
+        "invited_by": invited_by,
         "invited_at": datetime.now().isoformat(),
+    }
+
+@router.patch("/team/{user_id}")
+async def update_team_member(
+    user_id: str,
+    payload: TeamMemberUpdateRequest,
+    x_ambrosia_role: str = Header(None),
+    x_user_role: str = Header(None),
+) -> dict:
+    """Update a team member role or active state."""
+    updated_by = _require_admin_role(x_ambrosia_role, x_user_role)
+    member = _TEAM_MEMBERS.get(user_id)
+    if member is None:
+        raise HTTPException(status_code=404, detail="Team member not found")
+
+    if payload.name is not None:
+        member["name"] = payload.name
+    if payload.role is not None:
+        member["role"] = str(payload.role.value)
+    if payload.active is not None:
+        member["active"] = payload.active
+
+    return {
+        "member": member,
+        "status": "updated",
+        "updated_by": updated_by,
+        "updated_at": datetime.now().isoformat(),
+    }
+
+@router.delete("/team/{user_id}")
+async def remove_team_member(
+    user_id: str,
+    x_ambrosia_role: str = Header(None),
+    x_user_role: str = Header(None),
+) -> dict:
+    """Remove a team member."""
+    removed_by = _require_admin_role(x_ambrosia_role, x_user_role)
+    member = _TEAM_MEMBERS.pop(user_id, None)
+    if member is None:
+        raise HTTPException(status_code=404, detail="Team member not found")
+
+    return {
+        "user_id": user_id,
+        "status": "removed",
+        "removed_by": removed_by,
+        "removed_at": datetime.now().isoformat(),
     }
 
 @router.get("/admin/audit-log")

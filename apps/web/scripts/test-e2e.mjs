@@ -7,6 +7,7 @@ const port = process.env.AMBROSIA_E2E_PORT ?? "3100";
 const url = `http://127.0.0.1:${port}`;
 const nextCli = join(root, "node_modules", "next", "dist", "bin", "next");
 const playwrightCli = join(root, "node_modules", "@playwright", "test", "cli.js");
+const playwrightArgs = process.argv.slice(2);
 
 rmSync(join(root, ".next"), { recursive: true, force: true });
 
@@ -41,7 +42,7 @@ async function waitForServer() {
 
 try {
   await waitForServer();
-  const result = spawnSync(process.execPath, [playwrightCli, "test"], {
+  const result = spawnSync(process.execPath, [playwrightCli, "test", ...playwrightArgs], {
     cwd: root,
     stdio: "inherit",
     env: {

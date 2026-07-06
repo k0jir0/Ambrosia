@@ -2,8 +2,9 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
-import { Download, Search } from "lucide-react";
+import { Database, Download, LoaderCircle, Search } from "lucide-react";
 import { PacketLibraryPanel, ReviewArchivePanel } from "@/components/advanced-panels";
+import { seedIndex97Reviews } from "@/lib/api";
 import { useReviewArchive } from "@/lib/review-store";
 import { Badge, Panel, SectionTitle } from "./ui";
 
@@ -16,6 +17,8 @@ export function HistoryPage() {
   const [tickerFilter, setTickerFilter] = useState("all");
   const [outcomeFilter, setOutcomeFilter] = useState("all");
   const [minConfidence, setMinConfidence] = useState(40);
+  const [seeding, setSeeding] = useState(false);
+  const [seedMessage, setSeedMessage] = useState<string | null>(null);
 
   const tickers = useMemo(() => ["all", ...Array.from(new Set(reviews.map((review) => review.ticker)))], [reviews]);
 
@@ -40,10 +43,35 @@ export function HistoryPage() {
 
   const winRate = rows.length === 0 ? 0 : Math.round((rows.filter((row) => row.outcome === "won").length / rows.length) * 100);
 
+  async function seedDemoArchive() {
+    setSeeding(true);
+    setSeedMessage(null);
+    try {
+      const response = await seedIndex97Reviews();
+      setSeedMessage(`Seeded ${response.reviewsSeeded ?? 0} demo reviews into the archive.`);
+      window.dispatchEvent(new CustomEvent("ambrosia:reviews-updated"));
+    } catch (error) {
+      setSeedMessage(error instanceof Error ? error.message : "Unable to seed demo reviews.");
+    } finally {
+      setSeeding(false);
+    }
+  }
+
   return (
     <div className="space-y-4">
       <Panel className="p-5">
-        <SectionTitle eyebrow="Decision History" title={`Archive (${reviews.length} total)`} />
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <SectionTitle eyebrow="Decision History" title={`Archive (${reviews.length} total)`} />
+          <button
+            type="button"
+            onClick={() => void seedDemoArchive()}
+            disabled={seeding}
+            className="focus-ring inline-flex items-center gap-2 rounded-md bg-teal px-3 py-2 text-sm font-semibold text-fog disabled:opacity-60"
+          >
+            {seeding ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Database className="h-4 w-4" />}
+            Seed demo archive
+          </button>
+        </div>
         <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-6">
           <label className="xl:col-span-2">
             <span className="mb-1 block text-xs text-ink/60">Search</span>
@@ -66,6 +94,7 @@ export function HistoryPage() {
 
       <Panel className="p-4 text-sm text-ink/70">
         Showing {rows.length} of {reviews.length} | Filtered win rate: <span className="font-semibold text-teal">{winRate}%</span> | Source: {loading ? "syncing" : source}
+        {seedMessage ? <span className="ml-2 text-teal">{seedMessage}</span> : null}
       </Panel>
 
       <Panel className="overflow-x-auto p-2">

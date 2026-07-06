@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Download, Eye, Filter, Plus, Search, Trash2 } from "lucide-react";
+import { CheckCircle2, Circle, Clock3, Download, Eye, Filter, Plus, Search, Trash2 } from "lucide-react";
 import { BarChart, Bar, ResponsiveContainer, XAxis, YAxis, CartesianGrid, Tooltip } from "recharts";
 import { Badge, Panel, SectionTitle } from "./ui";
 
@@ -164,8 +164,8 @@ export function CalibrationHealthPanel() {
 
   const getStatusColor = (status: string) =>
     status === "ok" ? "text-green-400" : status === "warn" ? "text-yellow-400" : "text-red-400";
-  const getStatusIcon = (status: string) =>
-    status === "ok" ? "✓" : status === "warn" ? "⚠" : "✗";
+  const getStatusLabel = (status: string) =>
+    status === "ok" ? "OK" : status === "warn" ? "WARN" : "FAIL";
 
   return (
     <Panel>
@@ -176,7 +176,7 @@ export function CalibrationHealthPanel() {
             <div className="flex items-center justify-between">
               <span className="truncate font-semibold">{metric.name}</span>
               <span className={`font-bold ${getStatusColor(metric.status)}`}>
-                {getStatusIcon(metric.status)}
+                {getStatusLabel(metric.status)}
               </span>
             </div>
             <div className="mt-1 flex items-center justify-between">
@@ -575,9 +575,9 @@ export function ApprovalWorkflowPanel() {
   ];
 
   const statusIcon = {
-    approved: "✓",
-    pending: "⏱",
-    unassigned: "⚪",
+    approved: CheckCircle2,
+    pending: Clock3,
+    unassigned: Circle,
   };
 
   const statusColor = {
@@ -594,9 +594,10 @@ export function ApprovalWorkflowPanel() {
           <div key={idx} className="rounded bg-slate-900 p-2 text-xs">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <span className={`font-bold text-lg ${statusColor[approval.status as keyof typeof statusColor]}`}>
-                  {statusIcon[approval.status as keyof typeof statusIcon]}
-                </span>
+                {(() => {
+                  const StatusIcon = statusIcon[approval.status as keyof typeof statusIcon];
+                  return <StatusIcon className={`h-5 w-5 ${statusColor[approval.status as keyof typeof statusColor]}`} />;
+                })()}
                 <div>
                   <div className="font-semibold">{approval.name}</div>
                   <div className="text-slate-400">{approval.role}</div>
@@ -632,7 +633,7 @@ export function TemplateLibraryPanel() {
         {templates.map((tpl) => (
           <div key={tpl.id} className="rounded bg-slate-900 p-2 text-xs">
             <div className="font-semibold truncate">{tpl.name}</div>
-            <div className="mt-1 text-slate-400">{"★".repeat(tpl.rating)}{"☆".repeat(5 - tpl.rating)}</div>
+            <div className="mt-1 text-slate-400">Rating {tpl.rating}/5</div>
             <div className="mt-1 truncate text-slate-400">{tpl.lastUsed}</div>
             <button className="mt-2 w-full rounded bg-blue-600 px-2 py-1 text-xs font-semibold text-white hover:bg-blue-700">
               Load
@@ -761,14 +762,14 @@ export function CertificationPanel() {
       <SectionTitle eyebrow="Certification" title="Index39 operational scorecard" />
       <div className="mt-4 space-y-3">
         <div className="rounded bg-green-500/20 border border-green-500/50 p-2 text-xs text-green-400">
-          Status: ✓ CERTIFIED | Index: 39
+          Status: CERTIFIED | Index: 39
         </div>
         <div className="space-y-2">
           {gates.map((gate, idx) => (
             <div key={idx} className="rounded bg-slate-900 p-2 text-xs">
               <div className="flex items-center justify-between">
                 <span className="font-semibold">{gate.name}</span>
-                <span className="text-green-400">✓ {gate.status}</span>
+                <span className="text-green-400">{gate.status}</span>
               </div>
               <div className="mt-1 text-slate-400">{gate.detail}</div>
             </div>
@@ -825,7 +826,7 @@ export function ProviderStatusPanel() {
             <div className="flex items-center justify-between">
               <span className="font-semibold">{provider.name}</span>
               <span className={`${provider.status === "up" ? "text-green-400" : "text-red-400"}`}>
-                {provider.status === "up" ? "✓ UP" : "✗ DOWN"}
+                {provider.status === "up" ? "UP" : "DOWN"}
               </span>
             </div>
             <div className="mt-1 flex justify-between text-slate-400">
@@ -885,7 +886,7 @@ export function ToolBoundariesPanel() {
 export function AsyncJobQueuePanel() {
   const jobs = [
     { id: "JOB-001", type: "Scanner", status: "running", progress: 45, submitted: "14:20", estComplete: "14:25" },
-    { id: "JOB-002", type: "Backtest", status: "queued", progress: 0, submitted: "14:19", estComplete: "—" },
+    { id: "JOB-002", type: "Backtest", status: "queued", progress: 0, submitted: "14:19", estComplete: "n/a" },
     { id: "JOB-003", type: "Report", status: "completed", progress: 100, submitted: "14:15", estComplete: "14:23" },
   ];
 
@@ -1006,7 +1007,7 @@ export function ScannerLaunchPanel() {
 export function PacketLibraryPanel() {
   const packets = [
     { ticker: "SPY", created: "2026-06-25", state: "DECIDED", decision: "PURSUE", outcome: "WON", conf: "72%" },
-    { ticker: "AAPL", created: "2026-06-25", state: "DECIDED", decision: "WATCH", outcome: "—", conf: "58%" },
+    { ticker: "AAPL", created: "2026-06-25", state: "DECIDED", decision: "WATCH", outcome: "n/a", conf: "58%" },
     { ticker: "TSLA", created: "2026-06-24", state: "DECIDED", decision: "REJECT", outcome: "LOST", conf: "42%" },
   ];
 
@@ -1040,7 +1041,7 @@ export function PacketLibraryPanel() {
 export function ReviewArchivePanel() {
   const reviews = [
     { date: "2026-06-25", ticker: "SPY", decision: "PURSUE", conf: "72%", result: "WON", return: "+2.3%" },
-    { date: "2026-06-25", ticker: "AAPL", decision: "WATCH", conf: "58%", result: "—", return: "—" },
+    { date: "2026-06-25", ticker: "AAPL", decision: "WATCH", conf: "58%", result: "n/a", return: "n/a" },
     { date: "2026-06-24", ticker: "TSLA", decision: "REJECT", conf: "42%", result: "LOST", return: "-1.5%" },
   ];
 
@@ -1062,7 +1063,7 @@ export function ReviewArchivePanel() {
               </div>
               <div className="flex items-center gap-2">
                 <Badge>{r.decision}</Badge>
-                {r.result !== "—" && (
+                {r.result !== "n/a" && (
                   <span className={r.result === "WON" ? "text-green-400" : "text-red-400"}>
                     {r.return}
                   </span>

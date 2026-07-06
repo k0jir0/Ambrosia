@@ -8,6 +8,7 @@ type ModuleRoute = {
   href: string;
   destination: string;
   panels: string;
+  status: string;
 };
 
 const MODULE_ROUTES: ModuleRoute[] = [
@@ -17,7 +18,8 @@ const MODULE_ROUTES: ModuleRoute[] = [
     description: "Confidence bands, cohort diagnostics, anomaly visibility, and outcome recording.",
     href: "/calibration",
     destination: "Calibration",
-    panels: "7 panels"
+    panels: "7 panels",
+    status: "Live route"
   },
   {
     title: "Team Collaboration",
@@ -25,7 +27,8 @@ const MODULE_ROUTES: ModuleRoute[] = [
     description: "Workspace management, packet sharing, comments, and approval workflow proof.",
     href: "/team",
     destination: "Team",
-    panels: "4 panels"
+    panels: "4 panels",
+    status: "Mixed: live admin, demo workspace"
   },
   {
     title: "Workflow Templates",
@@ -33,7 +36,8 @@ const MODULE_ROUTES: ModuleRoute[] = [
     description: "Template browse, create, publish, archive, and version-management surfaces.",
     href: "/team",
     destination: "Team",
-    panels: "3 panels"
+    panels: "3 panels",
+    status: "Demo only"
   },
   {
     title: "Admin & Monitoring",
@@ -41,7 +45,8 @@ const MODULE_ROUTES: ModuleRoute[] = [
     description: "System health, provider status, tool boundaries, alerts, and certification gates.",
     href: "/admin",
     destination: "Admin",
-    panels: "6 panels"
+    panels: "6 panels",
+    status: "Read-only evidence"
   },
   {
     title: "Provider Modes",
@@ -49,7 +54,8 @@ const MODULE_ROUTES: ModuleRoute[] = [
     description: "Local, hosted, and hybrid provider-path visibility for platform operators.",
     href: "/platform",
     destination: "Platform",
-    panels: "1 panel"
+    panels: "1 panel",
+    status: "Live route"
   },
   {
     title: "Market Scanner",
@@ -57,7 +63,8 @@ const MODULE_ROUTES: ModuleRoute[] = [
     description: "Watchlist scanning, technical filters, candidate ranking, and scanner job visibility.",
     href: "/market-scanner",
     destination: "Market Scanner",
-    panels: "3 panels"
+    panels: "3 panels",
+    status: "API-backed"
   },
   {
     title: "Archive & Search",
@@ -65,7 +72,8 @@ const MODULE_ROUTES: ModuleRoute[] = [
     description: "Packet and review lookup surfaces for reusable, searchable, auditable history.",
     href: "/history",
     destination: "History",
-    panels: "2 panels"
+    panels: "2 panels",
+    status: "Local and persisted reviews"
   }
 ];
 
@@ -98,7 +106,10 @@ export default function AdvancedPage() {
                 <h2 className="text-base font-semibold text-ink">{route.title}</h2>
                 <p className="mt-2 max-w-3xl text-sm leading-6 text-ink/70">{route.description}</p>
               </div>
-              <Badge tone="neutral">{route.panels}</Badge>
+              <div className="flex flex-wrap gap-2">
+                <Badge tone="neutral">{route.panels}</Badge>
+                <Badge tone={route.status.includes("Demo") ? "warn" : "info"}>{route.status}</Badge>
+              </div>
             </div>
             <p className="mt-4 text-xs font-semibold uppercase tracking-wide text-ink/50">Moved to {route.destination}</p>
           </Link>

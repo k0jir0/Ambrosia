@@ -6,7 +6,7 @@ import { Database, LoaderCircle, RefreshCw } from "lucide-react";
 import { Panel, SectionTitle, Badge } from "@/components/ui";
 import { RouteLoading, RouteNotice, RouteStatusBadge, type RouteStatus } from "@/components/route-state";
 import { fetchControlPlane, mapStatus, numberOrFallback, textOrFallback } from "@/lib/index84-control-plane";
-import { seedIndex97Signals } from "@/lib/api";
+import { seedIndex97Reviews, seedIndex97Signals } from "@/lib/api";
 
 export default function SignalsPage() {
   const [status, setStatus] = useState<RouteStatus>("loading");
@@ -45,6 +45,7 @@ export default function SignalsPage() {
     setStatus("loading");
     try {
       const response = await seedIndex97Signals();
+      await seedIndex97Reviews();
       setMessage(`Seeded ${numberOrFallback(response.signalsSeeded, "0")} lifecycle signals.`);
       await load();
     } catch (error) {
@@ -147,6 +148,7 @@ export default function SignalsPage() {
                   <div>
                     <p className="font-mono text-sm font-semibold text-ink">{signalId}</p>
                     <p className="text-xs text-ink/65">{textOrFallback(signal.name)}</p>
+                    {textOrFallback(signal.demoSeed, "") ? <Badge tone="warn">Demo Lifecycle</Badge> : null}
                   </div>
                   <Badge tone={statusValue === "active_candidate" ? "good" : statusValue === "retired" ? "bad" : "info"}>{statusValue}</Badge>
                 </div>

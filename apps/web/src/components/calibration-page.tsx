@@ -125,6 +125,8 @@ const EMPTY_SUMMARY: CalibrationSummary = {
   well_calibrated_count: 0
 };
 
+const STABLE_CALIBRATION_AS_OF = "2026-07-03T16:20:00";
+
 const SEEDED_RECORDS: FeedbackRecord[] = [
   {
     id: "model-eval-001",
@@ -639,7 +641,7 @@ function buildDashboardData({
     source,
     sourceLabel: source === "live" ? "Live API data" : "Seeded fixture",
     message,
-    asOf: new Date().toISOString(),
+    asOf: source === "fixture" ? STABLE_CALIBRATION_AS_OF : new Date().toISOString(),
     totalDecisions,
     overallAccuracy,
     calibrationQuality,
@@ -648,7 +650,7 @@ function buildDashboardData({
     bands,
     trend: buildTrend(records),
     cohorts: buildCohorts(records),
-    alerts: alerts.length ? alerts : buildAlertsFromBands(bands),
+    alerts: alerts.length ? alerts : buildAlertsFromBands(bands, source === "fixture" ? STABLE_CALIBRATION_AS_OF : undefined),
     health: buildHealthMetrics(metrics, bands, totalDecisions)
   };
 }
@@ -742,7 +744,7 @@ function buildCohorts(records: FeedbackRecord[]): CohortRow[] {
     .slice(0, 5);
 }
 
-function buildAlertsFromBands(bands: BandRow[]): CalibrationAlert[] {
+function buildAlertsFromBands(bands: BandRow[], generatedAt = new Date().toISOString()): CalibrationAlert[] {
   return bands
     .filter((band) => band.decisions >= 3 && Math.abs(band.gap) >= 10)
     .map((band, index) => ({
@@ -757,7 +759,7 @@ function buildAlertsFromBands(bands: BandRow[]): CalibrationAlert[] {
       calibration_error: Math.abs(band.gap) / 100,
       decision_count: band.decisions,
       severity: Math.abs(band.gap) >= 15 ? "critical" : "warning",
-      generated_at: new Date().toISOString()
+      generated_at: generatedAt
     }));
 }
 

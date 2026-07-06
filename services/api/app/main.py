@@ -37,6 +37,7 @@ from .models import (
     MarketSnapshot,
     OutcomeUpdate,
     RiskEvaluateRequest,
+    ReviewStatus,
     RoadmapDecisionRecord,
     RoadmapOutcomeRecord,
     RoadmapPlanRecord,
@@ -89,7 +90,7 @@ from .phase_c_discovery_ui import router as phase_c_ui_router
 from .phase_d_governance_ui import router as phase_d_router
 from .phase_e_execution_loop import router as phase_e_router
 from .phase_e_market_integration import router as market_integration_router
-from .index84_platform import router as index84_platform_router
+from .index84_platform import INDEX97_SIGNAL_SEED, router as index84_platform_router
 
 _executor = ThreadPoolExecutor(max_workers=4)
 ROADMAP_LEDGER_PATH = Path(__file__).resolve().parents[3] / "docs" / "roadmap" / "pdo-ledger.seed.json"
@@ -412,6 +413,55 @@ def list_reviews() -> list[TradeReview]:
 def create_review(request: ThesisRequest) -> TradeReview:
     review = generate_review(request, store.next_trial_count)
     return store.save_review(review)
+
+
+@app.post("/reviews/seed-index97")
+def seed_index97_reviews() -> dict:
+    seeded_reviews: list[TradeReview] = []
+    for scenario in INDEX97_SIGNAL_SEED:
+        review_payload = scenario.get("review")
+        signal_payload = scenario.get("signal", {})
+        hypothesis_payload = scenario.get("hypothesis", {})
+        if not isinstance(review_payload, dict):
+            continue
+
+        review_id = str(review_payload["reviewId"])
+        existing = store.get_review(review_id)
+        if existing is not None:
+            seeded_reviews.append(existing)
+            continue
+
+        ticker = str((signal_payload.get("universe") or ["Unspecified"])[0])
+        title = str(hypothesis_payload.get("title", signal_payload.get("name", ticker)))
+        review = generate_review(
+            ThesisRequest(
+                thesis=str(hypothesis_payload.get("thesis", f"Evaluate {title} as an Ambrosia demo review.")),
+                ticker=ticker,
+                asset_class="Equities",
+                time_horizon=str(signal_payload.get("horizon", "2-6 weeks")),
+                intended_expression=f"Long {ticker}",
+                source_pointer=f"demo:index97:{signal_payload.get('signalId', review_id)}",
+            ),
+            store.next_trial_count,
+        ).model_copy(
+            update={
+                "id": review_id,
+                "title": f"Demo Lifecycle: {title}",
+                "decisionState": DecisionState(str(review_payload.get("decisionState", "watch"))),
+                "status": ReviewStatus.decision_recorded,
+                "confidence": 72 if review_payload.get("decisionQuality") == "D4" else 64,
+                "createdAt": "2026-07-06T18:00:00Z",
+            }
+        )
+        seeded_reviews.append(store.save_review(review))
+
+    return {
+        "schemaVersion": "index97-review-seed.v1",
+        "status": "ok",
+        "reviewsSeeded": len(seeded_reviews),
+        "reviewIds": [review.id for review in seeded_reviews],
+        "seededAt": datetime.now().isoformat(),
+    }
 
 
 @app.get("/reviews/{review_id}", response_model=TradeReview)

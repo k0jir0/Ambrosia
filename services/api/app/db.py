@@ -19,6 +19,7 @@ from .models import (
     RoadmapPlanRecord,
     TradeReview,
 )
+from .feedback import FeedbackRecord
 
 
 @dataclass
@@ -367,6 +368,187 @@ class PostgresReviewStore:
                     ),
                 )
         return self.save_roadmap_plan(updated)
+
+    def save_feedback_record(self, feedback: FeedbackRecord) -> FeedbackRecord:
+        payload = feedback.model_dump(mode="json")
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    INSERT INTO feedback_record_store (
+                        feedback_id,
+                        packet_id,
+                        ticker,
+                        asset_class,
+                        time_horizon,
+                        decision_state,
+                        confidence,
+                        outcome,
+                        outcome_date,
+                        pnl,
+                        artifact
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)
+                    ON CONFLICT (feedback_id)
+                    DO UPDATE SET
+                        decision_state = EXCLUDED.decision_state,
+                        confidence = EXCLUDED.confidence,
+                        outcome = EXCLUDED.outcome,
+                        outcome_date = EXCLUDED.outcome_date,
+                        pnl = EXCLUDED.pnl,
+                        artifact = EXCLUDED.artifact,
+                        updated_at = now()
+                    """,
+                    (
+                        feedback.id,
+                        feedback.packet_id,
+                        feedback.ticker,
+                        feedback.asset_class,
+                        feedback.time_horizon,
+                        feedback.decision_state,
+                        feedback.confidence,
+                        feedback.outcome.value,
+                        feedback.outcome_date,
+                        feedback.pnl,
+                        json.dumps(payload),
+                    ),
+                )
+        return feedback
+
+    def get_feedback_record(self, feedback_id: str) -> FeedbackRecord | None:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT artifact FROM feedback_record_store WHERE feedback_id = %s",
+                    (feedback_id,),
+                )
+                row = cursor.fetchone()
+        if row is None:
+            return None
+        return FeedbackRecord.model_validate(row["artifact"])
+
+    def list_feedback_records(
+        self,
+        ticker: str | None = None,
+        decision_state: str | None = None,
+        outcome: str | None = None,
+        limit: int = 100,
+    ) -> list[FeedbackRecord]:
+        where_clauses: list[str] = []
+        params: list[object] = []
+        if ticker:
+            where_clauses.append("LOWER(ticker) = LOWER(%s)")
+            params.append(ticker)
+        if decision_state:
+            where_clauses.append("LOWER(decision_state) = LOWER(%s)")
+            params.append(decision_state)
+        if outcome:
+            where_clauses.append("LOWER(outcome) = LOWER(%s)")
+            params.append(outcome)
+
+        where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
+        sql = f"""
+            SELECT artifact
+            FROM feedback_record_store
+            {where_sql}
+            ORDER BY created_at DESC
+            LIMIT %s
+        """
+        params.append(limit)
+
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(sql, params)
+                rows = cursor.fetchall()
+        return [FeedbackRecord.model_validate(row["artifact"]) for row in rows]
+
+    def save_signal_lifecycle_snapshot(self, snapshot: dict) -> None:
+        payload = json.dumps(snapshot)
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    INSERT INTO signal_lifecycle_snapshot (snapshot_key, artifact)
+                    VALUES ('default', %s::jsonb)
+                    ON CONFLICT (snapshot_key)
+                    DO UPDATE SET artifact = EXCLUDED.artifact, updated_at = now()
+                    """,
+                    (payload,),
+                )
+
+    def load_signal_lifecycle_snapshot(self) -> dict | None:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT artifact FROM signal_lifecycle_snapshot WHERE snapshot_key = 'default'"
+                )
+                row = cursor.fetchone()
+        if row is None:
+            return None
+        return row["artifact"]
+
+    def save_relay_run(self, run: dict) -> None:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    INSERT INTO relay_run (relay_run_id, benchmark, question, route, trace)
+                    VALUES (%s, %s, %s, %s, %s::jsonb)
+                    ON CONFLICT (relay_run_id)
+                    DO UPDATE SET trace = EXCLUDED.trace, route = EXCLUDED.route
+                    """,
+                    (
+                        run.get("runId"),
+                        run.get("benchmark", "unknown"),
+                        run.get("question", ""),
+                        run.get("route", "unknown"),
+                        json.dumps(run),
+                    ),
+                )
+
+    def get_relay_run(self, run_id: str) -> dict | None:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT trace FROM relay_run WHERE relay_run_id = %s", (run_id,))
+                row = cursor.fetchone()
+        if row is None:
+            return None
+        return row["trace"]
+
+    def list_relay_runs(self, limit: int = 250) -> list[dict]:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT trace FROM relay_run ORDER BY created_at DESC LIMIT %s",
+                    (limit,),
+                )
+                rows = cursor.fetchall()
+        return [row["trace"] for row in rows]
+
+    def save_idempotency_response(self, key: str, endpoint: str, response_payload: dict) -> None:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    INSERT INTO api_idempotency_record (idempotency_key, endpoint, response_payload)
+                    VALUES (%s, %s, %s::jsonb)
+                    ON CONFLICT (idempotency_key)
+                    DO UPDATE SET endpoint = EXCLUDED.endpoint, response_payload = EXCLUDED.response_payload, updated_at = now()
+                    """,
+                    (key, endpoint, json.dumps(response_payload)),
+                )
+
+    def get_idempotency_response(self, key: str, endpoint: str) -> dict | None:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT response_payload FROM api_idempotency_record WHERE idempotency_key = %s AND endpoint = %s",
+                    (key, endpoint),
+                )
+                row = cursor.fetchone()
+        if row is None:
+            return None
+        return row["response_payload"]
 
 
 class PostgresPacketStore:

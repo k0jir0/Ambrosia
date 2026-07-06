@@ -23,16 +23,29 @@ export function NewReviewFlow({ initialParams }: NewReviewFlowProps) {
   const router = useRouter();
   const { reviews } = useReviewArchive();
 
-  const alphaContext = useMemo(() => {
+  const intakeContext = useMemo(() => {
     const getParamValue = (key: string, fallback = "") => {
       const value = initialParams?.[key];
       if (Array.isArray(value)) return value[0] ?? fallback;
       return value ?? fallback;
     };
 
-    if (getParamValue("source") !== "alpha") return null;
+    const source = getParamValue("source");
+    const baseContext = {
+      ticker: getParamValue("ticker", "AAPL").toUpperCase(),
+      assetClass: getParamValue("assetClass", "Equities"),
+      timeHorizon: getParamValue("timeHorizon", "2-6 weeks"),
+      expression: getParamValue("expression", "Long via equity"),
+      thesis: getParamValue("thesis"),
+      sourcePointer: getParamValue("sourcePointer"),
+      summary: source === "scanner" ? "Market Scanner candidate" : source ? `${source} prefill` : "",
+      link: null
+    };
+
+    if (source !== "alpha") return baseContext.thesis || baseContext.sourcePointer || source ? baseContext : null;
+
     const alphaTypeRaw = getParamValue("alphaType");
-    if (alphaTypeRaw !== "hypothesis" && alphaTypeRaw !== "signal") return null;
+    if (alphaTypeRaw !== "hypothesis" && alphaTypeRaw !== "signal") return baseContext;
     const alphaType: "hypothesis" | "signal" = alphaTypeRaw;
 
     const hypothesisId = getParamValue("hypothesisId");
@@ -42,16 +55,10 @@ export function NewReviewFlow({ initialParams }: NewReviewFlowProps) {
     const title = getParamValue("alphaTitle");
     const signalFamily = getParamValue("alphaSignalFamily");
     const formula = getParamValue("alphaFormula");
-    const ticker = getParamValue("ticker", "AAPL").toUpperCase();
 
     return {
-      ticker,
-      assetClass: getParamValue("assetClass", "Equities"),
-      timeHorizon: getParamValue("timeHorizon", "2-6 weeks"),
-      expression: getParamValue("expression", "Long via equity"),
-      thesis: getParamValue("thesis"),
-      sourcePointer: getParamValue("sourcePointer"),
-      summary: `${alphaType === "hypothesis" ? "Hypothesis" : "Signal"}${title ? `: ${title}` : ""}`,
+      ...baseContext,
+      summary: `Alpha Lab ${alphaType}${title ? `: ${title}` : ""}`,
       link: {
         source: "alpha" as const,
         objectType: alphaType,
@@ -61,19 +68,19 @@ export function NewReviewFlow({ initialParams }: NewReviewFlowProps) {
         title: title || undefined,
         signalFamily: signalFamily || undefined,
         formula: formula || undefined,
-        ticker,
+        ticker: baseContext.ticker,
         createdAt: new Date().toISOString()
       }
     };
   }, [initialParams]);
 
   const [step, setStep] = useState<Step>(1);
-  const [ticker, setTicker] = useState(alphaContext?.ticker ?? "AAPL");
-  const [assetClass, setAssetClass] = useState(alphaContext?.assetClass ?? "Equities");
-  const [timeHorizon, setTimeHorizon] = useState(alphaContext?.timeHorizon ?? "2-6 weeks");
-  const [expression, setExpression] = useState(alphaContext?.expression ?? "Long via equity");
-  const [thesis, setThesis] = useState(alphaContext?.thesis ?? "");
-  const [sources, setSources] = useState<string[]>(alphaContext?.sourcePointer ? [alphaContext.sourcePointer] : []);
+  const [ticker, setTicker] = useState(intakeContext?.ticker ?? "AAPL");
+  const [assetClass, setAssetClass] = useState(intakeContext?.assetClass ?? "Equities");
+  const [timeHorizon, setTimeHorizon] = useState(intakeContext?.timeHorizon ?? "2-6 weeks");
+  const [expression, setExpression] = useState(intakeContext?.expression ?? "Long via equity");
+  const [thesis, setThesis] = useState(intakeContext?.thesis ?? "");
+  const [sources, setSources] = useState<string[]>(intakeContext?.sourcePointer ? [intakeContext.sourcePointer] : []);
   const [sourceDraft, setSourceDraft] = useState("");
   const [creating, setCreating] = useState(false);
   const [createMessage, setCreateMessage] = useState<string | null>(null);
@@ -105,13 +112,13 @@ export function NewReviewFlow({ initialParams }: NewReviewFlowProps) {
       reviews.length
     );
 
-    if (alphaContext?.link) {
-      setReviewAlphaLink(review.id, alphaContext.link);
-      if (alphaContext.link.signalId) {
-        void linkSignalReview(alphaContext.link.signalId, {
+    if (intakeContext?.link) {
+      setReviewAlphaLink(review.id, intakeContext.link);
+      if (intakeContext.link.signalId) {
+        void linkSignalReview(intakeContext.link.signalId, {
           reviewId: review.id,
-          hypothesisId: alphaContext.link.hypothesisId,
-          signalVersion: alphaContext.link.signalVersion,
+          hypothesisId: intakeContext.link.hypothesisId,
+          signalVersion: intakeContext.link.signalVersion,
         }).catch(() => {
           // Keep intake resilient when the API path is unavailable; local link remains intact.
         });
@@ -129,7 +136,7 @@ export function NewReviewFlow({ initialParams }: NewReviewFlowProps) {
         <p className="mt-2 max-w-3xl text-sm leading-6 text-ink/70">
           Creating a review adds it to the Ambrosia review archive, increments dashboard totals, and makes the packet re-openable from History and Recent Reviews.
         </p>
-        {alphaContext ? <p className="mt-2 rounded-md border border-line bg-fog/70 px-3 py-2 text-xs text-ink/75">Prefilled from Alpha Lab: {alphaContext.summary}</p> : null}
+        {intakeContext?.summary ? <p className="mt-2 rounded-md border border-line bg-fog/70 px-3 py-2 text-xs text-ink/75">Prefilled from {intakeContext.summary}</p> : null}
         <div className="mt-4 flex flex-wrap items-center gap-2 text-sm">
           {STEPS.map((item) => (
             <button

@@ -44,6 +44,8 @@ services:
         value: production
       - key: LOG_LEVEL
         value: warning
+      - key: REQUIRE_DATABASE
+        value: "true"
       - key: ALLOWED_ORIGIN_REGEX
         value: https://(ambrosia-web-c3ax|ambrosia-5aec)\.onrender\.com
 
@@ -85,6 +87,8 @@ services:
         value: staging
       - key: LOG_LEVEL
         value: info
+      - key: REQUIRE_DATABASE
+        value: "true"
       - key: ALLOWED_ORIGIN_REGEX
         value: https://ambrosia-web-staging\.onrender\.com
 

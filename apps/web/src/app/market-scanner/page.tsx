@@ -315,7 +315,7 @@ function CandidateRow({ candidate }: { candidate: ScannerCandidate }) {
         </div>
         <div className="flex items-center justify-between gap-2">
           <span className="text-sm font-semibold text-ink">{Math.round(candidate.score * 100)}%</span>
-          <Link href={`/review/new?ticker=${encodeURIComponent(candidate.ticker)}&thesis=${encodeURIComponent(candidate.thesisSuggestion)}`} className="focus-ring rounded-md border border-line bg-paper px-2 py-1 text-xs font-semibold text-teal">
+          <Link href={buildReviewHref(candidate)} className="focus-ring rounded-md border border-line bg-paper px-2 py-1 text-xs font-semibold text-teal">
             Review
           </Link>
         </div>
@@ -363,6 +363,19 @@ function signalTone(signal: ScannerSignal): "good" | "warn" | "bad" | "neutral" 
   if (signal === "momentum_down") return "warn";
   if (signal === "mean_reversion_down") return "bad";
   return "neutral";
+}
+
+function buildReviewHref(candidate: ScannerCandidate) {
+  const params = new URLSearchParams({
+    source: "scanner",
+    ticker: candidate.ticker,
+    assetClass: "Equities",
+    timeHorizon: "2-6 weeks",
+    expression: "Long via equity",
+    thesis: candidate.thesisSuggestion,
+    sourcePointer: `scanner:${candidate.ticker}:${candidate.signal}:${candidate.scannedAt}`
+  });
+  return `/review/new?${params.toString()}`;
 }
 
 function formatTime(value: string) {

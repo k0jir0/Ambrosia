@@ -16,6 +16,9 @@ enum Command {
         quantity: u64,
         price: f64,
         max_notional_usd: f64,
+        reference_price: Option<f64>,
+        max_slippage_bps: Option<f64>,
+        strategy_origin: Option<String>,
     },
     KillSwitch { enabled: bool },
     Health,
@@ -119,6 +122,9 @@ fn handle_command(command: Command, kill_switch: &Arc<AtomicBool>) -> Response {
             quantity,
             price,
             max_notional_usd,
+            reference_price,
+            max_slippage_bps,
+            strategy_origin,
         } => {
             if kill_switch.load(Ordering::Relaxed) {
                 return Response {
@@ -136,6 +142,18 @@ fn handle_command(command: Command, kill_switch: &Arc<AtomicBool>) -> Response {
                     reason: "invalid_order_fields".to_string(),
                     order_id: Some(order_id),
                 };
+            }
+
+            if let Some(origin) = strategy_origin {
+                let lowered = origin.to_ascii_lowercase();
+                if lowered.contains("llm") || lowered.contains("gpt") || lowered.contains("model") {
+                    return Response {
+                        status: "rejected".to_string(),
+                        accepted: false,
+                        reason: "llm_origin_rejected".to_string(),
+                        order_id: Some(order_id),
+                    };
+                }
             }
 
             let side_ok = side == "buy" || side == "sell";
@@ -156,6 +174,26 @@ fn handle_command(command: Command, kill_switch: &Arc<AtomicBool>) -> Response {
                 };
             }
 
+            if let (Some(ref_px), Some(max_bps)) = (reference_price, max_slippage_bps) {
+                if !ref_px.is_finite() || ref_px <= 0.0 || !max_bps.is_finite() || max_bps < 0.0 {
+                    return Response {
+                        status: "rejected".to_string(),
+                        accepted: false,
+                        reason: "invalid_price_collar".to_string(),
+                        order_id: Some(order_id),
+                    };
+                }
+                let slip_bps = (((price - ref_px).abs()) / ref_px) * 10_000.0;
+                if slip_bps > max_bps {
+                    return Response {
+                        status: "rejected".to_string(),
+                        accepted: false,
+                        reason: "price_collar_exceeded".to_string(),
+                        order_id: Some(order_id),
+                    };
+                }
+            }
+
             Response {
                 status: "accepted".to_string(),
                 accepted: true,
@@ -163,5 +201,75 @@ fn handle_command(command: Command, kill_switch: &Arc<AtomicBool>) -> Response {
                 order_id: Some(order_id),
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{handle_command, Command};
+    use std::sync::atomic::AtomicBool;
+    use std::sync::Arc;
+
+    #[test]
+    fn rejects_llm_origin() {
+        let kill_switch = Arc::new(AtomicBool::new(false));
+        let response = handle_command(
+            Command::NewOrder {
+                order_id: "o-1".to_string(),
+                symbol: "AAPL".to_string(),
+                side: "buy".to_string(),
+                quantity: 10,
+                price: 100.0,
+                max_notional_usd: 2000.0,
+                reference_price: None,
+                max_slippage_bps: None,
+                strategy_origin: Some("llm_router".to_string()),
+            },
+            &kill_switch,
+        );
+        assert!(!response.accepted);
+        assert_eq!(response.reason, "llm_origin_rejected");
+    }
+
+    #[test]
+    fn rejects_when_price_collar_exceeded() {
+        let kill_switch = Arc::new(AtomicBool::new(false));
+        let response = handle_command(
+            Command::NewOrder {
+                order_id: "o-2".to_string(),
+                symbol: "MSFT".to_string(),
+                side: "buy".to_string(),
+                quantity: 5,
+                price: 110.0,
+                max_notional_usd: 10000.0,
+                reference_price: Some(100.0),
+                max_slippage_bps: Some(500.0),
+                strategy_origin: Some("rule_engine".to_string()),
+            },
+            &kill_switch,
+        );
+        assert!(!response.accepted);
+        assert_eq!(response.reason, "price_collar_exceeded");
+    }
+
+    #[test]
+    fn accepts_when_deterministic_checks_pass() {
+        let kill_switch = Arc::new(AtomicBool::new(false));
+        let response = handle_command(
+            Command::NewOrder {
+                order_id: "o-3".to_string(),
+                symbol: "NVDA".to_string(),
+                side: "sell".to_string(),
+                quantity: 2,
+                price: 99.8,
+                max_notional_usd: 1000.0,
+                reference_price: Some(100.0),
+                max_slippage_bps: Some(50.0),
+                strategy_origin: Some("deterministic_rulebook".to_string()),
+            },
+            &kill_switch,
+        );
+        assert!(response.accepted);
+        assert_eq!(response.reason, "risk_checks_passed");
     }
 }

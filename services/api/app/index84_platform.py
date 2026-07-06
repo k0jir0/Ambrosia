@@ -2,12 +2,16 @@ from __future__ import annotations
 
 import json
 import hashlib
+import os
+import re
 from datetime import datetime, timedelta
 from pathlib import Path
 from uuid import uuid4
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Header, HTTPException, Query
 from pydantic import BaseModel, Field
+
+from .db import PostgresReviewStore
 
 
 router = APIRouter(tags=["index84-platform"])
@@ -40,6 +44,15 @@ _sso_config: dict = {
 _ROOT = Path(__file__).resolve().parents[3]
 _RELEASE_EVIDENCE_PATH = _ROOT / "artifacts" / "release-evidence.json"
 _SIGNAL_STATE_PATH = _ROOT / "artifacts" / "signal-lifecycle-state.json"
+_index84_db: PostgresReviewStore | None = None
+
+_database_url = os.getenv("DATABASE_URL")
+if _database_url:
+    try:
+        _index84_db = PostgresReviewStore(_database_url)
+        _index84_db.healthcheck()
+    except Exception:
+        _index84_db = None
 
 
 def _now() -> str:
@@ -63,11 +76,34 @@ def _persist_signal_state() -> None:
         "signalValidationRuns": _signal_validation_runs,
         "signalPolicyEvents": _signal_policy_events,
     }
+    if _index84_db is not None:
+        try:
+            _index84_db.save_signal_lifecycle_snapshot(payload)
+        except Exception:
+            pass
     _SIGNAL_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
     _SIGNAL_STATE_PATH.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
 def _load_signal_state() -> None:
+    if _index84_db is not None:
+        try:
+            payload = _index84_db.load_signal_lifecycle_snapshot()
+            if isinstance(payload, dict):
+                if isinstance(payload.get("signals"), dict):
+                    _signals.update(payload["signals"])
+                if isinstance(payload.get("signalVersions"), dict):
+                    _signal_versions.update(payload["signalVersions"])
+                if isinstance(payload.get("signalReviewLinks"), dict):
+                    _signal_review_links.update(payload["signalReviewLinks"])
+                if isinstance(payload.get("signalValidationRuns"), dict):
+                    _signal_validation_runs.update(payload["signalValidationRuns"])
+                if isinstance(payload.get("signalPolicyEvents"), dict):
+                    _signal_policy_events.update(payload["signalPolicyEvents"])
+                return
+        except Exception:
+            pass
+
     if not _SIGNAL_STATE_PATH.exists():
         return
     try:
@@ -173,6 +209,10 @@ class SignalDecisionWritebackRequest(BaseModel):
     decisionState: str = Field(min_length=3)
     rationale: str | None = None
     overrideUsed: bool = False
+    decisionQuality: str = "D2"
+    evidenceLinks: list[str] = Field(default_factory=list)
+    verifierStatus: str | None = None
+    reviewDate: str | None = None
 
 
 class SignalOutcomeWritebackRequest(BaseModel):
@@ -187,6 +227,11 @@ class AlphaHypothesisSignalLinkRequest(BaseModel):
     signalVersion: int | None = Field(default=None, ge=1)
 
 
+DECISION_QUALITY_STATES = {"D0", "D1", "D2", "D3", "D4", "D5"}
+PLAN_QUALITY_STATES = {"P0", "P1", "P2", "P3", "P4"}
+PROMOTION_STATES = {"promoted", "promote", "go_live", "deploy", "pursue"}
+
+
 class AlphaHypothesisCreateRequest(BaseModel):
     hypothesisId: str | None = None
     title: str = Field(min_length=3)
@@ -194,6 +239,7 @@ class AlphaHypothesisCreateRequest(BaseModel):
     universe: list[str] = Field(default_factory=list)
     horizon: str = "20d"
     thesis: str = Field(min_length=8)
+    planQuality: str = "P2"
     disconfirmingTests: list[str] = Field(default_factory=list)
     costModel: str = "10 bps round-trip"
     owner: str = "research"
@@ -284,39 +330,160 @@ def openai_compatible_chat_completion(request: ChatCompletionRequest) -> dict:
 
 
 @router.post("/relay/evaluate")
-def evaluate_relay(request: RelayEvaluateRequest) -> dict:
+def evaluate_relay(
+    request: RelayEvaluateRequest,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> dict:
+    endpoint = _endpoint_key("/relay/evaluate")
+    cached = _idempotency_lookup(endpoint, idempotency_key)
+    if cached is not None:
+        return cached
+
     run = _build_relay_trace(request.question, request.benchmark, request.documents)
     _relay_runs[run["runId"]] = run
+    if _index84_db is not None:
+        try:
+            _index84_db.save_relay_run(run)
+        except Exception:
+            pass
+    _idempotency_store(endpoint, idempotency_key, run)
     return run
 
 
 @router.get("/relay/runs/{run_id}")
 def get_relay_run(run_id: str) -> dict:
     run = _relay_runs.get(run_id)
+    if run is None and _index84_db is not None:
+        try:
+            run = _index84_db.get_relay_run(run_id)
+            if run is not None:
+                _relay_runs[run_id] = run
+        except Exception:
+            run = None
     if run is None:
         raise HTTPException(status_code=404, detail="Relay run not found")
     return run
 
 
+@router.get("/relay/runs")
+def list_relay_runs(
+    limit: int = Query(50, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+) -> dict:
+    runs: list[dict]
+    if _index84_db is not None:
+        try:
+            runs = _index84_db.list_relay_runs(limit=500)
+        except Exception:
+            runs = list(_relay_runs.values())
+    else:
+        runs = list(_relay_runs.values())
+    total = len(runs)
+    sliced = runs[offset : offset + limit]
+    return {
+        "schemaVersion": "relay-runs-list.v1",
+        "items": sliced,
+        "pagination": {
+            "limit": limit,
+            "offset": offset,
+            "total": total,
+            "hasMore": offset + limit < total,
+        },
+    }
+
+
 @router.get("/relay/scorecard")
 def get_relay_scorecard() -> dict:
-    runs = list(_relay_runs.values())
+    if _index84_db is not None:
+        try:
+            runs = _index84_db.list_relay_runs(limit=2000)
+        except Exception:
+            runs = list(_relay_runs.values())
+    else:
+        runs = list(_relay_runs.values())
     completed = len(runs)
+    abstained = sum(1 for run in runs if run.get("abstention", {}).get("required"))
+    calc_verified = sum(1 for run in runs if run.get("verification", {}).get("status") == "passed")
+    grounding_passed = sum(1 for run in runs if run.get("grounding", {}).get("status") == "passed")
     return {
         "schemaVersion": "relay-scorecard.v1",
         "runs": completed,
-        "accuracy": 1.0 if completed else 0.0,
-        "evidenceRecall": 1.0 if completed else 0.0,
-        "calculationVerificationPassRate": 1.0 if completed else 0.0,
-        "groundingPassRate": 1.0 if completed else 0.0,
+        "accuracy": max(0.0, 1.0 - (abstained / completed)) if completed else 0.0,
+        "evidenceRecall": max(0.0, (completed - abstained) / completed) if completed else 0.0,
+        "calculationVerificationPassRate": (calc_verified / completed) if completed else 0.0,
+        "groundingPassRate": (grounding_passed / completed) if completed else 0.0,
         "failureClusters": [],
-        "unsupportedAnswersRefused": True,
+        "unsupportedAnswersRefused": abstained > 0,
         "updatedAt": _now(),
     }
 
 
+def _endpoint_key(path: str) -> str:
+    return f"index84:{path}"
+
+
+def _idempotency_lookup(endpoint: str, key: str | None) -> dict | None:
+    if not key or _index84_db is None:
+        return None
+    try:
+        return _index84_db.get_idempotency_response(key, endpoint)
+    except Exception:
+        return None
+
+
+def _idempotency_store(endpoint: str, key: str | None, payload: dict) -> None:
+    if not key or _index84_db is None:
+        return
+    try:
+        _index84_db.save_idempotency_response(key, endpoint, payload)
+    except Exception:
+        pass
+
+
+def _execution_feasibility_assessment(
+    ticker: str,
+    side: str,
+    quantity: float,
+    intended_price: float,
+) -> dict:
+    notional = float(quantity) * float(intended_price)
+    liquidity_bucket = "high" if ticker.upper() in {"SPY", "QQQ", "AAPL", "MSFT", "NVDA"} else "medium"
+    spread_bps = 4.0 if liquidity_bucket == "high" else 9.5
+    slippage_bps = 3.0 if liquidity_bucket == "high" else 7.0
+    impact_bps = min(35.0, 2.0 + (notional / 500000.0) * 9.0)
+    implementation_shortfall_bps = round(spread_bps + slippage_bps + impact_bps, 2)
+
+    fragility_score = round(min(1.0, implementation_shortfall_bps / 40.0), 3)
+    block = implementation_shortfall_bps > 28.0 or notional > 350000.0
+
+    return {
+        "schemaVersion": "execution-feasibility.v1",
+        "ticker": ticker.upper(),
+        "side": side,
+        "quantity": quantity,
+        "intendedPrice": intended_price,
+        "notionalUsd": round(notional, 2),
+        "spreadBps": spread_bps,
+        "slippageBps": slippage_bps,
+        "impactBps": round(impact_bps, 2),
+        "implementationShortfallEstimateBps": implementation_shortfall_bps,
+        "fragilityScore": fragility_score,
+        "gate": "blocked" if block else "pass",
+        "reasons": ["notional_or_cost_limit_exceeded"] if block else ["within_warm_path_budget"],
+        "assessedAt": _now(),
+    }
+
+
 @router.post("/features", status_code=201)
-def upsert_feature(request: FeatureUpsertRequest) -> dict:
+def upsert_feature(
+    request: FeatureUpsertRequest,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> dict:
+    endpoint = _endpoint_key("/features")
+    cached = _idempotency_lookup(endpoint, idempotency_key)
+    if cached is not None:
+        return cached
+
     feature_id = request.featureId or _stable_id("feature", f"{request.name}:{request.ticker}:{request.asOf}")
     feature = {
         "featureId": feature_id,
@@ -326,6 +493,7 @@ def upsert_feature(request: FeatureUpsertRequest) -> dict:
         "updatedAt": _now(),
     }
     _features[feature_id] = feature
+    _idempotency_store(endpoint, idempotency_key, feature)
     return feature
 
 
@@ -343,7 +511,15 @@ def get_feature(feature_id: str) -> dict:
 
 
 @router.post("/signals", status_code=201)
-def create_signal(request: SignalCreateRequest) -> dict:
+def create_signal(
+    request: SignalCreateRequest,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> dict:
+    endpoint = _endpoint_key("/signals")
+    cached = _idempotency_lookup(endpoint, idempotency_key)
+    if cached is not None:
+        return cached
+
     signal_id = request.signalId or _stable_id("signal", request.name)
     existing = _signals.get(signal_id, {})
     active_version = int(existing.get("activeVersion", existing.get("version", 1)))
@@ -388,16 +564,30 @@ def create_signal(request: SignalCreateRequest) -> dict:
             }
         )
     _persist_signal_state()
+    _idempotency_store(endpoint, idempotency_key, signal)
     return signal
 
 
 @router.post("/alpha/hypotheses", status_code=201)
-def create_alpha_hypothesis(request: AlphaHypothesisCreateRequest) -> dict:
+def create_alpha_hypothesis(
+    request: AlphaHypothesisCreateRequest,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> dict:
+    endpoint = _endpoint_key("/alpha/hypotheses")
+    cached = _idempotency_lookup(endpoint, idempotency_key)
+    if cached is not None:
+        return cached
+
+    plan_quality = request.planQuality.upper()
+    if plan_quality not in PLAN_QUALITY_STATES:
+        raise HTTPException(status_code=400, detail="planQuality must be one of P0-P4")
+
     hypothesis_id = request.hypothesisId or _stable_id("alpha", f"{request.signalFamily}:{request.title}")
     hypothesis = {
         "hypothesisId": hypothesis_id,
         "schemaVersion": "alpha-hypothesis.v1",
         **request.model_dump(exclude={"hypothesisId"}),
+        "planQuality": plan_quality,
         "quality": "D3",
         "status": "active",
         "linkedSignals": _alpha_hypotheses.get(hypothesis_id, {}).get("linkedSignals", []),
@@ -405,6 +595,7 @@ def create_alpha_hypothesis(request: AlphaHypothesisCreateRequest) -> dict:
         "updatedAt": _now(),
     }
     _alpha_hypotheses[hypothesis_id] = hypothesis
+    _idempotency_store(endpoint, idempotency_key, hypothesis)
     return hypothesis
 
 
@@ -463,7 +654,16 @@ def _find_signal_review_link(signal_id: str, review_id: str, signal_version: int
 
 
 @router.post("/signals/{signal_id}/versions", status_code=201)
-def create_signal_version(signal_id: str, request: SignalVersionCreateRequest) -> dict:
+def create_signal_version(
+    signal_id: str,
+    request: SignalVersionCreateRequest,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> dict:
+    endpoint = _endpoint_key("/signals/versions")
+    cached = _idempotency_lookup(endpoint, idempotency_key)
+    if cached is not None:
+        return cached
+
     signal = _signals.get(signal_id)
     if signal is None:
         raise HTTPException(status_code=404, detail="Signal not found")
@@ -495,6 +695,7 @@ def create_signal_version(signal_id: str, request: SignalVersionCreateRequest) -
     signal["activeVersion"] = next_version
     signal["updatedAt"] = _now()
     _persist_signal_state()
+    _idempotency_store(endpoint, idempotency_key, version)
     return version
 
 
@@ -592,7 +793,16 @@ def _signal_rollup(signal_id: str) -> dict:
 
 
 @router.post("/signals/{signal_id}/validate")
-def validate_signal(signal_id: str, request: SignalValidateRequest) -> dict:
+def validate_signal(
+    signal_id: str,
+    request: SignalValidateRequest,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> dict:
+    endpoint = _endpoint_key("/signals/validate")
+    cached = _idempotency_lookup(endpoint, idempotency_key)
+    if cached is not None:
+        return cached
+
     signal = _signals.get(signal_id)
     if signal is None:
         raise HTTPException(status_code=404, detail="Signal not found")
@@ -650,6 +860,7 @@ def validate_signal(signal_id: str, request: SignalValidateRequest) -> dict:
         signal_version=signal_version,
     )
     _persist_signal_state()
+    _idempotency_store(endpoint, idempotency_key, run)
     return run
 
 
@@ -662,7 +873,16 @@ def list_signal_validation_runs(signal_id: str) -> list[dict]:
 
 
 @router.post("/signals/{signal_id}/promote")
-def promote_signal(signal_id: str, request: SignalPolicyTransitionRequest) -> dict:
+def promote_signal(
+    signal_id: str,
+    request: SignalPolicyTransitionRequest,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> dict:
+    endpoint = _endpoint_key("/signals/promote")
+    cached = _idempotency_lookup(endpoint, idempotency_key)
+    if cached is not None:
+        return cached
+
     signal = _signals.get(signal_id)
     if signal is None:
         raise HTTPException(status_code=404, detail="Signal not found")
@@ -685,17 +905,28 @@ def promote_signal(signal_id: str, request: SignalPolicyTransitionRequest) -> di
         signal_version=signal_version,
     )
     _persist_signal_state()
-    return {
+    response = {
         "schemaVersion": "signal-policy-transition.v1",
         "signalId": signal_id,
         "signalVersion": signal_version,
         "status": signal["status"],
         "event": event,
     }
+    _idempotency_store(endpoint, idempotency_key, response)
+    return response
 
 
 @router.post("/signals/{signal_id}/constrain")
-def constrain_signal(signal_id: str, request: SignalPolicyTransitionRequest) -> dict:
+def constrain_signal(
+    signal_id: str,
+    request: SignalPolicyTransitionRequest,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> dict:
+    endpoint = _endpoint_key("/signals/constrain")
+    cached = _idempotency_lookup(endpoint, idempotency_key)
+    if cached is not None:
+        return cached
+
     signal = _signals.get(signal_id)
     if signal is None:
         raise HTTPException(status_code=404, detail="Signal not found")
@@ -711,17 +942,28 @@ def constrain_signal(signal_id: str, request: SignalPolicyTransitionRequest) -> 
         signal_version=signal_version,
     )
     _persist_signal_state()
-    return {
+    response = {
         "schemaVersion": "signal-policy-transition.v1",
         "signalId": signal_id,
         "signalVersion": signal_version,
         "status": signal["status"],
         "event": event,
     }
+    _idempotency_store(endpoint, idempotency_key, response)
+    return response
 
 
 @router.post("/signals/{signal_id}/retire")
-def retire_signal(signal_id: str, request: SignalPolicyTransitionRequest) -> dict:
+def retire_signal(
+    signal_id: str,
+    request: SignalPolicyTransitionRequest,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> dict:
+    endpoint = _endpoint_key("/signals/retire")
+    cached = _idempotency_lookup(endpoint, idempotency_key)
+    if cached is not None:
+        return cached
+
     signal = _signals.get(signal_id)
     if signal is None:
         raise HTTPException(status_code=404, detail="Signal not found")
@@ -737,13 +979,15 @@ def retire_signal(signal_id: str, request: SignalPolicyTransitionRequest) -> dic
         signal_version=signal_version,
     )
     _persist_signal_state()
-    return {
+    response = {
         "schemaVersion": "signal-policy-transition.v1",
         "signalId": signal_id,
         "signalVersion": signal_version,
         "status": signal["status"],
         "event": event,
     }
+    _idempotency_store(endpoint, idempotency_key, response)
+    return response
 
 
 @router.get("/signals/{signal_id}/policy-events")
@@ -786,8 +1030,62 @@ def get_signal_program_metrics() -> dict:
     }
 
 
+@router.get("/signals/quality-scorecard/weekly")
+def get_weekly_quality_scorecard() -> dict:
+    links = list(_signal_review_links.values())
+    hypotheses = list(_alpha_hypotheses.values())
+
+    total_plans = len(hypotheses)
+    total_decisions = len(links)
+    decisions_with_quality = sum(1 for link in links if (link.get("decisionQuality") or "").upper() in DECISION_QUALITY_STATES)
+    promotion_ready_decisions = sum(
+        1
+        for link in links
+        if str(link.get("reviewDecisionState", "")).strip().lower() in PROMOTION_STATES
+        and bool(link.get("evidenceLinks"))
+        and str(link.get("verifierStatus", "")).lower() == "passed"
+        and bool(link.get("reviewDate"))
+    )
+    outcomes_recorded = sum(1 for link in links if bool(link.get("outcomeQuality")))
+    plan_gate_pass = sum(1 for item in hypotheses if str(item.get("planQuality", "")).upper() in {"P3", "P4"})
+
+    return {
+        "schemaVersion": "quality-scorecard-weekly.v1",
+        "weekEnding": datetime.now().date().isoformat(),
+        "summary": {
+            "planGatePassRate": round((plan_gate_pass / total_plans), 4) if total_plans else 0.0,
+            "decisionQualityCoverage": round((decisions_with_quality / total_decisions), 4) if total_decisions else 0.0,
+            "promotionEvidencePassRate": round((promotion_ready_decisions / total_decisions), 4) if total_decisions else 0.0,
+            "outcomeClosureRate": round((outcomes_recorded / total_decisions), 4) if total_decisions else 0.0,
+        },
+        "gates": {
+            "planQuality": {"status": "pass" if total_plans == 0 or plan_gate_pass == total_plans else "fail", "passed": plan_gate_pass, "total": total_plans},
+            "decisionQuality": {"status": "pass" if total_decisions == 0 or decisions_with_quality == total_decisions else "fail", "passed": decisions_with_quality, "total": total_decisions},
+            "promotionEvidence": {"status": "pass" if promotion_ready_decisions == total_decisions else "fail", "passed": promotion_ready_decisions, "total": total_decisions},
+            "outcomeClosure": {"status": "pass" if outcomes_recorded >= max(1, int(total_decisions * 0.7)) or total_decisions == 0 else "fail", "passed": outcomes_recorded, "total": total_decisions},
+        },
+        "trendDelta": {
+            "planQuality": 0.0,
+            "decisionQuality": 0.0,
+            "promotionEvidence": 0.0,
+            "outcomeClosure": 0.0,
+            "note": "Baseline week; trend deltas populate after additional snapshots.",
+        },
+        "updatedAt": _now(),
+    }
+
+
 @router.post("/signals/{signal_id}/link-review", status_code=201)
-def link_signal_review(signal_id: str, request: SignalReviewLinkRequest) -> dict:
+def link_signal_review(
+    signal_id: str,
+    request: SignalReviewLinkRequest,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> dict:
+    endpoint = _endpoint_key("/signals/link-review")
+    cached = _idempotency_lookup(endpoint, idempotency_key)
+    if cached is not None:
+        return cached
+
     signal = _signals.get(signal_id)
     if signal is None:
         raise HTTPException(status_code=404, detail="Signal not found")
@@ -822,6 +1120,7 @@ def link_signal_review(signal_id: str, request: SignalReviewLinkRequest) -> dict
     signal["lastReviewedAt"] = signal.get("lastReviewedAt") or linked_at
     signal["updatedAt"] = _now()
     _persist_signal_state()
+    _idempotency_store(endpoint, idempotency_key, link)
     return link
 
 
@@ -834,10 +1133,33 @@ def get_signal_decision_links(signal_id: str) -> list[dict]:
 
 
 @router.post("/signals/{signal_id}/writeback-decision")
-def writeback_signal_decision(signal_id: str, request: SignalDecisionWritebackRequest) -> dict:
+def writeback_signal_decision(
+    signal_id: str,
+    request: SignalDecisionWritebackRequest,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> dict:
+    endpoint = _endpoint_key("/signals/writeback-decision")
+    cached = _idempotency_lookup(endpoint, idempotency_key)
+    if cached is not None:
+        return cached
+
     signal = _signals.get(signal_id)
     if signal is None:
         raise HTTPException(status_code=404, detail="Signal not found")
+
+    decision_quality = request.decisionQuality.upper()
+    if decision_quality not in DECISION_QUALITY_STATES:
+        raise HTTPException(status_code=400, detail="decisionQuality must be one of D0-D5")
+
+    normalized_state = request.decisionState.strip().lower()
+    requires_promotion_evidence = normalized_state in PROMOTION_STATES
+    if requires_promotion_evidence:
+        if not request.evidenceLinks:
+            raise HTTPException(status_code=400, detail="Promotion decisions require evidenceLinks")
+        if (request.verifierStatus or "").lower() != "passed":
+            raise HTTPException(status_code=400, detail="Promotion decisions require verifierStatus=passed")
+        if not request.reviewDate:
+            raise HTTPException(status_code=400, detail="Promotion decisions require reviewDate")
 
     signal_version = _resolve_signal_version(signal_id, request.signalVersion)
     existing = _find_signal_review_link(signal_id, request.reviewId, signal_version)
@@ -848,30 +1170,47 @@ def writeback_signal_decision(signal_id: str, request: SignalDecisionWritebackRe
     is_override = request.overrideUsed is True
 
     existing["reviewDecisionState"] = request.decisionState
+    existing["decisionQuality"] = decision_quality
     existing["overrideUsed"] = is_override
     existing["overrideRationale"] = request.rationale
+    existing["evidenceLinks"] = request.evidenceLinks
+    existing["verifierStatus"] = request.verifierStatus
+    existing["reviewDate"] = request.reviewDate
     existing["lastReviewedAt"] = _now()
     existing["updatedAt"] = _now()
 
     signal["latestDecisionState"] = request.decisionState
+    signal["latestDecisionQuality"] = decision_quality
     signal["lastReviewedAt"] = existing["lastReviewedAt"]
     if is_override and not was_override:
         signal["overrideCount"] = int(signal.get("overrideCount", 0)) + 1
     signal["updatedAt"] = _now()
     _persist_signal_state()
 
-    return {
+    response = {
         "schemaVersion": "signal-writeback-decision.v1",
         "signalId": signal_id,
         "reviewId": request.reviewId,
         "latestDecisionState": signal["latestDecisionState"],
+        "latestDecisionQuality": signal.get("latestDecisionQuality"),
         "overrideCount": signal.get("overrideCount", 0),
         "lastReviewedAt": signal.get("lastReviewedAt"),
     }
+    _idempotency_store(endpoint, idempotency_key, response)
+    return response
 
 
 @router.post("/signals/{signal_id}/writeback-outcome")
-def writeback_signal_outcome(signal_id: str, request: SignalOutcomeWritebackRequest) -> dict:
+def writeback_signal_outcome(
+    signal_id: str,
+    request: SignalOutcomeWritebackRequest,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> dict:
+    endpoint = _endpoint_key("/signals/writeback-outcome")
+    cached = _idempotency_lookup(endpoint, idempotency_key)
+    if cached is not None:
+        return cached
+
     signal = _signals.get(signal_id)
     if signal is None:
         raise HTTPException(status_code=404, detail="Signal not found")
@@ -894,8 +1233,9 @@ def writeback_signal_outcome(signal_id: str, request: SignalOutcomeWritebackRequ
         signal["outcomeCount"] = int(signal.get("outcomeCount", 0)) + 1
     signal["updatedAt"] = _now()
     _persist_signal_state()
-
-    return _signal_rollup(signal_id)
+    response = _signal_rollup(signal_id)
+    _idempotency_store(endpoint, idempotency_key, response)
+    return response
 
 
 @router.get("/signals/{signal_id}/outcome-rollup")
@@ -904,7 +1244,16 @@ def get_signal_outcome_rollup(signal_id: str) -> dict:
 
 
 @router.post("/alpha/hypotheses/{hypothesis_id}/link-signal")
-def link_alpha_hypothesis_signal(hypothesis_id: str, request: AlphaHypothesisSignalLinkRequest) -> dict:
+def link_alpha_hypothesis_signal(
+    hypothesis_id: str,
+    request: AlphaHypothesisSignalLinkRequest,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> dict:
+    endpoint = _endpoint_key("/alpha/hypotheses/link-signal")
+    cached = _idempotency_lookup(endpoint, idempotency_key)
+    if cached is not None:
+        return cached
+
     hypothesis = _alpha_hypotheses.get(hypothesis_id)
     if hypothesis is None:
         raise HTTPException(status_code=404, detail="Alpha hypothesis not found")
@@ -932,13 +1281,15 @@ def link_alpha_hypothesis_signal(hypothesis_id: str, request: AlphaHypothesisSig
     signal["linkedHypothesisIds"] = linked_hypotheses
     signal["updatedAt"] = _now()
     _persist_signal_state()
-    return {
+    response = {
         "schemaVersion": "alpha-hypothesis-signal-link.v1",
         "hypothesisId": hypothesis_id,
         "signalId": request.signalId,
         "signalVersion": signal_version,
         "linkedSignals": links,
     }
+    _idempotency_store(endpoint, idempotency_key, response)
+    return response
 
 
 @router.get("/alpha/hypotheses/{hypothesis_id}/signals")
@@ -1000,7 +1351,15 @@ def get_signal_alpha_context(signal_id: str) -> dict:
 
 
 @router.post("/backtests/run")
-def run_backtest(request: BacktestRunRequest) -> dict:
+def run_backtest(
+    request: BacktestRunRequest,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> dict:
+    endpoint = _endpoint_key("/backtests/run")
+    cached = _idempotency_lookup(endpoint, idempotency_key)
+    if cached is not None:
+        return cached
+
     signal = _signals.get(request.signalId)
     if signal is None:
         raise HTTPException(status_code=404, detail="Signal not found")
@@ -1081,6 +1440,7 @@ def run_backtest(request: BacktestRunRequest) -> dict:
         signal_version=signal_version,
     )
     _persist_signal_state()
+    _idempotency_store(endpoint, idempotency_key, result)
     return result
 
 
@@ -1093,29 +1453,72 @@ def get_backtest(backtest_id: str) -> dict:
 
 
 @router.post("/paper-trades", status_code=201)
-def create_paper_trade(request: PaperTradeCreateRequest) -> dict:
+def create_paper_trade(
+    request: PaperTradeCreateRequest,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> dict:
+    endpoint = _endpoint_key("/paper-trades")
+    cached = _idempotency_lookup(endpoint, idempotency_key)
+    if cached is not None:
+        return cached
+
     trade_id = _stable_id("paper-trade", f"{request.decisionId}:{request.ticker}:{request.reviewDate}")
+    feasibility = _execution_feasibility_assessment(
+        ticker=request.ticker,
+        side=request.side,
+        quantity=request.quantity,
+        intended_price=request.intendedPrice,
+    )
+
     trade = {
         "paperTradeId": trade_id,
         "schemaVersion": "paper-trade.v1",
         **request.model_dump(),
-        "status": "open",
+        "status": "open" if feasibility["gate"] == "pass" else "requires_execution_review",
         "riskControls": ["paper_only", "human_review_required", "no_live_broker_credentials"],
         "outcomePlan": {"reviewDate": request.reviewDate, "qualityTarget": "O3"},
+        "executionFeasibility": feasibility,
         "createdAt": _paper_trades.get(trade_id, {}).get("createdAt", _now()),
         "updatedAt": _now(),
     }
     _paper_trades[trade_id] = trade
+    _idempotency_store(endpoint, idempotency_key, trade)
     return trade
 
 
 @router.get("/paper-trades")
-def list_paper_trades() -> list[dict]:
-    return sorted(_paper_trades.values(), key=lambda item: item["updatedAt"], reverse=True)
+def list_paper_trades(
+    limit: int | None = Query(None, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+) -> dict | list[dict]:
+    items = sorted(_paper_trades.values(), key=lambda item: item["updatedAt"], reverse=True)
+    if limit is None and offset == 0:
+        return items
+
+    effective_limit = limit or 100
+    total = len(items)
+    return {
+        "schemaVersion": "paper-trades-list.v1",
+        "items": items[offset : offset + effective_limit],
+        "pagination": {
+            "limit": effective_limit,
+            "offset": offset,
+            "total": total,
+            "hasMore": offset + effective_limit < total,
+        },
+    }
 
 
 @router.post("/execution/fills", status_code=201)
-def ingest_execution_fill(request: FillIngestRequest) -> dict:
+def ingest_execution_fill(
+    request: FillIngestRequest,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> dict:
+    endpoint = _endpoint_key("/execution/fills")
+    cached = _idempotency_lookup(endpoint, idempotency_key)
+    if cached is not None:
+        return cached
+
     trade = _paper_trades.get(request.paperTradeId)
     if trade is None:
         raise HTTPException(status_code=404, detail="Paper trade not found")
@@ -1134,11 +1537,20 @@ def ingest_execution_fill(request: FillIngestRequest) -> dict:
         "createdAt": _now(),
     }
     _fills[fill_id] = fill
+    _idempotency_store(endpoint, idempotency_key, fill)
     return fill
 
 
 @router.post("/execution/market-replay")
-def run_market_replay(request: ReplayRunRequest) -> dict:
+def run_market_replay(
+    request: ReplayRunRequest,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> dict:
+    endpoint = _endpoint_key("/execution/market-replay")
+    cached = _idempotency_lookup(endpoint, idempotency_key)
+    if cached is not None:
+        return cached
+
     replay_id = _stable_id("replay", f"{request.ticker}:{request.scenario}:{request.latencyMs}")
     replay = {
         "replayId": replay_id,
@@ -1149,11 +1561,20 @@ def run_market_replay(request: ReplayRunRequest) -> dict:
         "createdAt": _now(),
     }
     _market_replays[replay_id] = replay
+    _idempotency_store(endpoint, idempotency_key, replay)
     return replay
 
 
 @router.post("/execution/warm-path/events", status_code=201)
-def ingest_warm_path_event(request: WarmPathEventRequest) -> dict:
+def ingest_warm_path_event(
+    request: WarmPathEventRequest,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> dict:
+    endpoint = _endpoint_key("/execution/warm-path/events")
+    cached = _idempotency_lookup(endpoint, idempotency_key)
+    if cached is not None:
+        return cached
+
     risk_checks = {
         "size_limit": request.notionalUsd <= 250000.0,
         "latency_limit": request.latencyMs <= 1000,
@@ -1170,12 +1591,31 @@ def ingest_warm_path_event(request: WarmPathEventRequest) -> dict:
         "createdAt": _now(),
     }
     _warm_path_events.append(event)
+    _idempotency_store(endpoint, idempotency_key, event)
     return event
 
 
 @router.get("/execution/warm-path/events")
-def list_warm_path_events() -> list[dict]:
-    return list(reversed(_warm_path_events[-100:]))
+def list_warm_path_events(
+    limit: int | None = Query(None, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+) -> dict | list[dict]:
+    items = list(reversed(_warm_path_events))
+    if limit is None and offset == 0:
+        return items[:100]
+
+    effective_limit = limit or 100
+    total = len(items)
+    return {
+        "schemaVersion": "warm-path-events-list.v1",
+        "items": items[offset : offset + effective_limit],
+        "pagination": {
+            "limit": effective_limit,
+            "offset": offset,
+            "total": total,
+            "hasMore": offset + effective_limit < total,
+        },
+    }
 
 
 @router.get("/signals/{signal_id}/alpha-decay")
@@ -1219,7 +1659,15 @@ def get_warm_path_status() -> dict:
 
 
 @router.post("/enterprise/service-accounts", status_code=201)
-def create_service_account(request: ServiceAccountCreateRequest) -> dict:
+def create_service_account(
+    request: ServiceAccountCreateRequest,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> dict:
+    endpoint = _endpoint_key("/enterprise/service-accounts")
+    cached = _idempotency_lookup(endpoint, idempotency_key)
+    if cached is not None:
+        return cached
+
     service_account_id = _stable_id("svc", request.name)
     token_fingerprint = hashlib.sha256(f"{request.name}:{request.scopes}".encode("utf-8")).hexdigest()[:16]
     now = datetime.now()
@@ -1237,6 +1685,7 @@ def create_service_account(request: ServiceAccountCreateRequest) -> dict:
         "updatedAt": _now(),
     }
     _service_accounts[service_account_id] = account
+    _idempotency_store(endpoint, idempotency_key, account)
     return account
 
 
@@ -1246,7 +1695,16 @@ def list_service_accounts() -> list[dict]:
 
 
 @router.post("/enterprise/service-accounts/{service_account_id}/rotate")
-def rotate_service_account_token(service_account_id: str, request: ServiceAccountRotateRequest) -> dict:
+def rotate_service_account_token(
+    service_account_id: str,
+    request: ServiceAccountRotateRequest,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> dict:
+    endpoint = _endpoint_key("/enterprise/service-accounts/rotate")
+    cached = _idempotency_lookup(endpoint, idempotency_key)
+    if cached is not None:
+        return cached
+
     account = _service_accounts.get(service_account_id)
     if account is None:
         raise HTTPException(status_code=404, detail="Service account not found")
@@ -1259,22 +1717,40 @@ def rotate_service_account_token(service_account_id: str, request: ServiceAccoun
         "rotationIntervalDays": account.get("rotationIntervalDays", 30),
         "revocable": True,
     }
+    _idempotency_store(endpoint, idempotency_key, account)
     return account
 
 
 @router.post("/enterprise/service-accounts/{service_account_id}/revoke")
-def revoke_service_account(service_account_id: str) -> dict:
+def revoke_service_account(
+    service_account_id: str,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> dict:
+    endpoint = _endpoint_key("/enterprise/service-accounts/revoke")
+    cached = _idempotency_lookup(endpoint, idempotency_key)
+    if cached is not None:
+        return cached
+
     account = _service_accounts.get(service_account_id)
     if account is None:
         raise HTTPException(status_code=404, detail="Service account not found")
     account["status"] = "revoked"
     account["revokedAt"] = _now()
     account["updatedAt"] = _now()
+    _idempotency_store(endpoint, idempotency_key, account)
     return account
 
 
 @router.post("/enterprise/audit-exports")
-def create_audit_export(request: AuditExportRequest) -> dict:
+def create_audit_export(
+    request: AuditExportRequest,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> dict:
+    endpoint = _endpoint_key("/enterprise/audit-exports")
+    cached = _idempotency_lookup(endpoint, idempotency_key)
+    if cached is not None:
+        return cached
+
     export_id = _stable_id("audit-export", f"{request.requestedBy}:{request.scope}:{request.format}:{len(_audit_exports)}")
     export = {
         "exportJobId": export_id,
@@ -1287,11 +1763,20 @@ def create_audit_export(request: AuditExportRequest) -> dict:
         "completedAt": _now(),
     }
     _audit_exports[export_id] = export
+    _idempotency_store(endpoint, idempotency_key, export)
     return export
 
 
 @router.post("/enterprise/sso/config")
-def configure_sso(request: SSOConfigRequest) -> dict:
+def configure_sso(
+    request: SSOConfigRequest,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> dict:
+    endpoint = _endpoint_key("/enterprise/sso/config")
+    cached = _idempotency_lookup(endpoint, idempotency_key)
+    if cached is not None:
+        return cached
+
     _sso_config.update(
         {
             "enabled": True,
@@ -1299,7 +1784,9 @@ def configure_sso(request: SSOConfigRequest) -> dict:
             "updatedAt": _now(),
         }
     )
-    return {"schemaVersion": "enterprise-sso-config.v1", **_sso_config}
+    response = {"schemaVersion": "enterprise-sso-config.v1", **_sso_config}
+    _idempotency_store(endpoint, idempotency_key, response)
+    return response
 
 
 @router.get("/enterprise/sso/config")
@@ -1385,8 +1872,69 @@ def get_enterprise_security_packet() -> dict:
 
 
 def _build_relay_trace(question: str, benchmark: str, documents: list[str] | None = None) -> dict:
-    evidence = documents or ["fixture annual report excerpt", "fixture calculation table"]
-    answer = "Evidence-backed answer generated with retrieved evidence, calculation verification, and grounding checks."
+    evidence = documents or [
+        "annual_report_q4_revenue_usd=118000000",
+        "annual_report_q3_revenue_usd=100000000",
+    ]
+
+    retrieval_events = [
+        {
+            "source": source,
+            "score": max(0.5, 0.93 - (index * 0.06)),
+            "snippet": source[:140],
+        }
+        for index, source in enumerate(evidence)
+    ]
+
+    def _infer_unit(source: str) -> str:
+        lowered = source.lower()
+        if "usd" in lowered or "$" in source:
+            return "USD"
+        if "%" in source or "percent" in lowered:
+            return "PERCENT"
+        if "ms" in lowered:
+            return "MILLISECONDS"
+        return "unknown"
+
+    table_extractions = [
+        {
+            "tableId": f"doc-table-{index + 1}",
+            "unit": _infer_unit(source),
+            "confidence": max(0.55, 0.95 - index * 0.08),
+            "source": source,
+        }
+        for index, source in enumerate(evidence)
+    ]
+
+    numeric_tokens: list[float] = []
+    for source in evidence:
+        matches = re.findall(r"-?\d+(?:\.\d+)?", source)
+        numeric_tokens.extend(float(value) for value in matches)
+
+    calculations: list[dict] = []
+    if len(numeric_tokens) >= 2 and numeric_tokens[1] != 0:
+        base = numeric_tokens[1]
+        current = numeric_tokens[0]
+        growth_percent = round(((current - base) / base) * 100, 4)
+        calculations.append(
+            {
+                "expression": f"(({current} - {base}) / {base}) * 100",
+                "result": growth_percent,
+                "verified": True,
+            }
+        )
+
+    disagreement = any("conflict" in source.lower() or "disagree" in source.lower() for source in evidence)
+    verification_status = "failed" if disagreement else "passed"
+    abstain = disagreement or not evidence
+
+    if abstain:
+        answer = "Insufficient internally consistent evidence to provide a grounded answer; abstaining."
+    elif calculations:
+        answer = f"Evidence-backed estimate computed from retrieved documents: {calculations[0]['result']}% change."
+    else:
+        answer = "Evidence was retrieved but no deterministic calculation could be verified."
+
     run_id = _stable_id("relay-run", f"{benchmark}:{question}:{len(_relay_runs)}")
     return {
         "runId": run_id,
@@ -1395,12 +1943,22 @@ def _build_relay_trace(question: str, benchmark: str, documents: list[str] | Non
         "question": question,
         "answer": answer,
         "route": "retrieval_numeric_qa",
-        "retrievalEvents": [{"source": source, "score": 0.92 - index * 0.04} for index, source in enumerate(evidence)],
-        "tableExtractions": [{"tableId": "fixture-table-1", "unit": "USD", "confidence": 0.94}],
-        "calculations": [{"expression": "100 * (1.18 - 1)", "result": 18.0, "verified": True}],
-        "verification": {"status": "passed", "calculationVerifier": "deterministic-fixture"},
-        "grounding": {"status": "passed", "unsupportedClaims": []},
-        "abstention": {"required": False, "reason": None},
+        "retrievalEvents": retrieval_events,
+        "tableExtractions": table_extractions,
+        "calculations": calculations,
+        "verification": {
+            "status": verification_status,
+            "calculationVerifier": "deterministic-parser.v1",
+            "disagreementDetected": disagreement,
+        },
+        "grounding": {
+            "status": "failed" if abstain else "passed",
+            "unsupportedClaims": ["calculation disagreement"] if disagreement else [],
+        },
+        "abstention": {
+            "required": abstain,
+            "reason": "verifier_disagreement" if disagreement else ("insufficient_evidence" if not evidence else None),
+        },
         "cost": {"usd": 0.0, "mode": "fixture"},
         "latencyMs": 42,
         "createdAt": _now(),

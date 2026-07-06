@@ -82,8 +82,32 @@ class AmbrosiaClient:
     def relay_scorecard(self) -> JsonObject:
         return self._get("/relay/scorecard")
 
+    def list_relay_runs(self, limit: int | None = None, offset: int = 0) -> JsonObject:
+        path = f"/relay/runs?offset={offset}"
+        if limit is not None:
+            path += f"&limit={limit}"
+        return self._get(path)
+
+    def get_relay_run(self, run_id: str) -> JsonObject:
+        return self._get(f"/relay/runs/{_path(run_id)}")
+
     def create_signal(self, payload: JsonObject) -> JsonObject:
         return self._post("/signals", payload)
+
+    def list_signals(self) -> list[JsonObject]:
+        return self._get("/signals")
+
+    def get_signal(self, signal_id: str) -> JsonObject:
+        return self._get(f"/signals/{_path(signal_id)}")
+
+    def writeback_signal_decision(self, signal_id: str, payload: JsonObject) -> JsonObject:
+        return self._post(f"/signals/{_path(signal_id)}/writeback-decision", payload)
+
+    def writeback_signal_outcome(self, signal_id: str, payload: JsonObject) -> JsonObject:
+        return self._post(f"/signals/{_path(signal_id)}/writeback-outcome", payload)
+
+    def signal_quality_scorecard_weekly(self) -> JsonObject:
+        return self._get("/signals/quality-scorecard/weekly")
 
     def create_alpha_hypothesis(self, payload: JsonObject) -> JsonObject:
         return self._post("/alpha/hypotheses", payload)
@@ -102,6 +126,11 @@ class AmbrosiaClient:
 
     def create_paper_trade(self, payload: JsonObject) -> JsonObject:
         return self._post("/paper-trades", payload)
+
+    def list_paper_trades(self, limit: int | None = None, offset: int = 0) -> Any:
+        if limit is None and offset == 0:
+            return self._get("/paper-trades")
+        return self._get(f"/paper-trades?limit={limit or 100}&offset={offset}")
 
     def create_service_account(self, name: str, scopes: list[str] | None = None) -> JsonObject:
         return self._post("/enterprise/service-accounts", {"name": name, "scopes": scopes or ["public:read"]})
@@ -148,6 +177,9 @@ class AmbrosiaClient:
 
     def list_warm_path_events(self) -> list[JsonObject]:
         return self._get("/execution/warm-path/events")
+
+    def list_service_accounts(self) -> list[JsonObject]:
+        return self._get("/enterprise/service-accounts")
 
     def _get(self, path: str) -> Any:
         return self._request("GET", path)

@@ -18,6 +18,7 @@ REQUIRED = [
     "artifacts/frontend-quality-evidence.json",
     "artifacts/alpha-decay-alerts.json",
     "artifacts/hotpath-readiness.json",
+    "artifacts/hotpath-phase7-governance.json",
 ]
 
 
@@ -38,6 +39,7 @@ def main() -> int:
         frontend = _read_json(ROOT / "artifacts/frontend-quality-evidence.json")
         alpha_decay = _read_json(ROOT / "artifacts/alpha-decay-alerts.json")
         hotpath = _read_json(ROOT / "artifacts/hotpath-readiness.json")
+        hotpath_phase7 = _read_json(ROOT / "artifacts/hotpath-phase7-governance.json")
 
         if index84.get("status") != "passed":
             errors.append("index84 completion status must be passed")
@@ -51,6 +53,8 @@ def main() -> int:
             errors.append("alpha decay evidence status must be passed")
         if hotpath.get("status") != "passed":
             errors.append("hotpath readiness status must be passed")
+        if hotpath_phase7.get("status") != "passed":
+            errors.append("hotpath phase7 governance status must be passed")
 
     if errors:
         print("Index86 closure verification failed:")

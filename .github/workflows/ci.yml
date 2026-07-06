@@ -129,6 +129,9 @@ jobs:
       - name: Verify hot-path service design scaffold
         run: python scripts/verify-hotpath-design.py
 
+      - name: Verify Phase 7 hot-path governance gate
+        run: python scripts/verify-hotpath-phase7.py
+
   # -------------------------------------------------------------------------
   # Gate 4b: Index84 route inventory + exposure-filtered OpenAPI
   # Ensures route classification and public/internal contract artifacts do not drift.

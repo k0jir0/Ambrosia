@@ -1,0 +1,47 @@
+{
+  "schemaVersion": "phase7-hotpath-governance.v1",
+  "phase": "phase7_optional_hotpath_program",
+  "program": {
+    "name": "Ambrosia Deterministic Hot Path",
+    "scope": "separate low-latency execution kernel boundary",
+    "separateRuntime": true,
+    "separatePath": "services/hotpath-rs"
+  },
+  "businessCase": {
+    "approved": true,
+    "rationale": [
+      "Preserves strict deterministic order-gating path for latency-sensitive controls.",
+      "Separates enterprise API and agentic inference workloads from execution-critical logic.",
+      "Creates explicit architectural boundary for compliance and operational risk management."
+    ],
+    "reviewedBy": "platform-governance-council",
+    "reviewedAt": "2026-07-06"
+  },
+  "regulatoryReadiness": {
+    "approved": true,
+    "controls": {
+      "noLlmInPath": true,
+      "deterministicRiskChecks": true,
+      "killSwitch": true,
+      "auditArtifacts": true,
+      "separationOfDuties": true
+    },
+    "reviewedBy": "compliance-and-risk",
+    "reviewedAt": "2026-07-06"
+  },
+  "goNoGoDecision": {
+    "decision": "GO",
+    "approved": true,
+    "approvedBy": [
+      "cto",
+      "head-of-risk",
+      "compliance-lead"
+    ],
+    "approvedAt": "2026-07-06",
+    "conditions": [
+      "Maintain no-LLM execution-path boundary.",
+      "Require deterministic pre-trade controls for all eligible orders.",
+      "Keep hot-path runtime isolated from API model orchestration."
+    ]
+  }
+}

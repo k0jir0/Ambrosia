@@ -56,6 +56,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     subcommands = parser.add_subparsers(dest="resource", required=True)
 
+    commands = subcommands.add_parser("commands", help="Inspect numbered CLI command catalog")
+    commands_sub = commands.add_subparsers(dest="action", required=True)
+    commands_sub.add_parser("list", help="List all commands as numbered entries")
+    commands_show = commands_sub.add_parser("show", help="Show one command by number")
+    commands_show.add_argument("index", type=int)
+
     auth = subcommands.add_parser("auth", help="Manage local auth profile metadata")
     auth_sub = auth.add_subparsers(dest="action", required=True)
     auth_sub.add_parser("login", help="Validate configured token/profile")
@@ -125,6 +131,11 @@ def build_parser() -> argparse.ArgumentParser:
     relay_eval = relay_sub.add_parser("evaluate", help="Evaluate a benchmark question")
     relay_eval.add_argument("--question", required=True)
     relay_sub.add_parser("scorecard", help="Read relay scorecard")
+    relay_runs = relay_sub.add_parser("runs", help="List relay runs")
+    relay_runs.add_argument("--limit", type=int, default=None)
+    relay_runs.add_argument("--offset", type=int, default=0)
+    relay_run_get = relay_sub.add_parser("get", help="Get one relay run")
+    relay_run_get.add_argument("run_id")
 
     signals = subcommands.add_parser("signals", help="Create and inspect signal definitions")
     signals_sub = signals.add_subparsers(dest="action", required=True)
@@ -134,6 +145,24 @@ def build_parser() -> argparse.ArgumentParser:
     signal_create.add_argument("--universe", default="SPY")
     signal_create.add_argument("--horizon", default="20d")
     signals_sub.add_parser("list", help="List signals")
+    signal_get = signals_sub.add_parser("get", help="Get one signal")
+    signal_get.add_argument("signal_id")
+    signal_wb_decision = signals_sub.add_parser("writeback-decision", help="Write back decision quality state")
+    signal_wb_decision.add_argument("--signal-id", required=True)
+    signal_wb_decision.add_argument("--review-id", required=True)
+    signal_wb_decision.add_argument("--decision-state", required=True)
+    signal_wb_decision.add_argument("--decision-quality", default="D2")
+    signal_wb_decision.add_argument("--override-used", action="store_true")
+    signal_wb_decision.add_argument("--rationale", default=None)
+    signal_wb_decision.add_argument("--evidence-links", default="")
+    signal_wb_decision.add_argument("--verifier-status", default=None)
+    signal_wb_decision.add_argument("--review-date", default=None)
+    signal_wb_outcome = signals_sub.add_parser("writeback-outcome", help="Write back signal outcome quality")
+    signal_wb_outcome.add_argument("--signal-id", required=True)
+    signal_wb_outcome.add_argument("--review-id", required=True)
+    signal_wb_outcome.add_argument("--outcome-quality", required=True)
+    signal_wb_outcome.add_argument("--last-reviewed-at", default=None)
+    signals_sub.add_parser("quality-scorecard", help="Read weekly signal quality scorecard")
 
     alpha = subcommands.add_parser("alpha", help="Manage alpha hypotheses and decay analytics")
     alpha_sub = alpha.add_subparsers(dest="action", required=True)
@@ -160,7 +189,9 @@ def build_parser() -> argparse.ArgumentParser:
     paper_create.add_argument("--quantity", type=float, required=True)
     paper_create.add_argument("--side", default="buy")
     paper_create.add_argument("--intended-price", type=float, default=100.0)
-    paper_sub.add_parser("list", help="List paper trades")
+    paper_list = paper_sub.add_parser("list", help="List paper trades")
+    paper_list.add_argument("--limit", type=int, default=None)
+    paper_list.add_argument("--offset", type=int, default=0)
 
     warm = subcommands.add_parser("warm-path", help="Inspect warm-path execution intelligence events")
     warm_sub = warm.add_subparsers(dest="action", required=True)
@@ -169,7 +200,9 @@ def build_parser() -> argparse.ArgumentParser:
     warm_ingest.add_argument("--ticker", required=True)
     warm_ingest.add_argument("--latency-ms", type=int, required=True)
     warm_ingest.add_argument("--notional-usd", type=float, required=True)
-    warm_sub.add_parser("list", help="List recent warm-path events")
+    warm_list = warm_sub.add_parser("list", help="List recent warm-path events")
+    warm_list.add_argument("--limit", type=int, default=None)
+    warm_list.add_argument("--offset", type=int, default=0)
 
     enterprise = subcommands.add_parser("enterprise", help="Enterprise governance operations")
     enterprise_sub = enterprise.add_subparsers(dest="action", required=True)
@@ -181,6 +214,7 @@ def build_parser() -> argparse.ArgumentParser:
     svc_rotate.add_argument("--rotated-by", default="system")
     svc_revoke = enterprise_sub.add_parser("service-account-revoke", help="Revoke a service account")
     svc_revoke.add_argument("service_account_id")
+    enterprise_sub.add_parser("service-accounts", help="List service accounts")
     audit_export = enterprise_sub.add_parser("audit-export", help="Create audit export")
     audit_export.add_argument("--requested-by", default="admin")
     audit_export.add_argument("--scope", default="all")
@@ -199,6 +233,14 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def dispatch(args: argparse.Namespace, client: AmbrosiaClient) -> Any:
+    if args.resource == "commands":
+        catalog = get_command_catalog()
+        if args.action == "show":
+            if args.index < 1 or args.index > len(catalog):
+                raise AmbrosiaApiError(f"Command index out of range: {args.index}")
+            return catalog[args.index - 1]
+        return catalog
+
     if args.resource == "auth":
         return dispatch_auth(args, client)
     if args.resource == "config":
@@ -236,10 +278,41 @@ def dispatch(args: argparse.Namespace, client: AmbrosiaClient) -> Any:
     if args.resource == "plans":
         return client.list_plans() if args.action == "list" else client.get_plan(args.plan_id)
     if args.resource == "relay":
-        return client.relay_scorecard() if args.action == "scorecard" else client.relay_evaluate(args.question)
+        if args.action == "scorecard":
+            return client.relay_scorecard()
+        if args.action == "runs":
+            return client.list_relay_runs(limit=args.limit, offset=args.offset)
+        if args.action == "get":
+            return client.get_relay_run(args.run_id)
+        return client.relay_evaluate(args.question)
     if args.resource == "signals":
         if args.action == "list":
-            return client._get("/signals")
+            return client.list_signals()
+        if args.action == "get":
+            return client.get_signal(args.signal_id)
+        if args.action == "writeback-decision":
+            evidence_links = [link.strip() for link in args.evidence_links.split(",") if link.strip()]
+            payload = {
+                "reviewId": args.review_id,
+                "decisionState": args.decision_state,
+                "decisionQuality": args.decision_quality,
+                "overrideUsed": args.override_used,
+                "rationale": args.rationale,
+                "evidenceLinks": evidence_links,
+                "verifierStatus": args.verifier_status,
+                "reviewDate": args.review_date,
+            }
+            return client.writeback_signal_decision(args.signal_id, payload)
+        if args.action == "writeback-outcome":
+            payload = {
+                "reviewId": args.review_id,
+                "outcomeQuality": args.outcome_quality,
+            }
+            if args.last_reviewed_at:
+                payload["lastReviewedAt"] = args.last_reviewed_at
+            return client.writeback_signal_outcome(args.signal_id, payload)
+        if args.action == "quality-scorecard":
+            return client.signal_quality_scorecard_weekly()
         return client.create_signal(
             {
                 "name": args.name,
@@ -267,7 +340,7 @@ def dispatch(args: argparse.Namespace, client: AmbrosiaClient) -> Any:
         return client.run_backtest(args.signal_id)
     if args.resource == "paper-trades":
         if args.action == "list":
-            return client._get("/paper-trades")
+            return client.list_paper_trades(limit=args.limit, offset=args.offset)
         return client.create_paper_trade(
             {
                 "decisionId": args.decision_id,
@@ -279,7 +352,24 @@ def dispatch(args: argparse.Namespace, client: AmbrosiaClient) -> Any:
         )
     if args.resource == "warm-path":
         if args.action == "list":
-            return client.list_warm_path_events()
+            events = client.list_warm_path_events()
+            if args.limit is None and args.offset == 0:
+                return events
+            if isinstance(events, dict):
+                return events
+            offset = max(0, args.offset)
+            limit = args.limit or 100
+            window = events[offset : offset + limit]
+            return {
+                "schemaVersion": "warm-path-events-list.v1",
+                "items": window,
+                "pagination": {
+                    "limit": limit,
+                    "offset": offset,
+                    "total": len(events),
+                    "hasMore": offset + limit < len(events),
+                },
+            }
         return client.ingest_warm_path_event(
             {
                 "eventType": args.event_type,
@@ -292,6 +382,8 @@ def dispatch(args: argparse.Namespace, client: AmbrosiaClient) -> Any:
     if args.resource == "enterprise":
         if args.action == "service-account":
             return client.create_service_account(args.name, [scope.strip() for scope in args.scopes.split(",") if scope.strip()])
+        if args.action == "service-accounts":
+            return client.list_service_accounts()
         if args.action == "service-account-rotate":
             return client.rotate_service_account(args.service_account_id, rotated_by=args.rotated_by)
         if args.action == "service-account-revoke":
@@ -353,15 +445,81 @@ def load_profile(profile_name: str) -> dict[str, str | None]:
     }
 
 
+def get_command_catalog() -> list[dict[str, Any]]:
+    parser = build_parser()
+    catalog: list[dict[str, Any]] = []
+    root_subparsers = None
+    for action in parser._actions:  # type: ignore[attr-defined]
+        if isinstance(action, argparse._SubParsersAction):  # type: ignore[attr-defined]
+            root_subparsers = action
+            break
+
+    if root_subparsers is None:
+        return catalog
+
+    for resource_name, resource_parser in root_subparsers.choices.items():
+        nested = None
+        for action in resource_parser._actions:  # type: ignore[attr-defined]
+            if isinstance(action, argparse._SubParsersAction):  # type: ignore[attr-defined]
+                nested = action
+                break
+
+        if nested is None:
+            catalog.append(
+                {
+                    "index": len(catalog) + 1,
+                    "command": f"ambrosia {resource_name}",
+                    "resource": resource_name,
+                    "summary": (getattr(resource_parser, "description", None) or "").strip(),
+                }
+            )
+            continue
+
+        for action_name, action_parser in nested.choices.items():
+            usage = (action_parser.format_usage() or "").strip().replace("usage: ", "")
+            catalog.append(
+                {
+                    "index": len(catalog) + 1,
+                    "command": f"ambrosia {resource_name} {action_name}",
+                    "resource": resource_name,
+                    "action": action_name,
+                    "summary": (getattr(action_parser, "description", None) or "").strip(),
+                    "usage": usage,
+                }
+            )
+
+    return catalog
+
+
 def print_json(payload: Any) -> None:
     print(json.dumps(payload, indent=2, sort_keys=True))
 
 
 def print_human(payload: Any) -> None:
+    if isinstance(payload, list) and payload and isinstance(payload[0], dict) and "index" in payload[0] and "command" in payload[0]:
+        print(f"{len(payload)} command(s)")
+        for item in payload:
+            print(f"{item['index']:>3}. {item['command']}")
+        return
+
+    if isinstance(payload, dict) and {"items", "pagination"}.issubset(payload.keys()):
+        items = payload.get("items") if isinstance(payload.get("items"), list) else []
+        pagination = payload.get("pagination") if isinstance(payload.get("pagination"), dict) else {}
+        print(f"{len(items)} item(s) [offset={pagination.get('offset', 0)} limit={pagination.get('limit', len(items))} total={pagination.get('total', len(items))}]")
+        for item in items[:20]:
+            if isinstance(item, dict):
+                print(summary_line(item))
+            else:
+                print(item)
+        return
+
     if isinstance(payload, list):
         print(f"{len(payload)} item(s)")
         for item in payload[:20]:
-            print(summary_line(item))
+            if isinstance(item, dict):
+                print(summary_line(item))
+            else:
+                print(item)
         return
     if isinstance(payload, dict):
         print(summary_line(payload))

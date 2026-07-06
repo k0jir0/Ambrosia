@@ -26,8 +26,11 @@ Supported commands:
 - basic field validity
 - side and symbol policy
 - max notional limit
+- optional price collar via `referencePrice` and `maxSlippageBps`
+- strategy-origin hard reject when payload indicates LLM/model-generated routing
 
 No external calls are done in the decision loop.
+The in-path logic is deterministic and contains no LLM or remote inference hooks.
 
 ## Run
 

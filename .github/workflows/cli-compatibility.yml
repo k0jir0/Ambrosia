@@ -1,0 +1,42 @@
+name: CLI Compatibility
+
+on:
+  push:
+    branches:
+      - main
+      - staging
+      - "feat/**"
+      - "fix/**"
+      - "chore/**"
+  pull_request:
+    branches:
+      - main
+      - staging
+
+jobs:
+  cli-compatibility:
+    name: CLI compatibility (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install SDK and CLI in editable mode
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e packages/sdk-python -e packages/cli pytest
+
+      - name: Run CLI compatibility tests
+        run: python -m pytest packages/cli/tests/test_cli_contract.py -q
+
+      - name: Run SDK/CLI verification script
+        run: python scripts/verify-sdk-cli.py

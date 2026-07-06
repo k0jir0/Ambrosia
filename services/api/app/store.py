@@ -96,6 +96,12 @@ class ReviewStore:
                 self._review_db = review_db
                 self._packet_db = packet_db
                 self._db_enabled = True
+                try:
+                    existing_feedback = review_db.list_feedback_records(limit=5000)
+                    self._feedback_records = {record.id: record for record in existing_feedback}
+                except Exception:
+                    # Keep boot resilient when feedback table is empty/migration pending.
+                    self._feedback_records = {}
             except Exception as exc:  # pragma: no cover - environment dependent
                 self._db_error = str(exc)
                 if self._db_required:
@@ -753,12 +759,26 @@ class ReviewStore:
     # ---------------------------------------------------------------
 
     def save_feedback_record(self, feedback: FeedbackRecord) -> FeedbackRecord:
-        """Save a feedback record (in-memory; TODO: Postgres persistence)."""
+        """Save a feedback record with Postgres durability when available."""
+        if self._db_enabled and self._review_db is not None:
+            try:
+                stored = self._review_db.save_feedback_record(feedback)
+                self._feedback_records[stored.id] = stored
+                return stored
+            except Exception as exc:  # pragma: no cover - environment dependent
+                self._disable_db(exc)
         self._feedback_records[feedback.id] = feedback
         return feedback
 
     def get_feedback_record(self, feedback_id: str) -> FeedbackRecord | None:
         """Retrieve a feedback record by ID."""
+        if self._db_enabled and self._review_db is not None:
+            try:
+                found = self._review_db.get_feedback_record(feedback_id)
+                if found is not None:
+                    return found
+            except Exception as exc:  # pragma: no cover - environment dependent
+                self._disable_db(exc)
         return self._feedback_records.get(feedback_id)
 
     def list_feedback_records(
@@ -769,6 +789,17 @@ class ReviewStore:
         limit: int = 100,
     ) -> list[FeedbackRecord]:
         """List feedback records with optional filtering."""
+        if self._db_enabled and self._review_db is not None:
+            try:
+                return self._review_db.list_feedback_records(
+                    ticker=ticker,
+                    decision_state=decision_state,
+                    outcome=outcome,
+                    limit=limit,
+                )
+            except Exception as exc:  # pragma: no cover - environment dependent
+                self._disable_db(exc)
+
         records = list(self._feedback_records.values())
         
         if ticker:

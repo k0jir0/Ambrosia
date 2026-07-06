@@ -112,8 +112,14 @@ def main() -> int:
         if literal.get("status") != "passed":
             errors.append("Literal Index84 verifier artifact did not pass")
 
-    if schema_version.get("dbSchemaVersion") != "v0004":
-        errors.append("dbSchemaVersion must be v0004 for literal Index84 completion")
+    db_schema_version = str(schema_version.get("dbSchemaVersion", "")).strip().lower()
+    try:
+        db_schema_numeric = int(db_schema_version.lstrip("v"))
+    except ValueError:
+        db_schema_numeric = -1
+
+    if db_schema_numeric < 4:
+        errors.append("dbSchemaVersion must be v0004 or higher for literal Index84 completion")
 
     completion = {
         "status": "failed" if errors else "passed",

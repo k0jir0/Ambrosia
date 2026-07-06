@@ -8,7 +8,10 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 
+from .models import AlphaHypothesisCreate, PaperTradeCreate, SignalCreate, SignalDecisionWriteback, SignalOutcomeWriteback, SignalReviewLink
+
 JsonObject = dict[str, Any]
+PayloadObject = JsonObject | AlphaHypothesisCreate | PaperTradeCreate | SignalCreate | SignalDecisionWriteback | SignalOutcomeWriteback | SignalReviewLink
 Transport = Callable[[str, str, JsonObject | None, dict[str, str], float], JsonObject]
 
 
@@ -91,8 +94,8 @@ class AmbrosiaClient:
     def get_relay_run(self, run_id: str) -> JsonObject:
         return self._get(f"/relay/runs/{_path(run_id)}")
 
-    def create_signal(self, payload: JsonObject) -> JsonObject:
-        return self._post("/signals", payload)
+    def create_signal(self, payload: JsonObject | SignalCreate) -> JsonObject:
+        return self._post("/signals", _as_payload(payload))
 
     def list_signals(self) -> list[JsonObject]:
         return self._get("/signals")
@@ -100,17 +103,20 @@ class AmbrosiaClient:
     def get_signal(self, signal_id: str) -> JsonObject:
         return self._get(f"/signals/{_path(signal_id)}")
 
-    def writeback_signal_decision(self, signal_id: str, payload: JsonObject) -> JsonObject:
-        return self._post(f"/signals/{_path(signal_id)}/writeback-decision", payload)
+    def link_signal_review(self, signal_id: str, payload: JsonObject | SignalReviewLink) -> JsonObject:
+        return self._post(f"/signals/{_path(signal_id)}/link-review", _as_payload(payload))
 
-    def writeback_signal_outcome(self, signal_id: str, payload: JsonObject) -> JsonObject:
-        return self._post(f"/signals/{_path(signal_id)}/writeback-outcome", payload)
+    def writeback_signal_decision(self, signal_id: str, payload: JsonObject | SignalDecisionWriteback) -> JsonObject:
+        return self._post(f"/signals/{_path(signal_id)}/writeback-decision", _as_payload(payload))
+
+    def writeback_signal_outcome(self, signal_id: str, payload: JsonObject | SignalOutcomeWriteback) -> JsonObject:
+        return self._post(f"/signals/{_path(signal_id)}/writeback-outcome", _as_payload(payload))
 
     def signal_quality_scorecard_weekly(self) -> JsonObject:
         return self._get("/signals/quality-scorecard/weekly")
 
-    def create_alpha_hypothesis(self, payload: JsonObject) -> JsonObject:
-        return self._post("/alpha/hypotheses", payload)
+    def create_alpha_hypothesis(self, payload: JsonObject | AlphaHypothesisCreate) -> JsonObject:
+        return self._post("/alpha/hypotheses", _as_payload(payload))
 
     def list_alpha_hypotheses(self) -> list[JsonObject]:
         return self._get("/alpha/hypotheses")
@@ -124,8 +130,8 @@ class AmbrosiaClient:
     def get_alpha_decay(self, signal_id: str) -> JsonObject:
         return self._get(f"/signals/{_path(signal_id)}/alpha-decay")
 
-    def create_paper_trade(self, payload: JsonObject) -> JsonObject:
-        return self._post("/paper-trades", payload)
+    def create_paper_trade(self, payload: JsonObject | PaperTradeCreate) -> JsonObject:
+        return self._post("/paper-trades", _as_payload(payload))
 
     def list_paper_trades(self, limit: int | None = None, offset: int = 0) -> Any:
         if limit is None and offset == 0:
@@ -232,6 +238,12 @@ def _error_message(payload: Any) -> str | None:
         if isinstance(payload.get("detail"), str):
             return payload["detail"]
     return None
+
+
+def _as_payload(payload: PayloadObject) -> JsonObject:
+    if isinstance(payload, dict):
+        return payload
+    return payload.to_payload()
 
 
 def _normalize_ticker(ticker: str) -> str:

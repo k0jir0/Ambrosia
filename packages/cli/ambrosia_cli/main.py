@@ -3,23 +3,30 @@ from __future__ import annotations
 import argparse
 import json
 import os
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any
 
 from ambrosia_sdk import AmbrosiaApiError, AmbrosiaClient
 
+DEFAULT_VERSION = "0.1.0"
+
 
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    profile = load_profile(args.profile)
-    client = AmbrosiaClient(
-        base_url=args.api_url or profile.get("api_url"),
-        token=args.token or profile.get("token"),
-        timeout=args.timeout,
-    )
+
+    if args.resource is None:
+        parser.print_help()
+        return 0
 
     try:
+        profile = load_profile(args.profile)
+        client = AmbrosiaClient(
+            base_url=args.api_url or os.getenv("AMBROSIA_API_URL") or profile.get("api_url"),
+            token=args.token or read_token_file(args.token_file) or os.getenv("AMBROSIA_TOKEN") or profile.get("token"),
+            timeout=args.timeout,
+        )
         result = dispatch(args, client)
     except AmbrosiaApiError as exc:
         payload = {
@@ -39,9 +46,14 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="ambrosia", description="Ambrosia API/CLI decision platform")
-    parser.add_argument("--api-url", default=os.getenv("AMBROSIA_API_URL"), help="Ambrosia API base URL")
-    parser.add_argument("--token", default=os.getenv("AMBROSIA_TOKEN"), help="Bearer token or env-provided token")
+    parser = argparse.ArgumentParser(
+        prog="ambrosia",
+        description="Ambrosia API/CLI decision platform",
+        epilog="Examples: ambrosia commands list | ambrosia health --detailed | ambrosia --json signals list",
+    )
+    parser.add_argument("--api-url", default=None, help="Ambrosia API base URL; overrides AMBROSIA_API_URL and profile config")
+    parser.add_argument("--token", default=None, help="Bearer token; overrides --token-file, AMBROSIA_TOKEN, and profile config")
+    parser.add_argument("--token-file", default=None, help="Read bearer token from a local file instead of exposing it in shell history")
     parser.add_argument("--profile", default="default", help="Profile name from ~/.ambrosia/config.json")
     parser.add_argument("--timeout", type=float, default=65.0, help="Request timeout in seconds")
     parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
@@ -53,14 +65,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--quiet", action="store_true", help="Suppress non-essential human output")
     parser.add_argument("--verbose", action="store_true", help="Include verbose diagnostics when available")
     parser.add_argument("--no-color", action="store_true", help="Accepted for automation; output never relies on color")
+    parser.add_argument("--version", action="version", version=f"%(prog)s {cli_version()}")
 
-    subcommands = parser.add_subparsers(dest="resource", required=True)
+    subcommands = parser.add_subparsers(dest="resource", required=False)
 
     commands = subcommands.add_parser("commands", help="Inspect numbered CLI command catalog")
     commands_sub = commands.add_subparsers(dest="action", required=True)
     commands_sub.add_parser("list", help="List all commands as numbered entries")
     commands_show = commands_sub.add_parser("show", help="Show one command by number")
     commands_show.add_argument("index", type=int)
+
+    subcommands.add_parser("examples", help="Show common command examples")
 
     auth = subcommands.add_parser("auth", help="Manage local auth profile metadata")
     auth_sub = auth.add_subparsers(dest="action", required=True)
@@ -147,6 +162,11 @@ def build_parser() -> argparse.ArgumentParser:
     signals_sub.add_parser("list", help="List signals")
     signal_get = signals_sub.add_parser("get", help="Get one signal")
     signal_get.add_argument("signal_id")
+    signal_link_review = signals_sub.add_parser("link-review", help="Link a review to a signal version")
+    signal_link_review.add_argument("--signal-id", required=True)
+    signal_link_review.add_argument("--review-id", required=True)
+    signal_link_review.add_argument("--hypothesis-id", default=None)
+    signal_link_review.add_argument("--signal-version", type=int, default=None)
     signal_wb_decision = signals_sub.add_parser("writeback-decision", help="Write back decision quality state")
     signal_wb_decision.add_argument("--signal-id", required=True)
     signal_wb_decision.add_argument("--review-id", required=True)
@@ -233,6 +253,9 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def dispatch(args: argparse.Namespace, client: AmbrosiaClient) -> Any:
+    if args.resource == "examples":
+        return get_examples()
+
     if args.resource == "commands":
         catalog = get_command_catalog()
         if args.action == "show":
@@ -290,6 +313,13 @@ def dispatch(args: argparse.Namespace, client: AmbrosiaClient) -> Any:
             return client.list_signals()
         if args.action == "get":
             return client.get_signal(args.signal_id)
+        if args.action == "link-review":
+            payload = {
+                "reviewId": args.review_id,
+                "hypothesisId": args.hypothesis_id,
+                "signalVersion": args.signal_version,
+            }
+            return client.link_signal_review(args.signal_id, payload)
         if args.action == "writeback-decision":
             evidence_links = [link.strip() for link in args.evidence_links.split(",") if link.strip()]
             payload = {
@@ -445,6 +475,36 @@ def load_profile(profile_name: str) -> dict[str, str | None]:
     }
 
 
+def read_token_file(token_file: str | None) -> str | None:
+    if not token_file:
+        return None
+    path = Path(token_file).expanduser()
+    if not path.exists():
+        raise AmbrosiaApiError(f"Token file not found: {path}")
+    token = path.read_text(encoding="utf-8").strip()
+    if not token:
+        raise AmbrosiaApiError(f"Token file is empty: {path}")
+    return token
+
+
+def cli_version() -> str:
+    try:
+        return version("ambrosia-cli")
+    except PackageNotFoundError:
+        return DEFAULT_VERSION
+
+
+def get_examples() -> list[dict[str, str]]:
+    return [
+        {"description": "Show the command catalog", "command": "ambrosia commands list"},
+        {"description": "Read API health", "command": "ambrosia health --detailed"},
+        {"description": "List signals as JSON", "command": "ambrosia --json signals list"},
+        {"description": "Run the scanner", "command": "ambrosia scanner run --universe AAPL,MSFT,SPY --max-candidates 5"},
+        {"description": "Create a signal", "command": "ambrosia signals create --name Momentum --formula \"close/close_20d-1\""},
+        {"description": "Use a token file", "command": "ambrosia --token-file %USERPROFILE%\\.ambrosia\\token health"},
+    ]
+
+
 def get_command_catalog() -> list[dict[str, Any]]:
     parser = build_parser()
     catalog: list[dict[str, Any]] = []
@@ -500,6 +560,20 @@ def print_human(payload: Any) -> None:
         print(f"{len(payload)} command(s)")
         for item in payload:
             print(f"{item['index']:>3}. {item['command']}")
+        return
+
+    if isinstance(payload, list) and payload and isinstance(payload[0], dict) and "description" in payload[0] and "command" in payload[0]:
+        print(f"{len(payload)} example(s)")
+        for item in payload:
+            print(f"- {item['description']}: {item['command']}")
+        return
+
+    if isinstance(payload, dict) and "command" in payload:
+        print(payload["command"])
+        if payload.get("usage"):
+            print(f"usage: {payload['usage']}")
+        if payload.get("summary"):
+            print(payload["summary"])
         return
 
     if isinstance(payload, dict) and {"items", "pagination"}.issubset(payload.keys()):

@@ -1,0 +1,19 @@
+version = 1
+revision = 3
+requires-python = ">=3.11"
+
+[[package]]
+name = "ambrosia-cli"
+version = "0.1.0"
+source = { editable = "." }
+dependencies = [
+    { name = "ambrosia-sdk" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "ambrosia-sdk", editable = "../sdk-python" }]
+
+[[package]]
+name = "ambrosia-sdk"
+version = "0.1.0"
+source = { editable = "../sdk-python" }

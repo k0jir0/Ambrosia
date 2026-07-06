@@ -7,8 +7,8 @@ ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "packages" / "cli"))
 sys.path.insert(0, str(ROOT / "packages" / "sdk-python"))
 
-from ambrosia_cli.main import build_parser, dispatch
-from ambrosia_sdk import AmbrosiaClient
+from ambrosia_cli.main import build_parser, dispatch, main
+from ambrosia_sdk import AmbrosiaClient, SignalCreate, SignalDecisionWriteback
 
 
 def fake_transport(method: str, path: str, body: dict | None, headers: dict[str, str], timeout: float):
@@ -34,6 +34,22 @@ def test_commands_catalog_is_numbered() -> None:
     assert len(result) > 0
     assert result[0]["index"] == 1
     assert "command" in result[0]
+
+
+def test_no_args_prints_help(capsys) -> None:
+    exit_code = main([])
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert "Ambrosia API/CLI decision platform" in captured.out
+
+
+def test_examples_command_is_discoverable() -> None:
+    parser = build_parser()
+    args = parser.parse_args(["examples"])
+    result = dispatch(args, make_client())
+
+    assert any("ambrosia commands list" in item["command"] for item in result)
 
 
 def test_relay_runs_dispatch_path() -> None:
@@ -74,6 +90,44 @@ def test_signal_writeback_decision_payload() -> None:
     assert result["body"]["reviewId"] == "review-9"
     assert result["body"]["decisionQuality"] == "D4"
     assert result["body"]["evidenceLinks"] == ["docs/evidence-a", "docs/evidence-b"]
+
+
+def test_signal_link_review_payload() -> None:
+    parser = build_parser()
+    args = parser.parse_args(
+        [
+            "signals",
+            "link-review",
+            "--signal-id",
+            "signal-1",
+            "--review-id",
+            "review-9",
+            "--hypothesis-id",
+            "alpha-1",
+            "--signal-version",
+            "2",
+        ]
+    )
+    result = dispatch(args, make_client())
+
+    assert result["method"] == "POST"
+    assert result["path"] == "/signals/signal-1/link-review"
+    assert result["body"] == {"reviewId": "review-9", "hypothesisId": "alpha-1", "signalVersion": 2}
+
+
+def test_sdk_typed_signal_payloads_dispatch() -> None:
+    client = make_client()
+
+    signal_result = client.create_signal(SignalCreate(name="Momentum", formula="close/close_20d-1", universe=["SPY"]))
+    decision_result = client.writeback_signal_decision(
+        "signal-1",
+        SignalDecisionWriteback(review_id="review-1", decision_state="pursue", evidence_links=["docs/evidence"]),
+    )
+
+    assert signal_result["body"]["name"] == "Momentum"
+    assert signal_result["body"]["universe"] == ["SPY"]
+    assert decision_result["body"]["reviewId"] == "review-1"
+    assert decision_result["body"]["evidenceLinks"] == ["docs/evidence"]
 
 
 def test_quality_scorecard_route() -> None:

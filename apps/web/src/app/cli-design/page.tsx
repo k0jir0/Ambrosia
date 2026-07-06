@@ -44,9 +44,9 @@ const INSTALL_PATHS = [
     note: "Works today and should remain documented for contributors."
   },
   {
-    title: "Future packaged install",
-    commands: ["pipx install ambrosia-cli", "uv tool install ./packages/cli", "ambrosia --help"],
-    note: "Target experience once CLI packaging declares its SDK dependency cleanly."
+    title: "Local distribution install",
+    commands: ["pnpm cli:install:dist", "pnpm cli:install:path", "ambrosia --version"],
+    note: "Implemented through local wheel artifacts and an optional PATH helper; public pipx/PyPI publishing remains future work."
   },
   {
     title: "Windows operator launcher",
@@ -71,7 +71,7 @@ const DISCOVERY_COMMANDS = ["ambrosia --help", "ambrosia <resource> --help", "am
 const OUTPUT_MODES = [
   { mode: "Human default", example: "ambrosia signals list", purpose: "Readable terminal summaries for interactive use." },
   { mode: "Machine mode", example: "ambrosia --json signals list", purpose: "Stable JSON output for scripts, CI, and higher-level automation." },
-  { mode: "Future modes", example: "--table, --plain, --output path", purpose: "Compact tables, line-oriented output, and generated file destinations." }
+  { mode: "Reserved modes", example: "--table, --yaml, --output path", purpose: "Flags are accepted for automation compatibility; specialized rendering/file output can mature next." }
 ];
 
 const CONFIG_PRIORITY = ["Explicit flags", "Environment variables", "Profile config", "Default local URL"];
@@ -99,12 +99,14 @@ const SDK_METHODS = [
 ];
 
 const TYPED_PAYLOADS = [
-  "ReviewCreate",
-  "SignalCreate",
-  "SignalDecisionWriteback",
-  "SignalOutcomeWriteback",
-  "AlphaHypothesisCreate",
-  "PaperTradeCreate"
+  { name: "SignalCreate", state: "Pass" },
+  { name: "SignalReviewLink", state: "Pass" },
+  { name: "SignalDecisionWriteback", state: "Pass" },
+  { name: "SignalOutcomeWriteback", state: "Pass" },
+  { name: "AlphaHypothesisCreate", state: "Pass" },
+  { name: "PaperTradeCreate", state: "Pass" },
+  { name: "ReviewCreate", state: "Next" },
+  { name: "Enterprise payload helpers", state: "Next" }
 ];
 
 const API_REQUIREMENTS = [
@@ -116,42 +118,66 @@ const API_REQUIREMENTS = [
   "OpenAPI artifacts generated and checked in CI"
 ];
 
+const IMPLEMENTATION_EVIDENCE = [
+  {
+    title: "Self-contained local package graph",
+    detail: "packages/cli/pyproject.toml declares ambrosia-sdk==0.1.0 and a uv local source, so uv sync can install the SDK dependency with the CLI."
+  },
+  {
+    title: "Shell and PATH entrypoints",
+    detail: "Root scripts now expose cli:install, cli:install:dist, cli:install:path, cli:menu, cli:examples, and cli:version."
+  },
+  {
+    title: "Windows local accessibility",
+    detail: "launch-ambrosia-cli-menu.bat and scripts/install-ambrosia-cli.ps1 provide double-click and optional PATH-based access."
+  },
+  {
+    title: "SDK typed payload foundation",
+    detail: "ambrosia_sdk.models adds typed helpers for signals, signal writebacks, alpha hypotheses, and paper trades."
+  },
+  {
+    title: "Safer token path",
+    detail: "The CLI now supports --token-file and auth token presence checks, reducing shell-history exposure for automation."
+  }
+];
+
 const COMPLIANCE = [
-  { item: "Single executable", state: "Pass" },
-  { item: "Noun-verb subcommands", state: "Pass" },
-  { item: "Argparse help", state: "Pass" },
-  { item: "Numbered command menu", state: "Pass" },
-  { item: "Persistent Windows launcher", state: "Pass" },
-  { item: "JSON output", state: "Pass" },
-  { item: "API URL and token configuration", state: "Pass" },
-  { item: "SDK wrapper", state: "Pass" },
-  { item: "One-step local install", state: "Partial" },
-  { item: "SDK dependency declared in CLI package", state: "Needs improvement" },
-  { item: "PATH/global shell install documented", state: "Needs improvement" },
-  { item: "Typed SDK payload models", state: "Needs improvement" },
-  { item: "Secret handling beyond env/flags", state: "Needs improvement" }
+  { item: "Single executable", state: "Pass", evidence: "ambrosia entrypoint remains ambrosia_cli.main:main." },
+  { item: "Noun-verb subcommands", state: "Pass", evidence: "reviews, scanner, signals, alpha, backtests, paper-trades, enterprise, and related resources are exposed." },
+  { item: "Argparse help and examples", state: "Pass", evidence: "Top-level help includes examples, and ambrosia examples is implemented." },
+  { item: "Numbered command menu", state: "Pass", evidence: "ambrosia commands list and ambrosia commands show <index> are implemented." },
+  { item: "Persistent Windows launcher", state: "Pass", evidence: "launch-ambrosia-cli-menu.bat is present as the operator bridge." },
+  { item: "JSON output", state: "Pass", evidence: "--json emits structured payloads for script use." },
+  { item: "API URL and token configuration", state: "Pass", evidence: "Flags, environment variables, profile config, and --token-file are supported." },
+  { item: "SDK wrapper", state: "Pass", evidence: "AmbrosiaClient covers the major public resource methods." },
+  { item: "One-step local install", state: "Pass", evidence: "pnpm cli:install and uv sync now resolve the local SDK dependency." },
+  { item: "SDK dependency declared in CLI package", state: "Pass", evidence: "ambrosia-sdk==0.1.0 is declared in packages/cli/pyproject.toml." },
+  { item: "PATH/global shell install documented", state: "Pass", evidence: "README and scripts/install-ambrosia-cli.ps1 document optional AddToPath flows." },
+  { item: "Typed SDK payload models", state: "Partial", evidence: "Signal, writeback, alpha, and paper-trade payloads exist; review and enterprise helper models remain." },
+  { item: "Secret handling beyond env/flags", state: "Partial", evidence: "--token-file and token presence checks exist; secure OS credential storage is still future work." },
+  { item: "Public pipx/PyPI distribution", state: "Future", evidence: "Local wheel and executable flows exist; public package publishing is not yet shipped." }
 ];
 
 const ROADMAP = [
   {
     phase: "Phase 1",
-    title: "Make local install reliable",
-    items: ["Add SDK dependency declaration to CLI package.", "Add a root cli:menu script.", "Document uv and pipx installation."]
+    title: "Local install reliability",
+    items: ["Done: SDK dependency declared in CLI package.", "Done: root cli:menu and install scripts are present.", "Done: local uv and distribution install paths are documented."]
   },
   {
     phase: "Phase 2",
-    title: "Make shell access first-class",
-    items: ["Provide a Windows PowerShell install script.", "Offer an optional PATH setup helper.", "Add ambrosia --version."]
+    title: "Shell access",
+    items: ["Done: Windows PowerShell installer exists.", "Done: optional PATH helper exists.", "Done: ambrosia --version is implemented.", "Next: public pipx/PyPI release path."]
   },
   {
     phase: "Phase 3",
     title: "Improve discoverability",
-    items: ["Improve top-level help with examples.", "Add ambrosia examples or quickstart.", "Group command catalog by domain."]
+    items: ["Done: top-level help includes examples.", "Done: ambrosia examples exists.", "Next: group command catalog by domain."]
   },
   {
     phase: "Phase 4",
     title: "Strengthen SDK types",
-    items: ["Add typed payload models for common objects.", "Keep a dict escape hatch.", "Match SDK examples to CLI groups."]
+    items: ["Partial: typed models exist for signal, alpha, writeback, and paper-trade paths.", "Done: dict escape hatch remains.", "Next: add ReviewCreate and enterprise payload helpers."]
   },
   {
     phase: "Phase 5",
@@ -254,7 +280,8 @@ export default function CliDesignPage() {
           <Badge tone="good">Single executable</Badge>
           <Badge tone="good">Noun-verb commands</Badge>
           <Badge tone="info">SDK aligned</Badge>
-          <Badge tone="warn">Packaging next</Badge>
+          <Badge tone="good">Local install solved</Badge>
+          <Badge tone="warn">Public distribution next</Badge>
         </div>
       </Panel>
 
@@ -296,17 +323,29 @@ export default function CliDesignPage() {
         <SectionTitle eyebrow="Audit" title="Current Ambrosia CLI posture" />
         <div className="mt-4 grid gap-3 lg:grid-cols-[1.15fr_0.85fr]">
           <div className="rounded-md border border-line bg-fog/70 p-4 text-sm">
-            <p className="font-semibold text-ink">Already aligned</p>
+            <p className="font-semibold text-ink">Now implemented</p>
             <p className="mt-2 leading-6 text-ink/70">
-              Ambrosia already has the important shape: one ambrosia executable, noun-first command groups, verb subcommands, --json, --api-url, --token, --timeout, quiet/verbose flags, and command discovery through ambrosia commands list.
+              Ambrosia has the important shape plus the first productization pass: SDK dependency declaration, root install/menu/version scripts, a Windows launcher, local wheel installation, optional PATH setup, examples, --version, --token-file, and initial typed SDK payloads.
             </p>
           </div>
           <div className="rounded-md border border-amber/30 bg-amber/10 p-4 text-sm">
-            <p className="font-semibold text-amber">Main gap</p>
+            <p className="font-semibold text-amber">Remaining gaps</p>
             <p className="mt-2 leading-6 text-ink/75">
-              Accessibility is primarily a packaging issue. The CLI package should declare the SDK dependency so a fresh install is self-contained, then place ambrosia on PATH through pipx, uv tool, or an installer.
+              The old hard blockers are mostly gone. What remains is product polish: public pipx/PyPI distribution, secure OS credential storage, grouped command catalog views, and broader typed SDK payload coverage.
             </p>
           </div>
+        </div>
+      </Panel>
+
+      <Panel className="p-6">
+        <SectionTitle eyebrow="Current Implementation" title="What changed since Index100" />
+        <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+          {IMPLEMENTATION_EVIDENCE.map((item) => (
+            <div key={item.title} className="rounded-md border border-line bg-fog/70 p-4 text-sm">
+              <p className="font-semibold text-ink">{item.title}</p>
+              <p className="mt-2 leading-5 text-ink/70">{item.detail}</p>
+            </div>
+          ))}
         </div>
       </Panel>
 
@@ -421,14 +460,15 @@ export default function CliDesignPage() {
         </Panel>
 
         <Panel className="p-6">
-          <SectionTitle eyebrow="Types" title="Payload helpers to add next" />
+          <SectionTitle eyebrow="Types" title="Payload helper coverage" />
           <p className="mt-3 text-sm leading-6 text-ink/70">
-            The current dict-based SDK is flexible. Typed helpers should reduce user error while preserving a raw escape hatch for newly added API surfaces.
+            The current dict-based SDK remains flexible, while typed helpers now cover the highest-value signal, alpha, and paper-trade paths. Review and enterprise payload models are the next obvious additions.
           </p>
           <ul className="mt-4 grid gap-2 text-sm text-ink/75 md:grid-cols-2">
             {TYPED_PAYLOADS.map((payload) => (
-              <li key={payload} className="rounded-md border border-line bg-fog/70 px-3 py-2 font-mono text-xs">
-                {payload}
+              <li key={payload.name} className="flex items-center justify-between gap-3 rounded-md border border-line bg-fog/70 px-3 py-2 text-xs">
+                <span className="font-mono">{payload.name}</span>
+                <Badge tone={badgeTone(payload.state)}>{payload.state}</Badge>
               </li>
             ))}
           </ul>
@@ -450,9 +490,12 @@ export default function CliDesignPage() {
         <SectionTitle eyebrow="Compliance" title="Index100 assessment" />
         <div className="mt-4 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
           {COMPLIANCE.map((row) => (
-            <div key={row.item} className="flex items-center justify-between gap-3 rounded-md border border-line bg-fog/70 px-3 py-2 text-sm">
-              <span className="text-ink/75">{row.item}</span>
-              <Badge tone={badgeTone(row.state)}>{row.state}</Badge>
+            <div key={row.item} className="rounded-md border border-line bg-fog/70 px-3 py-2 text-sm">
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-ink/75">{row.item}</span>
+                <Badge tone={badgeTone(row.state)}>{row.state}</Badge>
+              </div>
+              <p className="mt-2 text-xs leading-5 text-ink/55">{row.evidence}</p>
             </div>
           ))}
         </div>
@@ -533,7 +576,7 @@ export default function CliDesignPage() {
       <Panel className="p-6">
         <SectionTitle eyebrow="Recommendation" title="Standardize the triangle" />
         <p className="mt-3 max-w-4xl text-sm leading-6 text-ink/75">
-          Ambrosia should keep the current CLI architecture and focus the next work on productization: declare dependencies cleanly, put ambrosia on PATH, document install flows, add typed SDK payloads, preserve the command catalog, and keep CLI, SDK, and API coverage checked in CI.
+          Ambrosia should keep the current CLI architecture and continue productizing from here: publish the install path publicly, add secure local credential storage, complete typed payload coverage, preserve the command catalog, and keep CLI, SDK, and API coverage checked in CI.
         </p>
         <p className="mt-3 text-xs text-ink/55">
           Research basis: Command Line Interface Guidelines, POSIX utility conventions, Azure CLI guidance, AWS CLI guidance, and the local Ambrosia repository audit in index100.txt.
@@ -547,6 +590,7 @@ function badgeTone(state: string): "neutral" | "good" | "warn" | "bad" | "info" 
   if (state === "Pass") return "good";
   if (state === "Partial") return "warn";
   if (state === "Needs improvement") return "bad";
+  if (state === "Next" || state === "Future") return "info";
   return "neutral";
 }
 

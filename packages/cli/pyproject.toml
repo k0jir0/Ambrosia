@@ -3,7 +3,12 @@ name = "ambrosia-cli"
 version = "0.1.0"
 description = "Safe-read command line interface for Ambrosia"
 requires-python = ">=3.11"
-dependencies = []
+dependencies = [
+	"ambrosia-sdk==0.1.0",
+]
+
+[tool.uv.sources]
+ambrosia-sdk = { path = "../sdk-python", editable = true }
 
 [project.scripts]
 ambrosia = "ambrosia_cli.main:main"

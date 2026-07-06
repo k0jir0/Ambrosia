@@ -234,6 +234,11 @@ export default function AlphaPage() {
                   </div>
                 ) : null}
               </div>
+              <div className="mt-2 grid grid-cols-2 gap-2 text-xs text-ink/65 md:grid-cols-3">
+                <span>origin {textOrFallback(item.origin, "manual")}</span>
+                <span>ticker {textOrFallback(item.sourceTicker, inferTicker(item))}</span>
+                <span>promoted {textOrFallback(item.promotedAt, "n/a")}</span>
+              </div>
               {openDataPanels[panelKey("hypothesis", textOrFallback(item.hypothesisId, ""))] ? (
                 <div className="mt-3 rounded-md border border-line bg-paper/70 p-3">
                   {openDataLoading[panelKey("hypothesis", textOrFallback(item.hypothesisId, ""))] ? (
@@ -290,6 +295,12 @@ export default function AlphaPage() {
                     </a>
                   </div>
                 ) : null}
+              </div>
+              <div className="mt-2 grid grid-cols-2 gap-2 text-xs text-ink/65 md:grid-cols-4">
+                <span>status {textOrFallback(item.status, "hypothesis")}</span>
+                <span>origin {textOrFallback(item.origin, "manual")}</span>
+                <span>ticker {textOrFallback(item.sourceTicker, inferTicker(item))}</span>
+                <span>reviews {numberOrFallback(item.linkedReviewCount, "0")}</span>
               </div>
               {openDataPanels[panelKey("signal", textOrFallback(item.signalId, ""))] ? (
                 <div className="mt-3 rounded-md border border-line bg-paper/70 p-3">

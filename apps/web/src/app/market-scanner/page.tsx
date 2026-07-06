@@ -3,8 +3,8 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { Activity, Clock3, LoaderCircle, Play, RefreshCw, Send, SlidersHorizontal } from "lucide-react";
-import { listJobs, runScanner, runScannerAsync } from "@/lib/api";
-import type { JobRecord, ScannerCandidate, ScannerResult, ScannerRunRequest, ScannerSignal } from "@/lib/types";
+import { listJobs, listScannerCandidatePromotions, promoteScannerCandidateToAlpha, runScanner, runScannerAsync, validateSignal } from "@/lib/api";
+import type { JobRecord, ScannerCandidate, ScannerCandidatePromotion, ScannerResult, ScannerRunRequest, ScannerSignal } from "@/lib/types";
 import { Badge, Panel, SectionTitle, cn } from "@/components/ui";
 import { RouteNotice, RouteStatusBadge, type RouteStatus } from "@/components/route-state";
 
@@ -34,7 +34,27 @@ export default function MarketScannerPage() {
   const [minVolume, setMinVolume] = useState(1_000_000);
   const [result, setResult] = useState<ScannerResult>(DEFAULT_RESULT);
   const [jobs, setJobs] = useState<JobRecord[]>([]);
+  const [promotions, setPromotions] = useState<ScannerCandidatePromotion[]>([]);
   const [activeAction, setActiveAction] = useState<"scan" | "queue" | "jobs" | null>(null);
+  const [candidateBusyKey, setCandidateBusyKey] = useState<string | null>(null);
+
+  const promotionByCandidate = useMemo(() => {
+    const byCandidate = new Map<string, ScannerCandidatePromotion>();
+    for (const promotion of promotions) {
+      const key = scannerPromotionKey(promotion.ticker, promotion.signal);
+      const current = byCandidate.get(key);
+      if (!current) {
+        byCandidate.set(key, promotion);
+        continue;
+      }
+      const currentTs = Date.parse(current.promotedAt || "");
+      const nextTs = Date.parse(promotion.promotedAt || "");
+      if (Number.isFinite(nextTs) && (!Number.isFinite(currentTs) || nextTs >= currentTs)) {
+        byCandidate.set(key, promotion);
+      }
+    }
+    return byCandidate;
+  }, [promotions]);
 
   const selectedUniverse = useMemo(() => {
     if (watchlist !== "custom") return WATCHLISTS[watchlist].universe;
@@ -70,6 +90,15 @@ export default function MarketScannerPage() {
     }
   }
 
+  async function refreshPromotions() {
+    try {
+      const records = await listScannerCandidatePromotions();
+      setPromotions(records);
+    } catch {
+      setPromotions([]);
+    }
+  }
+
   async function runScan() {
     setActiveAction("scan");
     setStatus("loading");
@@ -79,6 +108,7 @@ export default function MarketScannerPage() {
       setResult(nextResult);
       setStatus(nextResult.candidates.length === 0 ? "empty" : "success");
       setMessage(nextResult.candidates.length === 0 ? "No candidates matched the current scanner filters." : "Market scanner loaded.");
+      await refreshPromotions();
     } catch (error) {
       setStatus("error");
       setMessage(error instanceof Error ? error.message : "Market scanner endpoint is unavailable.");
@@ -99,6 +129,60 @@ export default function MarketScannerPage() {
       setMessage(error instanceof Error ? error.message : "Unable to queue scanner job.");
     } finally {
       setActiveAction(null);
+    }
+  }
+
+  async function promoteCandidate(candidate: ScannerCandidate) {
+    const busyKey = scannerPromotionKey(candidate.ticker, candidate.signal);
+    setCandidateBusyKey(busyKey);
+    try {
+      const scannerRunId = result.scannedAt || candidate.scannedAt;
+      await promoteScannerCandidateToAlpha({
+        ticker: candidate.ticker,
+        signal: candidate.signal,
+        thesisSuggestion: candidate.thesisSuggestion,
+        score: candidate.score,
+        price: candidate.price,
+        trend: candidate.trend,
+        rsi: candidate.rsi,
+        volume: candidate.volume24h,
+        scannerRunId,
+        universe: selectedUniverse,
+        horizon: "2-6 weeks",
+        costModel: "10 bps round-trip",
+        benchmark: "SPY",
+        owner: "research",
+        promotedBy: "scanner-ui",
+      });
+      await refreshPromotions();
+      setStatus("success");
+      setMessage(`${candidate.ticker} promoted into Alpha Lab.`);
+    } catch (error) {
+      setStatus("error");
+      setMessage(error instanceof Error ? error.message : "Failed to promote scanner candidate.");
+    } finally {
+      setCandidateBusyKey(null);
+    }
+  }
+
+  async function queueValidation(candidate: ScannerCandidate, promotion: ScannerCandidatePromotion | null) {
+    if (!promotion?.signalId) {
+      setStatus("error");
+      setMessage(`Promote ${candidate.ticker} first to queue validation.`);
+      return;
+    }
+    const busyKey = `${scannerPromotionKey(candidate.ticker, candidate.signal)}:validate`;
+    setCandidateBusyKey(busyKey);
+    try {
+      await validateSignal(promotion.signalId, { signalVersion: promotion.signalVersion });
+      await refreshPromotions();
+      setStatus("success");
+      setMessage(`Validation queued for ${promotion.signalId}.`);
+    } catch (error) {
+      setStatus("error");
+      setMessage(error instanceof Error ? error.message : "Failed to run validation for candidate signal.");
+    } finally {
+      setCandidateBusyKey(null);
     }
   }
 
@@ -128,6 +212,8 @@ export default function MarketScannerPage() {
       } catch {
         setJobs([]);
       }
+
+      await refreshPromotions();
     }
 
     void loadInitial();
@@ -235,7 +321,14 @@ export default function MarketScannerPage() {
             </div>
             <div className="mt-4 space-y-2">
               {result.candidates.map((candidate) => (
-                <CandidateRow key={`${candidate.ticker}-${candidate.signal}`} candidate={candidate} />
+                <CandidateRow
+                  key={`${candidate.ticker}-${candidate.signal}`}
+                  candidate={candidate}
+                  promotion={promotionByCandidate.get(scannerPromotionKey(candidate.ticker, candidate.signal)) ?? null}
+                  busyKey={candidateBusyKey}
+                  onPromote={promoteCandidate}
+                  onQueueValidation={queueValidation}
+                />
               ))}
               {result.candidates.length === 0 ? (
                 <div className="rounded-md border border-dashed border-line bg-fog/50 px-3 py-6 text-center text-sm text-ink/60">
@@ -299,7 +392,22 @@ function Metric({ label, value }: { label: string; value: string }) {
   );
 }
 
-function CandidateRow({ candidate }: { candidate: ScannerCandidate }) {
+function CandidateRow({
+  candidate,
+  promotion,
+  busyKey,
+  onPromote,
+  onQueueValidation,
+}: {
+  candidate: ScannerCandidate;
+  promotion: ScannerCandidatePromotion | null;
+  busyKey: string | null;
+  onPromote: (candidate: ScannerCandidate) => Promise<void>;
+  onQueueValidation: (candidate: ScannerCandidate, promotion: ScannerCandidatePromotion | null) => Promise<void>;
+}) {
+  const promoteBusy = busyKey === scannerPromotionKey(candidate.ticker, candidate.signal);
+  const validateBusy = busyKey === `${scannerPromotionKey(candidate.ticker, candidate.signal)}:validate`;
+
   return (
     <div className="rounded-md border border-line bg-fog/70 p-3">
       <div className="grid gap-3 lg:grid-cols-[84px_150px_minmax(0,1fr)_120px_120px] lg:items-center">
@@ -315,9 +423,7 @@ function CandidateRow({ candidate }: { candidate: ScannerCandidate }) {
         </div>
         <div className="flex items-center justify-between gap-2">
           <span className="text-sm font-semibold text-ink">{Math.round(candidate.score * 100)}%</span>
-          <Link href={buildReviewHref(candidate)} className="focus-ring rounded-md border border-line bg-paper px-2 py-1 text-xs font-semibold text-teal">
-            Review
-          </Link>
+          <Badge tone={promotion ? promotionTone(promotion.status) : "neutral"}>{promotion ? promotionLabel(promotion.status) : "Not promoted"}</Badge>
         </div>
       </div>
       <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-ink/55">
@@ -325,6 +431,34 @@ function CandidateRow({ candidate }: { candidate: ScannerCandidate }) {
         <span>{formatCompact(candidate.volume24h)} volume</span>
         <span>{candidate.dataSource}</span>
         <Badge tone={candidate.dataMode === "live" ? "good" : candidate.dataMode === "fallback" ? "warn" : "neutral"}>{candidate.dataMode}</Badge>
+        {promotion?.latestDecisionState ? <span>decision {promotion.latestDecisionState}</span> : null}
+        {typeof promotion?.linkedReviewCount === "number" ? <span>reviews {promotion.linkedReviewCount}</span> : null}
+      </div>
+      <div className="mt-3 flex flex-wrap gap-2">
+        <button
+          type="button"
+          onClick={() => void onPromote(candidate)}
+          disabled={promoteBusy}
+          className="focus-ring inline-flex items-center gap-1 rounded-md bg-teal px-2 py-1 text-xs font-semibold text-fog disabled:opacity-60"
+        >
+          {promoteBusy ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : null}
+          Promote to Alpha
+        </button>
+        <Link href={buildReviewHref(candidate, promotion)} className="focus-ring rounded-md border border-line bg-paper px-2 py-1 text-xs font-semibold text-ink/85">
+          Create Review
+        </Link>
+        <button
+          type="button"
+          onClick={() => void onQueueValidation(candidate, promotion)}
+          disabled={validateBusy || !promotion?.signalId}
+          className="focus-ring inline-flex items-center gap-1 rounded-md border border-line bg-paper px-2 py-1 text-xs font-semibold text-ink/85 disabled:opacity-50"
+        >
+          {validateBusy ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : null}
+          Queue validation
+        </button>
+        <Link href={`/markets/${encodeURIComponent(candidate.ticker)}`} className="focus-ring rounded-md border border-line bg-paper px-2 py-1 text-xs font-semibold text-ink/85">
+          Open ticker intelligence
+        </Link>
       </div>
     </div>
   );
@@ -365,9 +499,10 @@ function signalTone(signal: ScannerSignal): "good" | "warn" | "bad" | "neutral" 
   return "neutral";
 }
 
-function buildReviewHref(candidate: ScannerCandidate) {
+function buildReviewHref(candidate: ScannerCandidate, promotion: ScannerCandidatePromotion | null) {
+  const source = promotion?.signalId ? "alpha" : "scanner";
   const params = new URLSearchParams({
-    source: "scanner",
+    source,
     ticker: candidate.ticker,
     assetClass: "Equities",
     timeHorizon: "2-6 weeks",
@@ -375,7 +510,53 @@ function buildReviewHref(candidate: ScannerCandidate) {
     thesis: candidate.thesisSuggestion,
     sourcePointer: `scanner:${candidate.ticker}:${candidate.signal}:${candidate.scannedAt}`
   });
+
+  if (promotion?.signalId) {
+    params.set("alphaType", "signal");
+    params.set("signalId", promotion.signalId);
+    params.set("alphaSignalVersion", String(promotion.signalVersion ?? 1));
+    params.set("hypothesisId", promotion.hypothesisId ?? "");
+    params.set("alphaTitle", `${candidate.ticker} ${candidate.signal.replace(/_/g, " ")}`);
+    params.set("alphaSignalFamily", candidate.signal.startsWith("momentum") ? "momentum" : candidate.signal.startsWith("mean_reversion") ? "mean_reversion" : "custom");
+    params.set("alphaFormula", `scanner:${candidate.signal}`);
+  }
+
   return `/review/new?${params.toString()}`;
+}
+
+function scannerPromotionKey(ticker: string, signal: string): string {
+  return `${ticker.trim().toUpperCase()}::${signal.trim().toLowerCase()}`;
+}
+
+function promotionLabel(status: ScannerCandidatePromotion["status"]): string {
+  switch (status) {
+    case "alpha_created":
+      return "Alpha created";
+    case "signal_linked":
+      return "Signal linked";
+    case "review_linked":
+      return "Review linked";
+    case "validation_pending":
+      return "Validation pending";
+    case "validation_passed":
+      return "Validation passed";
+    case "active_candidate":
+      return "Active candidate";
+    case "constrained":
+      return "Constrained";
+    case "retired":
+      return "Retired";
+    default:
+      return "Hypothesis";
+  }
+}
+
+function promotionTone(status: ScannerCandidatePromotion["status"]): "good" | "warn" | "bad" | "neutral" | "info" {
+  if (status === "validation_passed" || status === "active_candidate") return "good";
+  if (status === "validation_pending" || status === "review_linked") return "info";
+  if (status === "constrained") return "warn";
+  if (status === "retired") return "bad";
+  return "neutral";
 }
 
 function formatTime(value: string) {

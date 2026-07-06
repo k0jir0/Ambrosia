@@ -322,6 +322,54 @@ export interface ScannerRunRequest {
   signalFilter?: "momentum" | "mean_reversion" | "breadth" | "all";
 }
 
+export type ScannerPromotionStatus =
+  | "alpha_created"
+  | "signal_linked"
+  | "review_linked"
+  | "hypothesis"
+  | "validation_pending"
+  | "validation_passed"
+  | "active_candidate"
+  | "constrained"
+  | "retired";
+
+export interface ScannerCandidatePromoteRequest {
+  ticker: string;
+  signal: string;
+  thesisSuggestion: string;
+  score: number;
+  price: number;
+  trend: string;
+  rsi: number | null;
+  volume: number;
+  scannerRunId?: string;
+  universe: string[];
+  horizon: string;
+  costModel: string;
+  benchmark: string;
+  owner: string;
+  promotedBy: string;
+}
+
+export interface ScannerCandidatePromotion {
+  promotionId: string;
+  candidateKey: string;
+  ticker: string;
+  signal: string;
+  scannerRunId: string;
+  hypothesisId?: string;
+  signalId?: string;
+  signalVersion?: number;
+  promotedAt: string;
+  promotedBy: string;
+  status: ScannerPromotionStatus;
+  linkedReviewCount: number;
+  latestDecisionState?: string;
+  latestOutcomeQuality?: string;
+  latestValidationStatus?: string;
+  latestPolicyEvent?: string;
+}
+
 // ---------------------------------------------------------------------------
 // Report
 // ---------------------------------------------------------------------------

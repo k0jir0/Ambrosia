@@ -24,6 +24,7 @@ _signal_review_links: dict[str, dict] = {}
 _signal_versions: dict[str, list[dict]] = {}
 _signal_validation_runs: dict[str, list[dict]] = {}
 _signal_policy_events: dict[str, list[dict]] = {}
+_scanner_promotions: dict[str, dict] = {}
 _paper_trades: dict[str, dict] = {}
 _fills: dict[str, dict] = {}
 _service_accounts: dict[str, dict] = {}
@@ -75,6 +76,7 @@ def _persist_signal_state() -> None:
         "signalReviewLinks": _signal_review_links,
         "signalValidationRuns": _signal_validation_runs,
         "signalPolicyEvents": _signal_policy_events,
+        "scannerPromotions": _scanner_promotions,
     }
     if _index84_db is not None:
         try:
@@ -100,6 +102,8 @@ def _load_signal_state() -> None:
                     _signal_validation_runs.update(payload["signalValidationRuns"])
                 if isinstance(payload.get("signalPolicyEvents"), dict):
                     _signal_policy_events.update(payload["signalPolicyEvents"])
+                if isinstance(payload.get("scannerPromotions"), dict):
+                    _scanner_promotions.update(payload["scannerPromotions"])
                 return
         except Exception:
             pass
@@ -121,6 +125,8 @@ def _load_signal_state() -> None:
         _signal_validation_runs.update(payload["signalValidationRuns"])
     if isinstance(payload.get("signalPolicyEvents"), dict):
         _signal_policy_events.update(payload["signalPolicyEvents"])
+    if isinstance(payload.get("scannerPromotions"), dict):
+        _scanner_promotions.update(payload["scannerPromotions"])
 
 
 class ChatMessage(BaseModel):
@@ -160,6 +166,24 @@ class SignalCreateRequest(BaseModel):
     costModel: str = "10 bps round-trip"
     benchmark: str = "SPY"
     validationGates: list[str] = Field(default_factory=lambda: ["point_in_time", "costs", "walk_forward"])
+
+
+class ScannerCandidatePromoteRequest(BaseModel):
+    ticker: str = Field(min_length=1)
+    signal: str = Field(min_length=2)
+    thesisSuggestion: str = Field(min_length=8)
+    score: float = Field(ge=0.0, le=1.0)
+    price: float = Field(gt=0)
+    trend: str = Field(min_length=2)
+    rsi: float | None = None
+    volume: float = Field(ge=0)
+    scannerRunId: str | None = None
+    universe: list[str] = Field(default_factory=list)
+    horizon: str = "20d"
+    costModel: str = "10 bps round-trip"
+    benchmark: str = "SPY"
+    owner: str = "research"
+    promotedBy: str = "scanner-ui"
 
 
 class SignalVersionCreateRequest(BaseModel):
@@ -623,6 +647,146 @@ def get_signal(signal_id: str) -> dict:
     if signal is None:
         raise HTTPException(status_code=404, detail="Signal not found")
     return signal
+
+
+@router.post("/scanner/candidates/promote-alpha", status_code=201)
+def promote_scanner_candidate_to_alpha(
+    request: ScannerCandidatePromoteRequest,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> dict:
+    endpoint = _endpoint_key("/scanner/candidates/promote-alpha")
+    cached = _idempotency_lookup(endpoint, idempotency_key)
+    if cached is not None:
+        return cached
+
+    ticker = request.ticker.strip().upper()
+    signal_tag = request.signal.strip().lower()
+    scanner_run_id = request.scannerRunId or _stable_id("scanner-run", f"{ticker}:{signal_tag}")
+    candidate_key = f"{scanner_run_id}:{ticker}:{signal_tag}"
+
+    for existing in _scanner_promotions.values():
+        if str(existing.get("candidateKey")) == candidate_key:
+            response = {
+                "schemaVersion": "scanner-candidate-promotion.v1",
+                "alreadyPromoted": True,
+                "promotion": _scanner_promotion_summary(existing),
+                "hypothesis": _alpha_hypotheses.get(str(existing.get("hypothesisId") or "")),
+                "signal": _signals.get(str(existing.get("signalId") or "")),
+                "link": {
+                    "hypothesisId": existing.get("hypothesisId"),
+                    "signalId": existing.get("signalId"),
+                    "signalVersion": existing.get("signalVersion"),
+                },
+            }
+            _idempotency_store(endpoint, idempotency_key, response)
+            return response
+
+    signal_label = _scanner_signal_label(signal_tag)
+    signal_family = _scanner_signal_family(signal_tag)
+    universe = request.universe if request.universe else [ticker]
+    promoted_at = _now()
+
+    hypothesis_request = AlphaHypothesisCreateRequest(
+        title=f"{ticker} {signal_label}",
+        signalFamily=signal_family,
+        universe=universe,
+        horizon=request.horizon,
+        thesis=request.thesisSuggestion,
+        disconfirmingTests=_scanner_disconfirming_tests(signal_tag, ticker),
+        costModel=request.costModel,
+        owner=request.owner,
+    )
+    hypothesis = create_alpha_hypothesis(hypothesis_request, None)
+
+    signal_request = SignalCreateRequest(
+        name=f"{ticker} {signal_label} Signal",
+        universe=universe,
+        horizon=request.horizon,
+        formula=_scanner_formula(signal_tag, ticker, request.trend, request.rsi),
+        costModel=request.costModel,
+        benchmark=request.benchmark,
+        validationGates=["point_in_time", "costs", "walk_forward"],
+    )
+    signal = create_signal(signal_request, None)
+
+    link = link_alpha_hypothesis_signal(
+        hypothesis_id=str(hypothesis.get("hypothesisId")),
+        request=AlphaHypothesisSignalLinkRequest(
+            signalId=str(signal.get("signalId")),
+            signalVersion=int(signal.get("activeVersion", signal.get("version", 1))),
+        ),
+        idempotency_key=None,
+    )
+
+    hypothesis_id = str(hypothesis.get("hypothesisId"))
+    signal_id = str(signal.get("signalId"))
+    signal_version = int(signal.get("activeVersion", signal.get("version", 1)))
+
+    _alpha_hypotheses[hypothesis_id]["origin"] = "scanner"
+    _alpha_hypotheses[hypothesis_id]["scannerRunId"] = scanner_run_id
+    _alpha_hypotheses[hypothesis_id]["sourceTicker"] = ticker
+    _alpha_hypotheses[hypothesis_id]["sourceSignal"] = signal_tag
+    _alpha_hypotheses[hypothesis_id]["promotedAt"] = promoted_at
+    _alpha_hypotheses[hypothesis_id]["promotedBy"] = request.promotedBy
+    _alpha_hypotheses[hypothesis_id]["updatedAt"] = _now()
+
+    _signals[signal_id]["origin"] = "scanner"
+    _signals[signal_id]["scannerRunId"] = scanner_run_id
+    _signals[signal_id]["sourceTicker"] = ticker
+    _signals[signal_id]["sourceSignal"] = signal_tag
+    _signals[signal_id]["promotedAt"] = promoted_at
+    _signals[signal_id]["promotedBy"] = request.promotedBy
+    _signals[signal_id]["updatedAt"] = _now()
+
+    promotion_id = _stable_id("scanner-promotion", candidate_key)
+    promotion_record = {
+        "promotionId": promotion_id,
+        "schemaVersion": "scanner-candidate-promotion.v1",
+        "candidateKey": candidate_key,
+        "scannerRunId": scanner_run_id,
+        "ticker": ticker,
+        "signal": signal_tag,
+        "score": request.score,
+        "price": request.price,
+        "trend": request.trend,
+        "rsi": request.rsi,
+        "volume": request.volume,
+        "universe": universe,
+        "horizon": request.horizon,
+        "costModel": request.costModel,
+        "benchmark": request.benchmark,
+        "owner": request.owner,
+        "promotedBy": request.promotedBy,
+        "promotedAt": promoted_at,
+        "hypothesisId": hypothesis_id,
+        "signalId": signal_id,
+        "signalVersion": signal_version,
+        "updatedAt": _now(),
+    }
+    _scanner_promotions[promotion_id] = promotion_record
+    _persist_signal_state()
+
+    response = {
+        "schemaVersion": "scanner-candidate-promotion.v1",
+        "alreadyPromoted": False,
+        "promotion": _scanner_promotion_summary(promotion_record),
+        "hypothesis": _alpha_hypotheses[hypothesis_id],
+        "signal": _signals[signal_id],
+        "link": {
+            "hypothesisId": hypothesis_id,
+            "signalId": signal_id,
+            "signalVersion": signal_version,
+            "linkedSignals": link.get("linkedSignals", []),
+        },
+    }
+    _idempotency_store(endpoint, idempotency_key, response)
+    return response
+
+
+@router.get("/scanner/candidates/promotions")
+def list_scanner_candidate_promotions() -> list[dict]:
+    records = sorted(_scanner_promotions.values(), key=lambda item: item.get("promotedAt", ""), reverse=True)
+    return [_scanner_promotion_summary(record) for record in records]
 
 
 def _resolve_signal_version(signal_id: str, requested: int | None) -> int:
@@ -1962,4 +2126,93 @@ def _build_relay_trace(question: str, benchmark: str, documents: list[str] | Non
         "cost": {"usd": 0.0, "mode": "fixture"},
         "latencyMs": 42,
         "createdAt": _now(),
+    }
+
+
+def _scanner_signal_family(signal: str) -> str:
+    normalized = signal.strip().lower()
+    if normalized.startswith("momentum"):
+        return "momentum"
+    if normalized.startswith("mean_reversion"):
+        return "mean_reversion"
+    if normalized.startswith("breadth"):
+        return "breadth"
+    return "custom"
+
+
+def _scanner_signal_label(signal: str) -> str:
+    return signal.strip().replace("_", " ").title()
+
+
+def _scanner_disconfirming_tests(signal: str, ticker: str) -> list[str]:
+    family = _scanner_signal_family(signal)
+    if family == "momentum":
+        return [
+            f"{ticker} loses relative strength versus benchmark for 3 consecutive sessions",
+            "Post-cost Sharpe drops below threshold in walk-forward window",
+        ]
+    if family == "mean_reversion":
+        return [
+            f"{ticker} fails to mean-revert within expected horizon windows",
+            "Implementation shortfall exceeds modeled edge",
+        ]
+    return [
+        "Out-of-sample performance fails validation gates",
+        "Regime stability check invalidates core thesis",
+    ]
+
+
+def _scanner_formula(signal: str, ticker: str, trend: str, rsi: float | None) -> str:
+    family = _scanner_signal_family(signal)
+    rsi_text = f"{rsi:.1f}" if rsi is not None else "n/a"
+    if family == "momentum":
+        direction = "up" if "up" in signal else "down"
+        return f"scanner_{ticker.lower()}_momentum_{direction}; trend={trend}; rsi={rsi_text}"
+    if family == "mean_reversion":
+        direction = "up" if "up" in signal else "down"
+        return f"scanner_{ticker.lower()}_mean_reversion_{direction}; trend={trend}; rsi={rsi_text}"
+    return f"scanner_{ticker.lower()}_{signal}; trend={trend}; rsi={rsi_text}"
+
+
+def _scanner_promotion_status(signal: dict | None) -> str:
+    if not isinstance(signal, dict):
+        return "alpha_created"
+    status = str(signal.get("status") or "hypothesis").strip().lower()
+    if status in {"retired", "constrained", "active_candidate", "validation_pending", "validation_passed", "hypothesis"}:
+        return status
+    return "signal_linked"
+
+
+def _scanner_promotion_summary(record: dict) -> dict:
+    signal_id = str(record.get("signalId") or "")
+    signal = _signals.get(signal_id) if signal_id else None
+    latest_validation = _signal_latest_validation(signal_id) if signal_id and signal_id in _signals else None
+    latest_policy = None
+    if signal_id and signal_id in _signals:
+        policy_events = _signal_policy_events.get(signal_id, [])
+        if policy_events:
+            latest_policy = sorted(policy_events, key=lambda item: item.get("createdAt", ""), reverse=True)[0]
+
+    linked_reviews = int((signal or {}).get("linkedReviewCount", 0)) if isinstance(signal, dict) else 0
+    status = _scanner_promotion_status(signal)
+    if linked_reviews > 0 and status == "hypothesis":
+        status = "review_linked"
+
+    return {
+        "promotionId": record.get("promotionId"),
+        "candidateKey": record.get("candidateKey"),
+        "ticker": record.get("ticker"),
+        "signal": record.get("signal"),
+        "scannerRunId": record.get("scannerRunId"),
+        "hypothesisId": record.get("hypothesisId"),
+        "signalId": signal_id or None,
+        "signalVersion": (signal or {}).get("activeVersion", record.get("signalVersion")) if isinstance(signal, dict) else record.get("signalVersion"),
+        "promotedAt": record.get("promotedAt"),
+        "promotedBy": record.get("promotedBy"),
+        "status": status,
+        "linkedReviewCount": linked_reviews,
+        "latestDecisionState": (signal or {}).get("latestDecisionState") if isinstance(signal, dict) else None,
+        "latestOutcomeQuality": (signal or {}).get("latestOutcomeQuality") if isinstance(signal, dict) else None,
+        "latestValidationStatus": (latest_validation or {}).get("status") if isinstance(latest_validation, dict) else None,
+        "latestPolicyEvent": (latest_policy or {}).get("eventType") if isinstance(latest_policy, dict) else None,
     }

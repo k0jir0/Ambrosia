@@ -11,6 +11,8 @@ import type {
   ProviderMode,
   ReportArtifact,
   RetrievalResponse,
+  ScannerCandidatePromoteRequest,
+  ScannerCandidatePromotion,
   RiskEvaluateRequest,
   ScannerResult,
   ScannerRunRequest,
@@ -301,6 +303,24 @@ export async function runScannerAsync(body: ScannerRunRequest = {}): Promise<Job
   return readJsonResponse<JobRecord>(response);
 }
 
+export async function promoteScannerCandidateToAlpha(body: ScannerCandidatePromoteRequest): Promise<Record<string, unknown>> {
+  const apiBaseUrl = getApiBaseUrl();
+  if (!apiBaseUrl) throw new ApiUnavailableError();
+  const response = await fetchWithTimeout(`${apiBaseUrl}/scanner/candidates/promote-alpha`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  return readJsonResponse<Record<string, unknown>>(response);
+}
+
+export async function listScannerCandidatePromotions(): Promise<ScannerCandidatePromotion[]> {
+  const apiBaseUrl = getApiBaseUrl();
+  if (!apiBaseUrl) throw new ApiUnavailableError();
+  const response = await fetchWithTimeout(`${apiBaseUrl}/scanner/candidates/promotions`);
+  return readJsonResponse<ScannerCandidatePromotion[]>(response);
+}
+
 // ---------------------------------------------------------------------------
 // Job queue
 // ---------------------------------------------------------------------------
@@ -371,6 +391,30 @@ type SignalVersionCreateRequest = {
   createdBy?: string;
 };
 
+type SignalCreateRequest = {
+  signalId?: string;
+  name: string;
+  universe?: string[];
+  horizon?: string;
+  formula: string;
+  costModel?: string;
+  benchmark?: string;
+  validationGates?: string[];
+};
+
+type AlphaHypothesisCreateRequest = {
+  hypothesisId?: string;
+  title: string;
+  signalFamily: string;
+  universe?: string[];
+  horizon?: string;
+  thesis: string;
+  planQuality?: string;
+  disconfirmingTests?: string[];
+  costModel?: string;
+  owner?: string;
+};
+
 type SignalDecisionWritebackRequest = {
   reviewId: string;
   signalVersion?: number;
@@ -412,6 +456,28 @@ export async function writebackSignalOutcome(signalId: string, body: SignalOutco
   const apiBaseUrl = getApiBaseUrl();
   if (!apiBaseUrl) throw new ApiUnavailableError();
   const response = await fetchWithTimeout(`${apiBaseUrl}/signals/${encodeURIComponent(signalId)}/writeback-outcome`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  return readJsonResponse<Record<string, unknown>>(response);
+}
+
+export async function createSignal(body: SignalCreateRequest): Promise<Record<string, unknown>> {
+  const apiBaseUrl = getApiBaseUrl();
+  if (!apiBaseUrl) throw new ApiUnavailableError();
+  const response = await fetchWithTimeout(`${apiBaseUrl}/signals`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  return readJsonResponse<Record<string, unknown>>(response);
+}
+
+export async function createAlphaHypothesis(body: AlphaHypothesisCreateRequest): Promise<Record<string, unknown>> {
+  const apiBaseUrl = getApiBaseUrl();
+  if (!apiBaseUrl) throw new ApiUnavailableError();
+  const response = await fetchWithTimeout(`${apiBaseUrl}/alpha/hypotheses`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),

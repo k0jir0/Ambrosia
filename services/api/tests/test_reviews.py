@@ -531,6 +531,64 @@ def test_scanner_run_custom_universe_and_momentum_filter() -> None:
         assert candidate["signal"] in {"momentum_up", "momentum_down"}
 
 
+def test_scanner_candidate_promote_alpha_creates_hypothesis_signal_and_link() -> None:
+    promote_response = client.post(
+        "/scanner/candidates/promote-alpha",
+        json={
+            "ticker": "AAPL",
+            "signal": "momentum_up",
+            "thesisSuggestion": "AAPL trend and RSI support momentum continuation with liquid execution.",
+            "score": 0.82,
+            "price": 210.5,
+            "trend": "uptrend",
+            "rsi": 61.0,
+            "volume": 12_000_000,
+            "scannerRunId": "scanner-run-test-1",
+            "universe": ["AAPL"],
+            "horizon": "2-6 weeks",
+            "costModel": "10 bps round-trip",
+            "benchmark": "SPY",
+            "owner": "research",
+            "promotedBy": "test-suite",
+        },
+    )
+    assert promote_response.status_code == 201
+    payload = promote_response.json()
+
+    assert payload["schemaVersion"] == "scanner-candidate-promotion.v1"
+    assert "hypothesis" in payload
+    assert "signal" in payload
+    assert "link" in payload
+    assert payload["promotion"]["status"] in {
+        "alpha_created",
+        "signal_linked",
+        "hypothesis",
+        "validation_pending",
+        "validation_passed",
+        "active_candidate",
+        "constrained",
+        "retired",
+    }
+
+    signal = payload["signal"]
+    assert signal["origin"] == "scanner"
+    assert signal["sourceTicker"] == "AAPL"
+    assert signal["sourceSignal"] == "momentum_up"
+
+
+def test_scanner_candidate_promotions_endpoint_returns_records() -> None:
+    response = client.get("/scanner/candidates/promotions")
+    assert response.status_code == 200
+    records = response.json()
+    assert isinstance(records, list)
+    assert len(records) >= 1
+    first = records[0]
+    assert "promotionId" in first
+    assert "ticker" in first
+    assert "signal" in first
+    assert "status" in first
+
+
 def test_market_snapshot_freshness_field_is_present() -> None:
     response = client.get("/market/AAPL/snapshot")
     assert response.status_code == 200
@@ -613,7 +671,7 @@ def test_health_detailed_endpoint() -> None:
     assert "store" in health["checks"]
     assert health["checks"]["persistence"]["mode"] in {"memory", "postgres"}
     assert health["checks"]["persistence"]["databaseRequired"] is False
-    assert health["checks"]["persistence"]["dbSchemaVersion"] == "v0004"
+    assert health["checks"]["persistence"]["dbSchemaVersion"] == "v0005"
     assert "marketData" in health["checks"]
     assert "llmProviders" in health["checks"]
     assert "slo" in health

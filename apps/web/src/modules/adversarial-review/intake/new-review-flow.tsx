@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowRight, CircleDashed } from "lucide-react";
 import { Panel, SectionTitle } from "@/components/ui";
-import { linkSignalReview } from "@/lib/api";
+import { createAlphaHypothesis, createSignal, linkAlphaHypothesisSignal, linkSignalReview } from "@/lib/api";
 import { createReviewRecord, setReviewAlphaLink, useReviewArchive } from "@/lib/review-store";
 
 type Step = 1 | 2 | 3;
@@ -82,6 +82,7 @@ export function NewReviewFlow({ initialParams }: NewReviewFlowProps) {
   const [thesis, setThesis] = useState(intakeContext?.thesis ?? "");
   const [sources, setSources] = useState<string[]>(intakeContext?.sourcePointer ? [intakeContext.sourcePointer] : []);
   const [sourceDraft, setSourceDraft] = useState("");
+  const [createAlphaFromReview, setCreateAlphaFromReview] = useState(false);
   const [creating, setCreating] = useState(false);
   const [createMessage, setCreateMessage] = useState<string | null>(null);
 
@@ -111,6 +112,66 @@ export function NewReviewFlow({ initialParams }: NewReviewFlowProps) {
       },
       reviews.length
     );
+
+    const canAutoCreateAlpha = createAlphaFromReview && !intakeContext?.link;
+    if (canAutoCreateAlpha) {
+      try {
+        const title = `${ticker.toUpperCase()} Review-Derived Thesis`;
+        const hypothesis = await createAlphaHypothesis({
+          title,
+          signalFamily: inferSignalFamily(thesis),
+          universe: [ticker.toUpperCase()],
+          horizon: timeHorizon,
+          thesis,
+          planQuality: "P2",
+          disconfirmingTests: [
+            "Null hypothesis remains unresolved with available evidence.",
+            "Post-cost return profile fails validation thresholds.",
+          ],
+          costModel: "10 bps round-trip",
+          owner: "research",
+        });
+
+        const hypothesisId = readText(hypothesis.hypothesisId);
+
+        const signal = await createSignal({
+          name: `${ticker.toUpperCase()} Review Signal`,
+          universe: [ticker.toUpperCase()],
+          horizon: timeHorizon,
+          formula: expression || `review_expression:${ticker.toUpperCase()}`,
+          costModel: "10 bps round-trip",
+          benchmark: "SPY",
+          validationGates: ["point_in_time", "costs", "walk_forward"],
+        });
+
+        const signalId = readText(signal.signalId);
+        const signalVersion = readVersion(signal.activeVersion, signal.version);
+
+        if (hypothesisId && signalId) {
+          await linkAlphaHypothesisSignal(hypothesisId, { signalId, signalVersion });
+          setReviewAlphaLink(review.id, {
+            source: "alpha",
+            objectType: "signal",
+            hypothesisId,
+            signalId,
+            signalVersion,
+            title,
+            signalFamily: inferSignalFamily(thesis),
+            formula: expression,
+            ticker: ticker.toUpperCase(),
+            createdAt: new Date().toISOString(),
+          });
+          await linkSignalReview(signalId, {
+            reviewId: review.id,
+            hypothesisId,
+            signalVersion,
+          });
+          setCreateMessage("Review created and promoted to Alpha Lab.");
+        }
+      } catch {
+        setCreateMessage("Review created; Alpha promotion from review failed, but the review remains available.");
+      }
+    }
 
     if (intakeContext?.link) {
       setReviewAlphaLink(review.id, intakeContext.link);
@@ -232,11 +293,42 @@ export function NewReviewFlow({ initialParams }: NewReviewFlowProps) {
               <CircleDashed className="h-4 w-4" /> {creating ? "Creating review..." : "Create review"}
             </button>
           </div>
+          {!intakeContext?.link ? (
+            <label className="mt-3 flex items-center gap-2 text-sm text-ink/75">
+              <input
+                type="checkbox"
+                checked={createAlphaFromReview}
+                onChange={(event) => setCreateAlphaFromReview(event.target.checked)}
+                className="h-4 w-4 rounded border-line"
+              />
+              Create Alpha from Review
+            </label>
+          ) : null}
           {createMessage ? <p className="mt-3 text-sm text-ink/65">{createMessage}</p> : null}
         </Panel>
       ) : null}
     </div>
   );
+}
+
+function inferSignalFamily(thesis: string): string {
+  const normalized = thesis.toLowerCase();
+  if (normalized.includes("momentum")) return "momentum";
+  if (normalized.includes("mean reversion") || normalized.includes("mean-reversion")) return "mean_reversion";
+  if (normalized.includes("breadth")) return "breadth";
+  if (normalized.includes("quality")) return "quality";
+  if (normalized.includes("macro")) return "macro";
+  return "custom";
+}
+
+function readText(value: unknown): string {
+  return typeof value === "string" ? value : "";
+}
+
+function readVersion(activeVersion: unknown, fallbackVersion: unknown): number {
+  if (typeof activeVersion === "number" && activeVersion >= 1) return Math.floor(activeVersion);
+  if (typeof fallbackVersion === "number" && fallbackVersion >= 1) return Math.floor(fallbackVersion);
+  return 1;
 }
 
 function LabeledInput({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {

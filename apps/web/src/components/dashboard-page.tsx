@@ -16,7 +16,7 @@ export function DashboardPage() {
       if (review.decisionState === null) {
         return {
           id: `${review.id}-decision`,
-          label: `${review.ticker} ${review.title} is awaiting decision`,
+          label: `${reviewHeadline(review.ticker, review.title)} is awaiting decision`,
           cta: "Continue",
           href: `/review/${review.id}`,
         };
@@ -24,14 +24,14 @@ export function DashboardPage() {
       if (review.status === "decision_recorded") {
         return {
           id: `${review.id}-outcome`,
-          label: `${review.ticker} ${review.title} has outcome follow-up due`,
+          label: `${reviewHeadline(review.ticker, review.title)} has outcome follow-up due`,
           cta: "Record",
           href: "/calibration",
         };
       }
       return {
         id: `${review.id}-review`,
-        label: `${review.ticker} ${review.title} has a fresh review update`,
+        label: `${reviewHeadline(review.ticker, review.title)} has a fresh review update`,
         cta: "Open",
         href: `/review/${review.id}`,
       };
@@ -137,6 +137,15 @@ export function DashboardPage() {
       </Panel>
     </div>
   );
+}
+
+function reviewHeadline(ticker: string, title: string): string {
+  const normalizedTicker = ticker.trim();
+  const normalizedTitle = title.trim();
+  if (!normalizedTicker) return normalizedTitle;
+  return normalizedTitle.toUpperCase().startsWith(`${normalizedTicker.toUpperCase()} `)
+    ? normalizedTitle
+    : `${normalizedTicker} ${normalizedTitle}`;
 }
 
 function PulseCard({ label, value, note }: { label: string; value: string; note: string }) {

@@ -350,3 +350,180 @@ export async function getHealthDetailed(): Promise<Record<string, unknown>> {
   const response = await fetchWithTimeout(`${apiBaseUrl}/health/detailed`);
   return readJsonResponse<Record<string, unknown>>(response);
 }
+
+// ---------------------------------------------------------------------------
+// Signal + adversarial review integration
+// ---------------------------------------------------------------------------
+
+type SignalReviewLinkRequest = {
+  reviewId: string;
+  hypothesisId?: string;
+  signalVersion?: number;
+};
+
+type SignalVersionCreateRequest = {
+  horizon?: string;
+  formula?: string;
+  universe?: string[];
+  costModel?: string;
+  benchmark?: string;
+  validationGates?: string[];
+  createdBy?: string;
+};
+
+type SignalDecisionWritebackRequest = {
+  reviewId: string;
+  signalVersion?: number;
+  decisionState: string;
+  rationale?: string;
+  overrideUsed?: boolean;
+};
+
+type SignalOutcomeWritebackRequest = {
+  reviewId: string;
+  signalVersion?: number;
+  outcomeQuality: string;
+  lastReviewedAt?: string;
+};
+
+export async function linkSignalReview(signalId: string, body: SignalReviewLinkRequest): Promise<Record<string, unknown>> {
+  const apiBaseUrl = getApiBaseUrl();
+  if (!apiBaseUrl) throw new ApiUnavailableError();
+  const response = await fetchWithTimeout(`${apiBaseUrl}/signals/${encodeURIComponent(signalId)}/link-review`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  return readJsonResponse<Record<string, unknown>>(response);
+}
+
+export async function writebackSignalDecision(signalId: string, body: SignalDecisionWritebackRequest): Promise<Record<string, unknown>> {
+  const apiBaseUrl = getApiBaseUrl();
+  if (!apiBaseUrl) throw new ApiUnavailableError();
+  const response = await fetchWithTimeout(`${apiBaseUrl}/signals/${encodeURIComponent(signalId)}/writeback-decision`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  return readJsonResponse<Record<string, unknown>>(response);
+}
+
+export async function writebackSignalOutcome(signalId: string, body: SignalOutcomeWritebackRequest): Promise<Record<string, unknown>> {
+  const apiBaseUrl = getApiBaseUrl();
+  if (!apiBaseUrl) throw new ApiUnavailableError();
+  const response = await fetchWithTimeout(`${apiBaseUrl}/signals/${encodeURIComponent(signalId)}/writeback-outcome`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  return readJsonResponse<Record<string, unknown>>(response);
+}
+
+export async function createSignalVersion(signalId: string, body: SignalVersionCreateRequest): Promise<Record<string, unknown>> {
+  const apiBaseUrl = getApiBaseUrl();
+  if (!apiBaseUrl) throw new ApiUnavailableError();
+  const response = await fetchWithTimeout(`${apiBaseUrl}/signals/${encodeURIComponent(signalId)}/versions`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  return readJsonResponse<Record<string, unknown>>(response);
+}
+
+export async function listSignalVersions(signalId: string): Promise<Record<string, unknown>[]> {
+  const apiBaseUrl = getApiBaseUrl();
+  if (!apiBaseUrl) throw new ApiUnavailableError();
+  const response = await fetchWithTimeout(`${apiBaseUrl}/signals/${encodeURIComponent(signalId)}/versions`);
+  return readJsonResponse<Record<string, unknown>[]>(response);
+}
+
+export async function linkAlphaHypothesisSignal(
+  hypothesisId: string,
+  body: { signalId: string; signalVersion?: number }
+): Promise<Record<string, unknown>> {
+  const apiBaseUrl = getApiBaseUrl();
+  if (!apiBaseUrl) throw new ApiUnavailableError();
+  const response = await fetchWithTimeout(`${apiBaseUrl}/alpha/hypotheses/${encodeURIComponent(hypothesisId)}/link-signal`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  return readJsonResponse<Record<string, unknown>>(response);
+}
+
+export async function listAlphaHypothesisSignals(hypothesisId: string): Promise<Record<string, unknown>[]> {
+  const apiBaseUrl = getApiBaseUrl();
+  if (!apiBaseUrl) throw new ApiUnavailableError();
+  const response = await fetchWithTimeout(`${apiBaseUrl}/alpha/hypotheses/${encodeURIComponent(hypothesisId)}/signals`);
+  return readJsonResponse<Record<string, unknown>[]>(response);
+}
+
+export async function validateSignal(
+  signalId: string,
+  body: {
+    signalVersion?: number;
+    runType?: string;
+    sampleWindows?: Record<string, string>;
+    pointInTimeGuaranteed?: boolean;
+    includesCosts?: boolean;
+    includesSlippage?: boolean;
+    includesLiquidity?: boolean;
+  } = {}
+): Promise<Record<string, unknown>> {
+  const apiBaseUrl = getApiBaseUrl();
+  if (!apiBaseUrl) throw new ApiUnavailableError();
+  const response = await fetchWithTimeout(`${apiBaseUrl}/signals/${encodeURIComponent(signalId)}/validate`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  return readJsonResponse<Record<string, unknown>>(response);
+}
+
+export async function listSignalValidationRuns(signalId: string): Promise<Record<string, unknown>[]> {
+  const apiBaseUrl = getApiBaseUrl();
+  if (!apiBaseUrl) throw new ApiUnavailableError();
+  const response = await fetchWithTimeout(`${apiBaseUrl}/signals/${encodeURIComponent(signalId)}/validation-runs`);
+  return readJsonResponse<Record<string, unknown>[]>(response);
+}
+
+async function transitionSignalPolicy(
+  signalId: string,
+  action: "promote" | "constrain" | "retire",
+  body: { signalVersion?: number; actor?: string; reason?: string } = {}
+): Promise<Record<string, unknown>> {
+  const apiBaseUrl = getApiBaseUrl();
+  if (!apiBaseUrl) throw new ApiUnavailableError();
+  const response = await fetchWithTimeout(`${apiBaseUrl}/signals/${encodeURIComponent(signalId)}/${action}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  return readJsonResponse<Record<string, unknown>>(response);
+}
+
+export async function promoteSignal(signalId: string, body: { signalVersion?: number; actor?: string; reason?: string } = {}): Promise<Record<string, unknown>> {
+  return transitionSignalPolicy(signalId, "promote", body);
+}
+
+export async function constrainSignal(signalId: string, body: { signalVersion?: number; actor?: string; reason?: string } = {}): Promise<Record<string, unknown>> {
+  return transitionSignalPolicy(signalId, "constrain", body);
+}
+
+export async function retireSignal(signalId: string, body: { signalVersion?: number; actor?: string; reason?: string } = {}): Promise<Record<string, unknown>> {
+  return transitionSignalPolicy(signalId, "retire", body);
+}
+
+export async function listSignalPolicyEvents(signalId: string): Promise<Record<string, unknown>[]> {
+  const apiBaseUrl = getApiBaseUrl();
+  if (!apiBaseUrl) throw new ApiUnavailableError();
+  const response = await fetchWithTimeout(`${apiBaseUrl}/signals/${encodeURIComponent(signalId)}/policy-events`);
+  return readJsonResponse<Record<string, unknown>[]>(response);
+}
+
+export async function getSignalsProgramMetrics(): Promise<Record<string, unknown>> {
+  const apiBaseUrl = getApiBaseUrl();
+  if (!apiBaseUrl) throw new ApiUnavailableError();
+  const response = await fetchWithTimeout(`${apiBaseUrl}/signals/program-metrics`);
+  return readJsonResponse<Record<string, unknown>>(response);
+}

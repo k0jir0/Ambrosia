@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import { Download, Search } from "lucide-react";
+import { PacketLibraryPanel, ReviewArchivePanel } from "@/components/advanced-panels";
 import { useReviewArchive } from "@/lib/review-store";
 import { Badge, Panel, SectionTitle } from "./ui";
 
@@ -110,6 +111,18 @@ export function HistoryPage() {
           </tbody>
         </table>
       </Panel>
+
+      <Panel className="p-5">
+        <SectionTitle eyebrow="Decision Memory" title="Packet and review lookup" />
+        <p className="mt-3 max-w-3xl text-sm leading-6 text-ink/70">
+          Reusable packet search and compact review history sit alongside the full decision archive.
+        </p>
+      </Panel>
+
+      <section className="grid gap-4 xl:grid-cols-2">
+        <PacketLibraryPanel />
+        <ReviewArchivePanel />
+      </section>
 
       <Panel className="p-4">
         <button type="button" className="focus-ring inline-flex items-center gap-2 rounded-md border border-line px-3 py-2 text-sm">

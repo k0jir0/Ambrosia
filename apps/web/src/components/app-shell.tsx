@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { Activity, BarChart3, ClipboardPlus, Command, Gauge, History, Home, Settings, SlidersHorizontal, Users } from "lucide-react";
+import { Activity, BarChart3, Binary, Building2, ClipboardPlus, Command, FlaskConical, Gauge, History, Home, Layers3, Radar, Settings, SlidersHorizontal, TerminalSquare, Users } from "lucide-react";
 import { cn } from "./ui";
 import { CommandPalette } from "./command-palette";
 
@@ -17,11 +17,17 @@ const NAV_ITEMS: NavItem[] = [
   { href: "/", label: "Dashboard", icon: Home, group: "top" },
   { href: "/review/new", label: "New Review", icon: ClipboardPlus, group: "top" },
   { href: "/markets/AAPL", label: "Market Intelligence", icon: Activity, group: "middle" },
+  { href: "/alpha", label: "Alpha Lab", icon: FlaskConical, group: "middle" },
   { href: "/history", label: "Decision History", icon: History, group: "middle" },
   { href: "/calibration", label: "Calibration", icon: BarChart3, group: "middle" },
+  { href: "/relay-benchmarks", label: "Relay + Benchmarks", icon: Binary, group: "middle" },
+  { href: "/cli-design", label: "CLI Design", icon: TerminalSquare, group: "middle" },
+  { href: "/execution-intelligence", label: "Execution Intelligence", icon: Radar, group: "middle" },
+  { href: "/enterprise", label: "Enterprise", icon: Building2, group: "bottom" },
   { href: "/team", label: "Team", icon: Users, group: "bottom" },
   { href: "/admin", label: "Admin", icon: Settings, group: "bottom" },
-  { href: "/advanced", label: "Advanced", icon: SlidersHorizontal, group: "bottom" }
+  { href: "/advanced", label: "Advanced", icon: SlidersHorizontal, group: "bottom" },
+  { href: "/platform", label: "Platform", icon: Layers3, group: "bottom" }
 ];
 
 const MOBILE_ITEMS = [

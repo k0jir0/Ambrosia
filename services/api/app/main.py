@@ -6,6 +6,7 @@ import json
 import os
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
+from pathlib import Path
 from uuid import uuid4
 
 from fastapi import FastAPI, Header, HTTPException, Query, Request
@@ -36,6 +37,9 @@ from .models import (
     MarketSnapshot,
     OutcomeUpdate,
     RiskEvaluateRequest,
+    RoadmapDecisionRecord,
+    RoadmapOutcomeRecord,
+    RoadmapPlanRecord,
     ReportArtifact,
     RetrievalHit,
     RetrievalRequest,
@@ -85,8 +89,11 @@ from .phase_c_discovery_ui import router as phase_c_ui_router
 from .phase_d_governance_ui import router as phase_d_router
 from .phase_e_execution_loop import router as phase_e_router
 from .phase_e_market_integration import router as market_integration_router
+from .index84_platform import router as index84_platform_router
 
 _executor = ThreadPoolExecutor(max_workers=4)
+ROADMAP_LEDGER_PATH = Path(__file__).resolve().parents[3] / "docs" / "roadmap" / "pdo-ledger.seed.json"
+DB_SCHEMA_VERSION_PATH = Path(__file__).resolve().parents[3] / "infra" / "db" / "schema-version.json"
 
 app = FastAPI(title="Ambrosia Trade Review API", version="0.1.0")
 
@@ -131,6 +138,7 @@ app.include_router(phase_d_router)
 app.include_router(execution_router)
 app.include_router(phase_e_router)
 app.include_router(market_integration_router)
+app.include_router(index84_platform_router)
 
 # Include INDEX61 Completion Status & RBAC
 app.include_router(completion_router)
@@ -213,6 +221,19 @@ def _score_text_match(query: str, text: str) -> float:
 
 def _originating_review_id_from_packet_id(packet_id: str) -> str | None:
     return packet_id[len("pkt-") :] if packet_id.startswith("pkt-") else None
+
+
+def _load_roadmap_seed_plans() -> list[RoadmapPlanRecord]:
+    data = json.loads(ROADMAP_LEDGER_PATH.read_text(encoding="utf-8"))
+    return [RoadmapPlanRecord.model_validate(plan) for plan in data.get("plans", [])]
+
+
+def _load_db_schema_version() -> dict[str, str]:
+    try:
+        data = json.loads(DB_SCHEMA_VERSION_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {"dbSchemaVersion": "unknown"}
+    return {"dbSchemaVersion": str(data.get("dbSchemaVersion", "unknown"))}
 
 
 def _normalize_role(role: str | None) -> str:
@@ -329,6 +350,57 @@ def get_operational_scorecard():
     """Get Index39 operational certification scorecard."""
     scorecard = store.get_operational_scorecard()
     return scorecard.model_dump()
+
+
+@app.post("/roadmap/sync-plans")
+def sync_roadmap_seed_plans() -> dict:
+    plans = store.sync_roadmap_plans(_load_roadmap_seed_plans())
+    return {
+        "status": "ok",
+        "source": str(ROADMAP_LEDGER_PATH),
+        "plansSynced": len(plans),
+        "planIds": [plan.plan_id for plan in plans],
+    }
+
+
+@app.get("/roadmap/plans", response_model=list[RoadmapPlanRecord])
+def list_roadmap_plans() -> list[RoadmapPlanRecord]:
+    return store.list_roadmap_plans()
+
+
+@app.post("/roadmap/plans", response_model=RoadmapPlanRecord)
+def upsert_roadmap_plan(plan: RoadmapPlanRecord) -> RoadmapPlanRecord:
+    return store.upsert_roadmap_plan(plan)
+
+
+@app.get("/roadmap/plans/{plan_id}", response_model=RoadmapPlanRecord)
+def get_roadmap_plan(plan_id: str) -> RoadmapPlanRecord:
+    plan = store.get_roadmap_plan(plan_id)
+    if plan is None:
+        raise HTTPException(status_code=404, detail="Roadmap plan not found")
+    return plan
+
+
+@app.post("/roadmap/plans/{plan_id}/decisions", response_model=RoadmapPlanRecord)
+def record_roadmap_plan_decision(
+    plan_id: str,
+    decision: RoadmapDecisionRecord,
+) -> RoadmapPlanRecord:
+    plan = store.record_roadmap_decision(plan_id, decision)
+    if plan is None:
+        raise HTTPException(status_code=404, detail="Roadmap plan not found")
+    return plan
+
+
+@app.post("/roadmap/decisions/{decision_id}/outcomes", response_model=RoadmapPlanRecord)
+def record_roadmap_decision_outcome(
+    decision_id: str,
+    outcome: RoadmapOutcomeRecord,
+) -> RoadmapPlanRecord:
+    plan = store.record_roadmap_outcome(decision_id, outcome)
+    if plan is None:
+        raise HTTPException(status_code=404, detail="Roadmap decision not found")
+    return plan
 
 
 @app.get("/reviews", response_model=list[TradeReview])
@@ -1145,11 +1217,14 @@ def health_detailed() -> dict:
     
     # Get all calibration metrics
     metrics_board = store.get_calibration_metrics()
+    persistence = {**store.persistence_status(), **_load_db_schema_version()}
 
     alerts: list[str] = []
     failed_jobs = [j for j in jobs if j.state.value == "failed"]
     if failed_jobs:
         alerts.append(f"{len(failed_jobs)} job(s) in failed state — check GET /jobs")
+    if persistence["databaseRequired"] and not persistence["databaseConnected"]:
+        alerts.append("Required Postgres database is unavailable")
     if not mkt_status.get("polygonConfigured"):
         alerts.append("Licensed NYSE data path not configured; market data using Yahoo Finance fallback")
     if cal_alerts:
@@ -1166,6 +1241,7 @@ def health_detailed() -> dict:
         "service": "ambrosia-api",
         "checks": {
             "store": "ok",
+            "persistence": persistence,
             "marketData": mkt_status,
             "llmProviders": provider_status(),
             "calibrationMetrics": {

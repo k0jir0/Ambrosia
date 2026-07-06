@@ -1,0 +1,22 @@
+{
+  "schemaVersion": "alpha-signal.v1",
+  "signalId": "sig-quality-momentum-001",
+  "name": "Quality Momentum With Explicit Cost Drag",
+  "universe": ["SPY", "QQQ", "SOXX"],
+  "horizon": "20 trading days",
+  "hypothesis": "Positive revisions plus improving relative strength should outperform after explicit cost and factor checks.",
+  "featureInputs": ["relative_strength_20d", "earnings_revision_proxy", "realized_volatility_20d"],
+  "costModel": {
+    "commissionsBps": 0.2,
+    "slippageBps": 4.0,
+    "borrowBps": 0.0
+  },
+  "factorExposures": {
+    "marketBeta": 1.05,
+    "size": 0.1,
+    "momentum": 0.42,
+    "quality": 0.31
+  },
+  "validationGates": ["no_lookahead", "walk_forward_split", "cost_adjusted", "factor_exposure_reported"],
+  "decisionLinks": ["P-006", "P-007"]
+}

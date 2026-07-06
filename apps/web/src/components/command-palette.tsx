@@ -24,8 +24,14 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
     const base: ActionItem[] = [
       { id: "new-review", label: "New Review", hint: "Open thesis intake", run: () => navigateTo("/review/new") },
       { id: "dashboard", label: "Dashboard", hint: "Go to command center", run: () => navigateTo("/") },
+      { id: "platform", label: "Platform", hint: "Open Index84 platform overview", run: () => navigateTo("/platform") },
+      { id: "alpha-lab", label: "Alpha Lab", hint: "Open hypothesis and decay monitor", run: () => navigateTo("/alpha") },
+      { id: "execution-intelligence", label: "Execution Intelligence", hint: "Open warm-path and execution diagnostics", run: () => navigateTo("/execution-intelligence") },
       { id: "history", label: "Decision History", hint: "Open archive", run: () => navigateTo("/history") },
-      { id: "calibration", label: "Calibration", hint: "Open performance analytics", run: () => navigateTo("/calibration") }
+      { id: "calibration", label: "Calibration", hint: "Open performance analytics", run: () => navigateTo("/calibration") },
+      { id: "relay-benchmarks", label: "Relay + Benchmarks", hint: "Open relay and benchmark evidence", run: () => navigateTo("/relay-benchmarks") },
+      { id: "cli-design", label: "CLI Design", hint: "Open CLI architecture and command surface", run: () => navigateTo("/cli-design") },
+      { id: "enterprise", label: "Enterprise", hint: "Open enterprise readiness and governance", run: () => navigateTo("/enterprise") }
     ];
 
     if (maybeTicker) {

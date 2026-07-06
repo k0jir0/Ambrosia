@@ -1,0 +1,88 @@
+name: Release CLI and SDK
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+  id-token: write
+  packages: write
+
+jobs:
+  release:
+    name: Build, sign, and package CLI/SDK
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install build tooling
+        run: python -m pip install --upgrade pip build
+
+      - name: Build Python distributions
+        run: |
+          python -m build packages/sdk-python
+          python -m build packages/cli
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push multi-arch CLI image
+        id: docker_build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: packages/cli/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ghcr.io/${{ github.repository_owner }}/ambrosia-cli:${{ github.ref_name }}
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign image with keyless Sigstore
+        run: cosign sign --yes ghcr.io/${{ github.repository_owner }}/ambrosia-cli@${{ steps.docker_build.outputs.digest }}
+
+      - name: Generate checksums
+        run: sha256sum packages/sdk-python/dist/* packages/cli/dist/* > artifacts/release-checksums.sha256
+
+      - name: Generate release evidence
+        env:
+          RELEASE_VERSION: ${{ github.ref_name }}
+          CLI_IMAGE_REF: ghcr.io/${{ github.repository_owner }}/ambrosia-cli
+          CLI_IMAGE_DIGEST: ${{ steps.docker_build.outputs.digest }}
+          SIGNATURE_METHOD: sigstore-cosign-keyless
+          SIGNED_ARTIFACTS: "true"
+        run: python scripts/generate-release-evidence.py
+
+      - name: Verify release readiness
+        run: python scripts/verify-release-readiness.py
+
+      - name: Upload release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-cli-sdk-artifacts
+          path: |
+            artifacts/release-checksums.sha256
+            artifacts/release-evidence.json
+            packages/sdk-python/dist/*
+            packages/cli/dist/*
+          if-no-files-found: error

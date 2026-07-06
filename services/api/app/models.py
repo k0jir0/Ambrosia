@@ -300,6 +300,81 @@ class OutcomeUpdate(BaseModel):
     outcome_date: str
 
 
+PlanQuality = Literal["P0", "P1", "P2", "P3", "P4"]
+DecisionQuality = Literal["D0", "D1", "D2", "D3", "D4", "D5"]
+OutcomeQuality = Literal["O0", "O1", "O2", "O3", "O4", "O5"]
+RoadmapStatus = Literal["proposed", "scoped", "active", "blocked", "done", "deferred"]
+
+
+class RoadmapDecisionRecord(BaseModel):
+    decision_id: str
+    decision_type: str = "implementation"
+    quality: DecisionQuality = "D1"
+    chosen_path: str
+    alternatives_considered: list[str] = Field(default_factory=list)
+    rejected_paths: list[str] = Field(default_factory=list)
+    user_impact: str = ""
+    interface_surface: str = ""
+    evidence_links: list[str] = Field(default_factory=list)
+    calculation_links: list[str] = Field(default_factory=list)
+    confidence: str = ""
+    uncertainty: str = ""
+    risk_controls: list[str] = Field(default_factory=list)
+    human_approver: str = ""
+    automation_tier: str = "manual"
+    review_date: str
+
+
+class RoadmapOutcomeRecord(BaseModel):
+    outcome_id: str
+    quality: OutcomeQuality = "O1"
+    actual_result: str
+    expected_vs_actual: str = ""
+    metric_deltas: list[str] = Field(default_factory=list)
+    attribution: str = ""
+    cost: str = ""
+    latency: str = ""
+    data_quality: str = ""
+    user_feedback: str = ""
+    failure_bucket: str = ""
+    follow_up_actions: list[str] = Field(default_factory=list)
+    memory_update: str
+    next_priority_delta: str = ""
+
+
+class RoadmapPlanRecord(BaseModel):
+    plan_id: str
+    title: str
+    workstream: str
+    owner: str = "TBD"
+    quality: PlanQuality
+    status: RoadmapStatus
+    source_papers: list[str] = Field(default_factory=list)
+    external_citations: list[str] = Field(default_factory=list)
+    objective: str
+    user_value: str
+    primary_users: list[str] = Field(default_factory=list)
+    core_user_tasks: list[str] = Field(default_factory=list)
+    dependencies: list[str] = Field(default_factory=list)
+    assumptions: list[str] = Field(default_factory=list)
+    evidence_required: list[str] = Field(default_factory=list)
+    data_required: list[str] = Field(default_factory=list)
+    validation_method: str
+    ux_validation_method: str = ""
+    decision_gates: list[str] = Field(default_factory=list)
+    success_metrics: list[str] = Field(default_factory=list)
+    failure_metrics: list[str] = Field(default_factory=list)
+    rollback_plan: str
+    security_scope: str = ""
+    accessibility_requirements: list[str] = Field(default_factory=list)
+    performance_budget: str = ""
+    audit_requirements: list[str] = Field(default_factory=list)
+    implementation_slice: str = ""
+    target_milestone: str = ""
+    decisions: list[RoadmapDecisionRecord] = Field(default_factory=list)
+    outcomes: list[RoadmapOutcomeRecord] = Field(default_factory=list)
+
+
 class AlertQueueRecord(BaseModel):
     id: str
     source: str

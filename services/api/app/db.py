@@ -8,7 +8,17 @@ from uuid import NAMESPACE_URL, uuid5
 import psycopg
 from psycopg.rows import dict_row
 
-from .models import AuditEvent, AuditEventCreate, DecisionPacket, DecisionState, ReviewStatus, TradeReview
+from .models import (
+    AuditEvent,
+    AuditEventCreate,
+    DecisionPacket,
+    DecisionState,
+    ReviewStatus,
+    RoadmapDecisionRecord,
+    RoadmapOutcomeRecord,
+    RoadmapPlanRecord,
+    TradeReview,
+)
 
 
 @dataclass
@@ -219,6 +229,144 @@ class PostgresReviewStore:
                         error,
                     ),
                 )
+
+    def save_roadmap_plan(self, plan: RoadmapPlanRecord) -> RoadmapPlanRecord:
+        payload = plan.model_dump(mode="json")
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    INSERT INTO roadmap_plan (
+                        plan_id,
+                        title,
+                        workstream,
+                        owner,
+                        quality,
+                        status,
+                        target_milestone,
+                        artifact
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s::jsonb)
+                    ON CONFLICT (plan_id)
+                    DO UPDATE SET
+                        title = EXCLUDED.title,
+                        workstream = EXCLUDED.workstream,
+                        owner = EXCLUDED.owner,
+                        quality = EXCLUDED.quality,
+                        status = EXCLUDED.status,
+                        target_milestone = EXCLUDED.target_milestone,
+                        artifact = EXCLUDED.artifact,
+                        updated_at = now()
+                    """,
+                    (
+                        plan.plan_id,
+                        plan.title,
+                        plan.workstream,
+                        plan.owner,
+                        plan.quality,
+                        plan.status,
+                        plan.target_milestone,
+                        json.dumps(payload),
+                    ),
+                )
+        return plan
+
+    def list_roadmap_plans(self) -> list[RoadmapPlanRecord]:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT artifact FROM roadmap_plan ORDER BY plan_id")
+                rows = cursor.fetchall()
+        return [RoadmapPlanRecord.model_validate(row["artifact"]) for row in rows]
+
+    def get_roadmap_plan(self, plan_id: str) -> RoadmapPlanRecord | None:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT artifact FROM roadmap_plan WHERE plan_id = %s", (plan_id,))
+                row = cursor.fetchone()
+        if row is None:
+            return None
+        return RoadmapPlanRecord.model_validate(row["artifact"])
+
+    def save_roadmap_decision(
+        self,
+        plan_id: str,
+        decision: RoadmapDecisionRecord,
+    ) -> RoadmapPlanRecord | None:
+        plan = self.get_roadmap_plan(plan_id)
+        if plan is None:
+            return None
+
+        decisions = [item for item in plan.decisions if item.decision_id != decision.decision_id]
+        updated = plan.model_copy(update={"decisions": [*decisions, decision]})
+        payload = decision.model_dump(mode="json")
+
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    INSERT INTO roadmap_decision (decision_id, plan_id, decision_type, quality, artifact)
+                    VALUES (%s, %s, %s, %s, %s::jsonb)
+                    ON CONFLICT (decision_id)
+                    DO UPDATE SET
+                        plan_id = EXCLUDED.plan_id,
+                        decision_type = EXCLUDED.decision_type,
+                        quality = EXCLUDED.quality,
+                        artifact = EXCLUDED.artifact
+                    """,
+                    (
+                        decision.decision_id,
+                        plan_id,
+                        decision.decision_type,
+                        decision.quality,
+                        json.dumps(payload),
+                    ),
+                )
+        return self.save_roadmap_plan(updated)
+
+    def save_roadmap_outcome(
+        self,
+        decision_id: str,
+        outcome: RoadmapOutcomeRecord,
+    ) -> RoadmapPlanRecord | None:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT plan_id FROM roadmap_decision WHERE decision_id = %s",
+                    (decision_id,),
+                )
+                row = cursor.fetchone()
+        if row is None:
+            return None
+
+        plan_id = row["plan_id"]
+        plan = self.get_roadmap_plan(plan_id)
+        if plan is None:
+            return None
+
+        outcomes = [item for item in plan.outcomes if item.outcome_id != outcome.outcome_id]
+        updated = plan.model_copy(update={"outcomes": [*outcomes, outcome]})
+        payload = outcome.model_dump(mode="json")
+
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    INSERT INTO roadmap_outcome (outcome_id, decision_id, quality, artifact)
+                    VALUES (%s, %s, %s, %s::jsonb)
+                    ON CONFLICT (outcome_id)
+                    DO UPDATE SET
+                        decision_id = EXCLUDED.decision_id,
+                        quality = EXCLUDED.quality,
+                        artifact = EXCLUDED.artifact
+                    """,
+                    (
+                        outcome.outcome_id,
+                        decision_id,
+                        outcome.quality,
+                        json.dumps(payload),
+                    ),
+                )
+        return self.save_roadmap_plan(updated)
 
 
 class PostgresPacketStore:

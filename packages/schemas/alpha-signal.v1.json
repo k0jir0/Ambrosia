@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ambrosia.local/schemas/alpha-signal.v1.json",
+  "title": "Ambrosia Alpha Signal",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "signalId",
+    "name",
+    "universe",
+    "horizon",
+    "hypothesis",
+    "featureInputs",
+    "costModel",
+    "factorExposures",
+    "validationGates",
+    "decisionLinks"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "alpha-signal.v1" },
+    "signalId": { "type": "string" },
+    "name": { "type": "string" },
+    "universe": { "type": "array", "items": { "type": "string" } },
+    "horizon": { "type": "string" },
+    "hypothesis": { "type": "string" },
+    "featureInputs": { "type": "array", "items": { "type": "string" } },
+    "costModel": {
+      "type": "object",
+      "required": ["commissionsBps", "slippageBps", "borrowBps"],
+      "properties": {
+        "commissionsBps": { "type": "number" },
+        "slippageBps": { "type": "number" },
+        "borrowBps": { "type": "number" }
+      }
+    },
+    "factorExposures": { "type": "object" },
+    "validationGates": { "type": "array", "items": { "type": "string" } },
+    "decisionLinks": { "type": "array", "items": { "type": "string" } }
+  }
+}

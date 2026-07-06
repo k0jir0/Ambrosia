@@ -584,6 +584,14 @@
     "auditEvent": "reviews.write"
   },
   {
+    "method": "POST",
+    "path": "/reviews/seed-index97",
+    "exposure": "user",
+    "frontendRoute": "/review/new",
+    "requiredRole": "user",
+    "auditEvent": "reviews.seed-index97.write"
+  },
+  {
     "method": "GET",
     "path": "/reviews/{review_id}",
     "exposure": "user",

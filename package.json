@@ -56,6 +56,8 @@
     "docs:consistency:check": "python scripts/verify-docs-consistency.py",
     "hotpath:design:check": "python scripts/verify-hotpath-design.py",
     "hotpath:phase7:check": "python scripts/verify-hotpath-phase7.py",
+    "signals:index97:seed": "python scripts/seed-index97-signals.py",
+    "signals:index97:check": "python scripts/seed-index97-signals.py --check-only",
     "index86:closure:check": "python scripts/verify-index86-closure.py",
     "roadmap:completion:check": "python scripts/verify-index84-completion.py",
     "db:migrations:check": "python scripts/verify-migrations.py",

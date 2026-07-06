@@ -421,6 +421,10 @@ type SignalDecisionWritebackRequest = {
   decisionState: string;
   rationale?: string;
   overrideUsed?: boolean;
+  decisionQuality?: string;
+  evidenceLinks?: string[];
+  verifierStatus?: string;
+  reviewDate?: string;
 };
 
 type SignalOutcomeWritebackRequest = {
@@ -591,5 +595,22 @@ export async function getSignalsProgramMetrics(): Promise<Record<string, unknown
   const apiBaseUrl = getApiBaseUrl();
   if (!apiBaseUrl) throw new ApiUnavailableError();
   const response = await fetchWithTimeout(`${apiBaseUrl}/signals/program-metrics`);
+  return readJsonResponse<Record<string, unknown>>(response);
+}
+
+export async function getSignalQualityScorecardWeekly(): Promise<Record<string, unknown>> {
+  const apiBaseUrl = getApiBaseUrl();
+  if (!apiBaseUrl) throw new ApiUnavailableError();
+  const response = await fetchWithTimeout(`${apiBaseUrl}/signals/quality-scorecard/weekly`);
+  return readJsonResponse<Record<string, unknown>>(response);
+}
+
+export async function seedIndex97Signals(): Promise<Record<string, unknown>> {
+  const apiBaseUrl = getApiBaseUrl();
+  if (!apiBaseUrl) throw new ApiUnavailableError();
+  const response = await fetchWithTimeout(`${apiBaseUrl}/signals/seed-index97`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+  });
   return readJsonResponse<Record<string, unknown>>(response);
 }

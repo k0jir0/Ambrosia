@@ -589,6 +589,55 @@ def test_scanner_candidate_promotions_endpoint_returns_records() -> None:
     assert "status" in first
 
 
+def test_index97_signal_seed_populates_valid_lifecycle_inventory() -> None:
+    response = client.post("/signals/seed-index97")
+    assert response.status_code == 200
+    payload = response.json()
+
+    assert payload["schemaVersion"] == "index97-signal-seed.v1"
+    assert payload["signalsSeeded"] == 8
+    assert payload["statusDistribution"] == {
+        "hypothesis": 2,
+        "validation_passed": 2,
+        "active_candidate": 2,
+        "constrained": 1,
+        "retired": 1,
+    }
+    assert payload["linkedReviewSignals"] >= 4
+    assert payload["validationRunSignals"] >= 6
+    assert payload["outcomeWritebackSignals"] >= 4
+
+    signals_response = client.get("/signals")
+    assert signals_response.status_code == 200
+    signals = {
+        signal["signalId"]: signal
+        for signal in signals_response.json()
+        if signal["signalId"].startswith("sig-index97-")
+    }
+    assert set(payload["signalIds"]) <= set(signals.keys())
+    assert signals["sig-index97-aapl-momentum-1d"]["status"] == "active_candidate"
+    assert signals["sig-index97-arkk-liquidity-2w"]["status"] == "constrained"
+    assert signals["sig-index97-tlt-duration-1m"]["latestOutcomeQuality"] == "retired_after_decay"
+
+    metrics_response = client.get("/signals/program-metrics")
+    assert metrics_response.status_code == 200
+    metrics = metrics_response.json()
+    assert metrics["validatedSignals"] >= 6
+    assert metrics["linkedSignals"] >= 4
+    assert metrics["recordedOutcomes"] >= 4
+
+    scorecard_response = client.get("/signals/quality-scorecard/weekly")
+    assert scorecard_response.status_code == 200
+    gates = scorecard_response.json()["gates"]
+    assert all(gate["status"] == "pass" for gate in gates.values())
+
+    rerun_response = client.post("/signals/seed-index97")
+    assert rerun_response.status_code == 200
+    validation_runs = client.get("/signals/sig-index97-aapl-momentum-1d/validation-runs").json()
+    seeded_runs = [run for run in validation_runs if run["signalVersion"] == 1]
+    assert len(seeded_runs) == 1
+
+
 def test_market_snapshot_freshness_field_is_present() -> None:
     response = client.get("/market/AAPL/snapshot")
     assert response.status_code == 200

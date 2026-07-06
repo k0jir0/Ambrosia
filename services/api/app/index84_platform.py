@@ -77,6 +77,7 @@ def _persist_signal_state() -> None:
         "signalValidationRuns": _signal_validation_runs,
         "signalPolicyEvents": _signal_policy_events,
         "scannerPromotions": _scanner_promotions,
+        "alphaHypotheses": _alpha_hypotheses,
     }
     if _index84_db is not None:
         try:
@@ -104,6 +105,8 @@ def _load_signal_state() -> None:
                     _signal_policy_events.update(payload["signalPolicyEvents"])
                 if isinstance(payload.get("scannerPromotions"), dict):
                     _scanner_promotions.update(payload["scannerPromotions"])
+                if isinstance(payload.get("alphaHypotheses"), dict):
+                    _alpha_hypotheses.update(payload["alphaHypotheses"])
                 return
         except Exception:
             pass
@@ -127,6 +130,8 @@ def _load_signal_state() -> None:
         _signal_policy_events.update(payload["signalPolicyEvents"])
     if isinstance(payload.get("scannerPromotions"), dict):
         _scanner_promotions.update(payload["scannerPromotions"])
+    if isinstance(payload.get("alphaHypotheses"), dict):
+        _alpha_hypotheses.update(payload["alphaHypotheses"])
 
 
 class ChatMessage(BaseModel):
@@ -254,6 +259,243 @@ class AlphaHypothesisSignalLinkRequest(BaseModel):
 DECISION_QUALITY_STATES = {"D0", "D1", "D2", "D3", "D4", "D5"}
 PLAN_QUALITY_STATES = {"P0", "P1", "P2", "P3", "P4"}
 PROMOTION_STATES = {"promoted", "promote", "go_live", "deploy", "pursue"}
+
+INDEX97_VALIDATION_WINDOWS = {
+    "train": "2022-01-01/2023-12-31",
+    "validation": "2024-01-01/2024-12-31",
+    "test": "2025-01-01/2026-06-30",
+}
+
+INDEX97_SIGNAL_SEED: list[dict] = [
+    {
+        "targetStatus": "hypothesis",
+        "signal": {
+            "signalId": "sig-index97-qqq-risk-on-5d",
+            "name": "QQQ Risk-On Breadth 5D",
+            "universe": ["QQQ", "SPY", "IWM"],
+            "horizon": "5d",
+            "formula": "qqq_rel_strength_5d > 0.015 and adv_decline_z > 0.8",
+            "costModel": "us_equities_taker_v1",
+            "benchmark": "SPY",
+            "validationGates": ["point_in_time", "costs", "walk_forward"],
+        },
+        "hypothesis": {
+            "hypothesisId": "alpha-index97-qqq-risk-on-5d",
+            "title": "QQQ Risk-On Breadth 5D",
+            "signalFamily": "breadth",
+            "universe": ["QQQ", "SPY", "IWM"],
+            "horizon": "5d",
+            "thesis": "Nasdaq breadth confirmation can identify short-horizon risk-on continuation before the broad market reprices.",
+            "planQuality": "P3",
+            "disconfirmingTests": ["Breadth thrust fails outside mega-cap contributors", "Post-cost hit rate falls below 52%"],
+            "costModel": "us_equities_taker_v1",
+            "owner": "research_ops",
+        },
+    },
+    {
+        "targetStatus": "hypothesis",
+        "signal": {
+            "signalId": "sig-index97-iemg-fx-stress-1m",
+            "name": "IEMG FX Stress Reversal 1M",
+            "universe": ["IEMG", "EEM", "UUP"],
+            "horizon": "1m",
+            "formula": "usd_stress_z < -0.6 and iemg_discount_to_ma20 < -0.02",
+            "costModel": "etf_liquidity_v1",
+            "benchmark": "EEM",
+            "validationGates": ["point_in_time", "costs", "walk_forward"],
+        },
+        "hypothesis": {
+            "hypothesisId": "alpha-index97-iemg-fx-stress-1m",
+            "title": "IEMG FX Stress Reversal 1M",
+            "signalFamily": "macro",
+            "universe": ["IEMG", "EEM", "UUP"],
+            "horizon": "1m",
+            "thesis": "Emerging-market ETF mean reversion improves when USD stress fades and price remains below intermediate trend.",
+            "planQuality": "P3",
+            "disconfirmingTests": ["USD stress remains elevated for two additional weeks", "Liquidity-adjusted rebound underperforms EEM"],
+            "costModel": "etf_liquidity_v1",
+            "owner": "research_ops",
+        },
+    },
+    {
+        "targetStatus": "validation_passed",
+        "signal": {
+            "signalId": "sig-index97-msft-quality-1m",
+            "name": "MSFT Quality Momentum 1M",
+            "universe": ["MSFT"],
+            "horizon": "1m",
+            "formula": "gross_margin_revision_z > 0.7 and ret_20d > spy_ret_20d",
+            "costModel": "us_equities_taker_v1",
+            "benchmark": "SPY",
+            "validationGates": ["point_in_time", "costs", "walk_forward"],
+        },
+        "hypothesis": {
+            "hypothesisId": "alpha-index97-msft-quality-1m",
+            "title": "MSFT Quality Momentum 1M",
+            "signalFamily": "quality",
+            "universe": ["MSFT"],
+            "horizon": "1m",
+            "thesis": "Quality revisions paired with relative strength can produce resilient one-month continuation in large-cap software.",
+            "planQuality": "P4",
+            "disconfirmingTests": ["Revision breadth turns negative", "Walk-forward performance fails after modeled costs"],
+            "costModel": "us_equities_taker_v1",
+            "owner": "research_ops",
+        },
+    },
+    {
+        "targetStatus": "validation_passed",
+        "signal": {
+            "signalId": "sig-index97-xlf-mean-reversion-1w",
+            "name": "XLF Mean Reversion 1W",
+            "universe": ["XLF", "KRE"],
+            "horizon": "1w",
+            "formula": "xlf_rsi_3 < 24 and credit_spread_delta_5d <= 0",
+            "costModel": "etf_liquidity_v1",
+            "benchmark": "SPY",
+            "validationGates": ["point_in_time", "costs", "walk_forward"],
+        },
+        "hypothesis": {
+            "hypothesisId": "alpha-index97-xlf-mean-reversion-1w",
+            "title": "XLF Mean Reversion 1W",
+            "signalFamily": "mean_reversion",
+            "universe": ["XLF", "KRE"],
+            "horizon": "1w",
+            "thesis": "Oversold financials recover faster when credit stress is not widening and liquidity remains stable.",
+            "planQuality": "P4",
+            "disconfirmingTests": ["Credit spreads widen during the holding window", "Regional-bank beta dominates XLF response"],
+            "costModel": "etf_liquidity_v1",
+            "owner": "research_ops",
+        },
+    },
+    {
+        "targetStatus": "active_candidate",
+        "review": {
+            "reviewId": "review-index97-aapl-momo-01",
+            "decisionState": "pursue",
+            "decisionQuality": "D4",
+            "outcomeQuality": "validated",
+            "rationale": "Validation passed with complete point-in-time, cost, slippage, and liquidity hygiene.",
+        },
+        "signal": {
+            "signalId": "sig-index97-aapl-momentum-1d",
+            "name": "AAPL Momentum 1D",
+            "universe": ["AAPL"],
+            "horizon": "1d",
+            "formula": "ret_5d > 0 and volume_z > 1.2 and close > vwap_20d",
+            "costModel": "us_equities_taker_v1",
+            "benchmark": "SPY",
+            "validationGates": ["point_in_time", "costs", "walk_forward"],
+        },
+        "hypothesis": {
+            "hypothesisId": "alpha-index97-aapl-momentum-1d",
+            "title": "AAPL Momentum 1D",
+            "signalFamily": "momentum",
+            "universe": ["AAPL"],
+            "horizon": "1d",
+            "thesis": "AAPL short-horizon continuation is strongest when positive five-day return is confirmed by relative volume.",
+            "planQuality": "P4",
+            "disconfirmingTests": ["Opening gap reverses below VWAP", "Realized spread exceeds modeled taker cost"],
+            "costModel": "us_equities_taker_v1",
+            "owner": "research_ops",
+        },
+    },
+    {
+        "targetStatus": "active_candidate",
+        "review": {
+            "reviewId": "review-index97-soxx-breadth-01",
+            "decisionState": "pursue",
+            "decisionQuality": "D4",
+            "outcomeQuality": "validated",
+            "rationale": "Semiconductor breadth and benchmark-relative returns passed the seeded validation gates.",
+        },
+        "signal": {
+            "signalId": "sig-index97-soxx-breadth-2w",
+            "name": "SOXX Semiconductor Breadth 2W",
+            "universe": ["SOXX", "NVDA", "AMD", "AVGO"],
+            "horizon": "2w",
+            "formula": "semi_advancers_pct > 0.62 and soxx_rel_spy_10d > 0.01",
+            "costModel": "etf_liquidity_v1",
+            "benchmark": "QQQ",
+            "validationGates": ["point_in_time", "costs", "walk_forward"],
+        },
+        "hypothesis": {
+            "hypothesisId": "alpha-index97-soxx-breadth-2w",
+            "title": "SOXX Semiconductor Breadth 2W",
+            "signalFamily": "breadth",
+            "universe": ["SOXX", "NVDA", "AMD", "AVGO"],
+            "horizon": "2w",
+            "thesis": "SOXX continuation is higher quality when chip leadership broadens beyond the largest constituents.",
+            "planQuality": "P4",
+            "disconfirmingTests": ["Breadth narrows to fewer than half of tracked constituents", "QQQ beta explains the full signal return"],
+            "costModel": "etf_liquidity_v1",
+            "owner": "research_ops",
+        },
+    },
+    {
+        "targetStatus": "constrained",
+        "review": {
+            "reviewId": "review-index97-arkk-liquidity-01",
+            "decisionState": "pursue",
+            "decisionQuality": "D4",
+            "outcomeQuality": "degraded",
+            "rationale": "Signal had validation support, but liquidity and implementation shortfall require a live trading constraint.",
+        },
+        "signal": {
+            "signalId": "sig-index97-arkk-liquidity-2w",
+            "name": "ARKK Liquidity Breakout 2W",
+            "universe": ["ARKK"],
+            "horizon": "2w",
+            "formula": "arkk_breakout_z > 1.1 and bid_ask_bps < 18",
+            "costModel": "high_beta_etf_liquidity_v1",
+            "benchmark": "QQQ",
+            "validationGates": ["point_in_time", "costs", "walk_forward"],
+        },
+        "hypothesis": {
+            "hypothesisId": "alpha-index97-arkk-liquidity-2w",
+            "title": "ARKK Liquidity Breakout 2W",
+            "signalFamily": "momentum",
+            "universe": ["ARKK"],
+            "horizon": "2w",
+            "thesis": "High-beta innovation ETF breakouts need explicit liquidity constraints to preserve post-cost edge.",
+            "planQuality": "P3",
+            "disconfirmingTests": ["Spread widens beyond execution budget", "Breakout fails under high-volatility regime filter"],
+            "costModel": "high_beta_etf_liquidity_v1",
+            "owner": "research_ops",
+        },
+    },
+    {
+        "targetStatus": "retired",
+        "review": {
+            "reviewId": "review-index97-tlt-duration-01",
+            "decisionState": "pursue",
+            "decisionQuality": "D4",
+            "outcomeQuality": "retired_after_decay",
+            "rationale": "Duration signal was once promotion-ready but is now retired after outcome decay and regime instability.",
+        },
+        "signal": {
+            "signalId": "sig-index97-tlt-duration-1m",
+            "name": "TLT Duration Relief 1M",
+            "universe": ["TLT", "IEF"],
+            "horizon": "1m",
+            "formula": "real_yield_delta_10d < -0.08 and tlt_price_above_ma20",
+            "costModel": "treasury_etf_liquidity_v1",
+            "benchmark": "IEF",
+            "validationGates": ["point_in_time", "costs", "walk_forward"],
+        },
+        "hypothesis": {
+            "hypothesisId": "alpha-index97-tlt-duration-1m",
+            "title": "TLT Duration Relief 1M",
+            "signalFamily": "macro",
+            "universe": ["TLT", "IEF"],
+            "horizon": "1m",
+            "thesis": "Long-duration relief rallies are tradable when real yields fall and price confirms above intermediate trend.",
+            "planQuality": "P3",
+            "disconfirmingTests": ["Inflation surprise reverses real-yield trend", "IEF-relative performance fails after costs"],
+            "costModel": "treasury_etf_liquidity_v1",
+            "owner": "research_ops",
+        },
+    },
+]
 
 
 class AlphaHypothesisCreateRequest(BaseModel):
@@ -641,6 +883,140 @@ def list_signals() -> list[dict]:
     return sorted(_signals.values(), key=lambda item: item["updatedAt"], reverse=True)
 
 
+@router.post("/signals/seed-index97")
+def seed_index97_signals() -> dict:
+    seeded_signals: list[dict] = []
+    for scenario in INDEX97_SIGNAL_SEED:
+        signal_payload = scenario["signal"]
+        signal_id = str(signal_payload["signalId"])
+        signal = create_signal(
+            SignalCreateRequest(**signal_payload),
+            _index97_idempotency_key(signal_id, "create-signal"),
+        )
+        signal_version = int(signal.get("activeVersion", signal.get("version", 1)))
+
+        hypothesis_payload = scenario["hypothesis"]
+        hypothesis = create_alpha_hypothesis(
+            AlphaHypothesisCreateRequest(**hypothesis_payload),
+            _index97_idempotency_key(signal_id, "create-hypothesis"),
+        )
+        hypothesis_id = str(hypothesis.get("hypothesisId"))
+        link_alpha_hypothesis_signal(
+            hypothesis_id,
+            AlphaHypothesisSignalLinkRequest(signalId=signal_id, signalVersion=signal_version),
+            _index97_idempotency_key(signal_id, "link-hypothesis"),
+        )
+
+        target_status = str(scenario["targetStatus"])
+        if target_status != "hypothesis":
+            _ensure_index97_validation(signal_id, signal_version)
+        else:
+            _ensure_index97_status(signal_id, "hypothesis", signal_version, "Seeded hypothesis awaiting validation")
+
+        if target_status == "active_candidate":
+            _ensure_index97_policy_transition(signal_id, "active_candidate", signal_version)
+        elif target_status == "constrained":
+            _ensure_index97_policy_transition(signal_id, "constrained", signal_version)
+        elif target_status == "retired":
+            _ensure_index97_policy_transition(signal_id, "retired", signal_version)
+        elif target_status == "validation_passed":
+            _ensure_index97_status(signal_id, "validation_passed", signal_version, "Seed validation passed")
+
+        review_payload = scenario.get("review")
+        if isinstance(review_payload, dict):
+            review_id = str(review_payload["reviewId"])
+            link_signal_review(
+                signal_id,
+                SignalReviewLinkRequest(
+                    reviewId=review_id,
+                    hypothesisId=hypothesis_id,
+                    signalVersion=signal_version,
+                ),
+                _index97_idempotency_key(signal_id, f"link-review:{review_id}"),
+            )
+            writeback_signal_decision(
+                signal_id,
+                SignalDecisionWritebackRequest(
+                    reviewId=review_id,
+                    signalVersion=signal_version,
+                    decisionState=str(review_payload["decisionState"]),
+                    decisionQuality=str(review_payload["decisionQuality"]),
+                    overrideUsed=False,
+                    rationale=str(review_payload["rationale"]),
+                    evidenceLinks=[f"artifacts/signals/{signal_id}/validation/{signal_version}"],
+                    verifierStatus="passed",
+                    reviewDate="2026-07-06",
+                ),
+                _index97_idempotency_key(signal_id, f"decision:{review_id}"),
+            )
+            writeback_signal_outcome(
+                signal_id,
+                SignalOutcomeWritebackRequest(
+                    reviewId=review_id,
+                    signalVersion=signal_version,
+                    outcomeQuality=str(review_payload["outcomeQuality"]),
+                    lastReviewedAt="2026-07-06T18:00:00Z",
+                ),
+                _index97_idempotency_key(signal_id, f"outcome:{review_id}"),
+            )
+            _ensure_index97_policy_transition(signal_id, target_status, signal_version)
+
+        seeded_signals.append(_signals[signal_id])
+
+    _persist_signal_state()
+    status_distribution = _status_distribution(seeded_signals)
+    linked_review_signals = sum(1 for signal in seeded_signals if int(signal.get("linkedReviewCount", 0)) > 0)
+    outcome_writeback_signals = sum(1 for signal in seeded_signals if int(signal.get("outcomeCount", 0)) > 0)
+    validation_run_signals = sum(1 for signal in seeded_signals if bool(_signal_validation_runs_for(str(signal.get("signalId")))))
+    scorecard = get_weekly_quality_scorecard()
+
+    return {
+        "schemaVersion": "index97-signal-seed.v1",
+        "status": "ok",
+        "signalsSeeded": len(seeded_signals),
+        "signalIds": [signal["signalId"] for signal in seeded_signals],
+        "statusDistribution": status_distribution,
+        "linkedReviewSignals": linked_review_signals,
+        "validationRunSignals": validation_run_signals,
+        "outcomeWritebackSignals": outcome_writeback_signals,
+        "programMetrics": get_signal_program_metrics(),
+        "qualityGates": scorecard.get("gates", {}),
+        "seededAt": _now(),
+    }
+
+
+@router.get("/signals/program-metrics")
+def get_signal_program_metrics() -> dict:
+    total_signals = len(_signals)
+    total_links = len(_signal_review_links)
+    linked_signals = sum(1 for signal in _signals.values() if int(signal.get("linkedReviewCount", 0)) > 0)
+    validated_signals = sum(1 for signal in _signals.values() if signal.get("status") in {"validation_passed", "active_candidate", "constrained", "retired"})
+    promoted_signals = sum(1 for signal in _signals.values() if signal.get("status") == "active_candidate")
+    constrained_signals = sum(1 for signal in _signals.values() if signal.get("status") == "constrained")
+    retired_signals = sum(1 for signal in _signals.values() if signal.get("status") == "retired")
+    outcome_rollups = [_signal_rollup(signal_id) for signal_id in _signals.keys()]
+    pursued_total = sum(int(item.get("pursuedCount", 0)) for item in outcome_rollups)
+    rejected_total = sum(int(item.get("rejectedCount", 0)) for item in outcome_rollups)
+    outcome_total = sum(int(item.get("outcomeCount", 0)) for item in outcome_rollups)
+
+    return {
+        "schemaVersion": "signals-program-metrics.v1",
+        "totalSignals": total_signals,
+        "linkedSignals": linked_signals,
+        "linkedSignalsPct": round((linked_signals / total_signals) * 100, 1) if total_signals else 0.0,
+        "totalDecisionLinks": total_links,
+        "validatedSignals": validated_signals,
+        "validatedSignalsPct": round((validated_signals / total_signals) * 100, 1) if total_signals else 0.0,
+        "promotedSignals": promoted_signals,
+        "constrainedSignals": constrained_signals,
+        "retiredSignals": retired_signals,
+        "pursuedDecisions": pursued_total,
+        "rejectedDecisions": rejected_total,
+        "recordedOutcomes": outcome_total,
+        "updatedAt": _now(),
+    }
+
+
 @router.get("/signals/{signal_id}")
 def get_signal(signal_id: str) -> dict:
     signal = _signals.get(signal_id)
@@ -692,6 +1068,7 @@ def promote_scanner_candidate_to_alpha(
         universe=universe,
         horizon=request.horizon,
         thesis=request.thesisSuggestion,
+        planQuality="P3",
         disconfirmingTests=_scanner_disconfirming_tests(signal_tag, ticker),
         costModel=request.costModel,
         owner=request.owner,
@@ -956,6 +1333,111 @@ def _signal_rollup(signal_id: str) -> dict:
     }
 
 
+def _index97_idempotency_key(signal_id: str, action: str) -> str:
+    return f"index97:{signal_id}:{action}"
+
+
+def _ensure_index97_validation(signal_id: str, signal_version: int) -> dict:
+    latest_validation = _signal_latest_validation(signal_id, signal_version)
+    if latest_validation is not None and latest_validation.get("status") == "passed":
+        _ensure_index97_status(signal_id, "validation_passed", signal_version, "Existing Index97 validation retained")
+        return latest_validation
+
+    return validate_signal(
+        signal_id,
+        SignalValidateRequest(
+            signalVersion=signal_version,
+            runType="backtest",
+            sampleWindows=INDEX97_VALIDATION_WINDOWS,
+            pointInTimeGuaranteed=True,
+            includesCosts=True,
+            includesSlippage=True,
+            includesLiquidity=True,
+        ),
+        _index97_idempotency_key(signal_id, f"validate:{signal_version}"),
+    )
+
+
+def _ensure_index97_status(signal_id: str, target_status: str, signal_version: int, reason: str) -> dict:
+    signal = _signals.get(signal_id)
+    if signal is None:
+        raise HTTPException(status_code=404, detail="Signal not found")
+    if signal.get("status") == target_status:
+        return signal
+
+    signal["status"] = target_status
+    signal["updatedAt"] = _now()
+    _append_signal_policy_event(
+        signal_id=signal_id,
+        event_type="index97.seed.status",
+        to_status=target_status,
+        actor="research_ops",
+        reason=reason,
+        signal_version=signal_version,
+    )
+    return signal
+
+
+def _ensure_index97_policy_transition(signal_id: str, target_status: str, signal_version: int) -> dict:
+    if target_status == "hypothesis":
+        return _ensure_index97_status(signal_id, "hypothesis", signal_version, "Seeded hypothesis awaiting validation")
+    if target_status == "validation_passed":
+        return _ensure_index97_status(signal_id, "validation_passed", signal_version, "Seed validation passed")
+
+    signal = _signals.get(signal_id)
+    if signal is None:
+        raise HTTPException(status_code=404, detail="Signal not found")
+    if signal.get("status") == target_status:
+        return {
+            "schemaVersion": "signal-policy-transition.v1",
+            "signalId": signal_id,
+            "signalVersion": signal_version,
+            "status": target_status,
+            "event": None,
+        }
+
+    if target_status == "active_candidate":
+        return promote_signal(
+            signal_id,
+            SignalPolicyTransitionRequest(
+                signalVersion=signal_version,
+                actor="research_ops",
+                reason="Index97 seed: validation passed with complete hygiene",
+            ),
+            _index97_idempotency_key(signal_id, f"promote:{signal_version}"),
+        )
+    if target_status == "constrained":
+        return constrain_signal(
+            signal_id,
+            SignalPolicyTransitionRequest(
+                signalVersion=signal_version,
+                actor="risk_ops",
+                reason="Index97 seed: policy constraint after validation and evidence review",
+            ),
+            _index97_idempotency_key(signal_id, f"constrain:{signal_version}"),
+        )
+    if target_status == "retired":
+        return retire_signal(
+            signal_id,
+            SignalPolicyTransitionRequest(
+                signalVersion=signal_version,
+                actor="research_ops",
+                reason="Index97 seed: lifecycle closure after outcome writeback",
+            ),
+            _index97_idempotency_key(signal_id, f"retire:{signal_version}"),
+        )
+
+    raise HTTPException(status_code=400, detail=f"Unsupported Index97 target status: {target_status}")
+
+
+def _status_distribution(signals: list[dict]) -> dict:
+    distribution: dict[str, int] = {}
+    for signal in signals:
+        status = str(signal.get("status") or "unknown")
+        distribution[status] = distribution.get(status, 0) + 1
+    return distribution
+
+
 @router.post("/signals/{signal_id}/validate")
 def validate_signal(
     signal_id: str,
@@ -1162,38 +1644,6 @@ def list_signal_policy_events(signal_id: str) -> list[dict]:
     return sorted(events, key=lambda item: item.get("createdAt", ""), reverse=True)
 
 
-@router.get("/signals/program-metrics")
-def get_signal_program_metrics() -> dict:
-    total_signals = len(_signals)
-    total_links = len(_signal_review_links)
-    linked_signals = sum(1 for signal in _signals.values() if int(signal.get("linkedReviewCount", 0)) > 0)
-    validated_signals = sum(1 for signal in _signals.values() if signal.get("status") in {"validation_passed", "active_candidate", "constrained", "retired"})
-    promoted_signals = sum(1 for signal in _signals.values() if signal.get("status") == "active_candidate")
-    constrained_signals = sum(1 for signal in _signals.values() if signal.get("status") == "constrained")
-    retired_signals = sum(1 for signal in _signals.values() if signal.get("status") == "retired")
-    outcome_rollups = [_signal_rollup(signal_id) for signal_id in _signals.keys()]
-    pursued_total = sum(int(item.get("pursuedCount", 0)) for item in outcome_rollups)
-    rejected_total = sum(int(item.get("rejectedCount", 0)) for item in outcome_rollups)
-    outcome_total = sum(int(item.get("outcomeCount", 0)) for item in outcome_rollups)
-
-    return {
-        "schemaVersion": "signals-program-metrics.v1",
-        "totalSignals": total_signals,
-        "linkedSignals": linked_signals,
-        "linkedSignalsPct": round((linked_signals / total_signals) * 100, 1) if total_signals else 0.0,
-        "totalDecisionLinks": total_links,
-        "validatedSignals": validated_signals,
-        "validatedSignalsPct": round((validated_signals / total_signals) * 100, 1) if total_signals else 0.0,
-        "promotedSignals": promoted_signals,
-        "constrainedSignals": constrained_signals,
-        "retiredSignals": retired_signals,
-        "pursuedDecisions": pursued_total,
-        "rejectedDecisions": rejected_total,
-        "recordedOutcomes": outcome_total,
-        "updatedAt": _now(),
-    }
-
-
 @router.get("/signals/quality-scorecard/weekly")
 def get_weekly_quality_scorecard() -> dict:
     links = list(_signal_review_links.values())
@@ -1202,11 +1652,15 @@ def get_weekly_quality_scorecard() -> dict:
     total_plans = len(hypotheses)
     total_decisions = len(links)
     decisions_with_quality = sum(1 for link in links if (link.get("decisionQuality") or "").upper() in DECISION_QUALITY_STATES)
-    promotion_ready_decisions = sum(
-        1
+    promotion_decisions = [
+        link
         for link in links
         if str(link.get("reviewDecisionState", "")).strip().lower() in PROMOTION_STATES
-        and bool(link.get("evidenceLinks"))
+    ]
+    promotion_ready_decisions = sum(
+        1
+        for link in promotion_decisions
+        if bool(link.get("evidenceLinks"))
         and str(link.get("verifierStatus", "")).lower() == "passed"
         and bool(link.get("reviewDate"))
     )
@@ -1225,7 +1679,11 @@ def get_weekly_quality_scorecard() -> dict:
         "gates": {
             "planQuality": {"status": "pass" if total_plans == 0 or plan_gate_pass == total_plans else "fail", "passed": plan_gate_pass, "total": total_plans},
             "decisionQuality": {"status": "pass" if total_decisions == 0 or decisions_with_quality == total_decisions else "fail", "passed": decisions_with_quality, "total": total_decisions},
-            "promotionEvidence": {"status": "pass" if promotion_ready_decisions == total_decisions else "fail", "passed": promotion_ready_decisions, "total": total_decisions},
+            "promotionEvidence": {
+                "status": "pass" if not promotion_decisions or promotion_ready_decisions == len(promotion_decisions) else "fail",
+                "passed": promotion_ready_decisions,
+                "total": len(promotion_decisions),
+            },
             "outcomeClosure": {"status": "pass" if outcomes_recorded >= max(1, int(total_decisions * 0.7)) or total_decisions == 0 else "fail", "passed": outcomes_recorded, "total": total_decisions},
         },
         "trendDelta": {

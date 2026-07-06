@@ -4,9 +4,36 @@ import { useEffect, useMemo, useState } from "react";
 import { ApiUnavailableError, createReview, getReview, listReviews } from "./api";
 import { generateLocalReview } from "./review-generator";
 import { sampleReviews } from "./sample-data";
-import type { ThesisInput, TradeReview } from "./types";
+import type { DecisionState, ThesisInput, TradeReview } from "./types";
 
 const STORAGE_KEY = "ambrosia.reviews.v1";
+const REVIEW_ALPHA_LINKS_KEY = "ambrosia.review-alpha-links.v1";
+const ALPHA_WRITEBACK_KEY = "ambrosia.alpha-writeback.v1";
+
+export type ReviewAlphaLink = {
+  source: "alpha";
+  objectType: "hypothesis" | "signal";
+  hypothesisId?: string;
+  signalId?: string;
+  title?: string;
+  signalFamily?: string;
+  formula?: string;
+  ticker?: string;
+  createdAt: string;
+};
+
+export type AlphaWritebackState = {
+  objectKey: string;
+  objectType: "hypothesis" | "signal";
+  hypothesisId?: string;
+  signalId?: string;
+  linkedReviewIds: string[];
+  latestDecisionState?: DecisionState;
+  latestOutcomeQuality?: string;
+  lastReviewedAt?: string;
+  overrideCount: number;
+  outcomeCount: number;
+};
 
 function dedupeAndSort(reviews: TradeReview[]): TradeReview[] {
   const seen = new Map<string, TradeReview>();
@@ -41,6 +68,99 @@ export function upsertLocalReview(review: TradeReview) {
   const next = dedupeAndSort([review, ...getLocalReviews()]);
   saveLocalReviews(next);
   window.dispatchEvent(new CustomEvent("ambrosia:reviews-updated"));
+}
+
+function getReviewAlphaLinksMap(): Record<string, ReviewAlphaLink> {
+  if (!canUseStorage()) return {};
+  try {
+    const raw = window.localStorage.getItem(REVIEW_ALPHA_LINKS_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as Record<string, ReviewAlphaLink>;
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveReviewAlphaLinksMap(map: Record<string, ReviewAlphaLink>) {
+  if (!canUseStorage()) return;
+  window.localStorage.setItem(REVIEW_ALPHA_LINKS_KEY, JSON.stringify(map));
+}
+
+export function setReviewAlphaLink(reviewId: string, link: ReviewAlphaLink) {
+  const map = getReviewAlphaLinksMap();
+  map[reviewId] = link;
+  saveReviewAlphaLinksMap(map);
+  window.dispatchEvent(new CustomEvent("ambrosia:reviews-updated"));
+}
+
+export function getReviewAlphaLink(reviewId: string): ReviewAlphaLink | null {
+  const map = getReviewAlphaLinksMap();
+  return map[reviewId] ?? null;
+}
+
+export function listReviewAlphaLinks(): Record<string, ReviewAlphaLink> {
+  return getReviewAlphaLinksMap();
+}
+
+function getAlphaWritebackMap(): Record<string, AlphaWritebackState> {
+  if (!canUseStorage()) return {};
+  try {
+    const raw = window.localStorage.getItem(ALPHA_WRITEBACK_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as Record<string, AlphaWritebackState>;
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveAlphaWritebackMap(map: Record<string, AlphaWritebackState>) {
+  if (!canUseStorage()) return;
+  window.localStorage.setItem(ALPHA_WRITEBACK_KEY, JSON.stringify(map));
+}
+
+function alphaObjectKey(link: ReviewAlphaLink): string | null {
+  const objectId = link.objectType === "hypothesis" ? link.hypothesisId : link.signalId;
+  if (!objectId) return null;
+  return `${link.objectType}:${objectId}`;
+}
+
+export function upsertAlphaWritebackForReview(
+  reviewId: string,
+  link: ReviewAlphaLink,
+  patch: Partial<Pick<AlphaWritebackState, "latestDecisionState" | "latestOutcomeQuality" | "lastReviewedAt">> & {
+    incrementOverrideCount?: boolean;
+    incrementOutcomeCount?: boolean;
+  }
+) {
+  const key = alphaObjectKey(link);
+  if (!key) return;
+
+  const map = getAlphaWritebackMap();
+  const existing = map[key];
+  const linkedReviewIds = existing?.linkedReviewIds ?? [];
+  const nextLinkedReviewIds = linkedReviewIds.includes(reviewId) ? linkedReviewIds : [...linkedReviewIds, reviewId];
+
+  map[key] = {
+    objectKey: key,
+    objectType: link.objectType,
+    hypothesisId: link.hypothesisId,
+    signalId: link.signalId,
+    linkedReviewIds: nextLinkedReviewIds,
+    latestDecisionState: patch.latestDecisionState ?? existing?.latestDecisionState,
+    latestOutcomeQuality: patch.latestOutcomeQuality ?? existing?.latestOutcomeQuality,
+    lastReviewedAt: patch.lastReviewedAt ?? existing?.lastReviewedAt,
+    overrideCount: (existing?.overrideCount ?? 0) + (patch.incrementOverrideCount ? 1 : 0),
+    outcomeCount: (existing?.outcomeCount ?? 0) + (patch.incrementOutcomeCount ? 1 : 0)
+  };
+
+  saveAlphaWritebackMap(map);
+  window.dispatchEvent(new CustomEvent("ambrosia:reviews-updated"));
+}
+
+export function listAlphaWritebacks(): Record<string, AlphaWritebackState> {
+  return getAlphaWritebackMap();
 }
 
 export async function loadReviewArchive(): Promise<{ reviews: TradeReview[]; source: "api" | "local" | "sample" }> {

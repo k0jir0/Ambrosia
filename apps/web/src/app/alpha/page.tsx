@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
 import { Panel, SectionTitle } from "@/components/ui";
 import { RouteLoading, RouteNotice, RouteStatusBadge, type RouteStatus } from "@/components/route-state";
@@ -136,6 +137,12 @@ export default function AlphaPage() {
                 </div>
                 {apiBaseUrl ? (
                   <div className="flex items-center gap-2">
+                    <Link
+                      href={buildReviewPrefillHref("hypothesis", item)}
+                      className="focus-ring rounded-md border border-line bg-paper/80 px-2 py-1 text-xs font-semibold text-ink/80"
+                    >
+                      Create review
+                    </Link>
                     <button
                       type="button"
                       onClick={() =>
@@ -191,6 +198,12 @@ export default function AlphaPage() {
                 </div>
                 {apiBaseUrl ? (
                   <div className="flex items-center gap-2">
+                    <Link
+                      href={buildReviewPrefillHref("signal", item)}
+                      className="focus-ring rounded-md border border-line bg-paper/80 px-2 py-1 text-xs font-semibold text-ink/80"
+                    >
+                      Create review
+                    </Link>
                     <button
                       type="button"
                       onClick={() =>
@@ -343,4 +356,49 @@ function formatDropdownValue(value: unknown): string {
   if (Array.isArray(value)) return `${value.length} items`;
   if (typeof value === "object") return `${Object.keys(value as Record<string, unknown>).length} fields`;
   return "n/a";
+}
+
+function buildReviewPrefillHref(kind: "hypothesis" | "signal", item: Record<string, unknown>): string {
+  const id = kind === "hypothesis" ? textOrFallback(item.hypothesisId, "") : textOrFallback(item.signalId, "");
+  const title = kind === "hypothesis" ? textOrFallback(item.title, "") : textOrFallback(item.name, "");
+  const ticker = inferTicker(item);
+  const thesis =
+    kind === "hypothesis"
+      ? `Evaluate alpha hypothesis "${title || id || "untitled"}" with adversarial review and disconfirming tests.`
+      : `Evaluate signal "${title || id || "untitled"}" for robustness, tradeability, and promotion readiness.`;
+
+  const params = new URLSearchParams({
+    source: "alpha",
+    alphaType: kind,
+    alphaTitle: title,
+    ticker,
+    assetClass: "Equities",
+    timeHorizon: textOrFallback(item.horizon, "2-6 weeks"),
+    expression: "Long via equity",
+    thesis,
+    sourcePointer: `alpha:${kind}:${id}`
+  });
+
+  if (kind === "hypothesis") {
+    params.set("hypothesisId", id);
+    params.set("alphaSignalFamily", textOrFallback(item.signalFamily, ""));
+  } else {
+    params.set("signalId", id);
+    params.set("alphaFormula", textOrFallback(item.formula, ""));
+  }
+
+  return `/review/new?${params.toString()}`;
+}
+
+function inferTicker(item: Record<string, unknown>): string {
+  const explicitTicker = textOrFallback(item.ticker, "").toUpperCase();
+  if (explicitTicker) return explicitTicker;
+
+  const universe = item.universe;
+  if (Array.isArray(universe) && universe.length > 0) {
+    const first = textOrFallback(universe[0], "").toUpperCase();
+    if (first) return first;
+  }
+
+  return "AAPL";
 }

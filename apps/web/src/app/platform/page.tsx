@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { ProviderModePanel } from "@/components/advanced-panels";
 import { Panel, SectionTitle } from "@/components/ui";
 import { RouteLoading, RouteNotice, RouteStatusBadge, type RouteStatus } from "@/components/route-state";
 import { fetchControlPlane, mapStatus, textOrFallback } from "@/lib/index84-control-plane";
@@ -72,6 +73,8 @@ export default function PlatformPage() {
           <Metric label="Phases" value={textOrFallback((data?.phases as Record<string, unknown> | undefined)?.status)} />
         </div>
       </Panel>
+
+      <ProviderModePanel />
 
       <Panel className="p-6">
         <SectionTitle eyebrow="Workstreams" title="Index84 control-plane modules" />

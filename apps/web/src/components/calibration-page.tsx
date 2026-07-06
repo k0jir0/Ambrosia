@@ -1,6 +1,15 @@
 "use client";
 
 import { Bar, BarChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import {
+  CalibrableBandPanel,
+  CalibrableCohortPanel,
+  CalibrableDetailPanel,
+  CalibrationAlertsPanel,
+  CalibrationHealthPanel,
+  FeedbackHistoryPanel,
+  FeedbackRecordPanel
+} from "@/components/advanced-panels";
 import { Panel, SectionTitle } from "./ui";
 
 const CONF_BANDS = [
@@ -103,6 +112,23 @@ export function CalibrationPage() {
           </div>
           <p className="mt-4 text-sm text-ink/70">Weakest area currently: Stocks. Prioritize thesis quality and follow-up discipline in this cohort.</p>
         </Panel>
+      </section>
+
+      <Panel className="p-5">
+        <SectionTitle eyebrow="Quality Loop" title="Calibration and feedback workbench" />
+        <p className="mt-3 max-w-3xl text-sm leading-6 text-ink/70">
+          Detailed confidence diagnostics, anomaly visibility, and trade-outcome feedback now live with calibration.
+        </p>
+      </Panel>
+
+      <section className="grid gap-4 xl:grid-cols-2">
+        <CalibrableBandPanel />
+        <CalibrableCohortPanel />
+        <CalibrationHealthPanel />
+        <CalibrationAlertsPanel />
+        <FeedbackRecordPanel />
+        <FeedbackHistoryPanel />
+        <CalibrableDetailPanel />
       </section>
     </div>
   );

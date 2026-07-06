@@ -4,9 +4,13 @@ import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowRight, CircleDashed } from "lucide-react";
 import { Panel, SectionTitle } from "@/components/ui";
-import { createReviewRecord, useReviewArchive } from "@/lib/review-store";
+import { createReviewRecord, setReviewAlphaLink, useReviewArchive } from "@/lib/review-store";
 
 type Step = 1 | 2 | 3;
+
+type NewReviewFlowProps = {
+  initialParams?: Record<string, string | string[] | undefined>;
+};
 
 const STEPS = [
   { id: 1, label: "Instrument" },
@@ -14,16 +18,58 @@ const STEPS = [
   { id: 3, label: "Sources" }
 ] as const;
 
-export function NewReviewFlow() {
+export function NewReviewFlow({ initialParams }: NewReviewFlowProps) {
   const router = useRouter();
   const { reviews } = useReviewArchive();
+
+  const alphaContext = useMemo(() => {
+    const getParamValue = (key: string, fallback = "") => {
+      const value = initialParams?.[key];
+      if (Array.isArray(value)) return value[0] ?? fallback;
+      return value ?? fallback;
+    };
+
+    if (getParamValue("source") !== "alpha") return null;
+    const alphaTypeRaw = getParamValue("alphaType");
+    if (alphaTypeRaw !== "hypothesis" && alphaTypeRaw !== "signal") return null;
+    const alphaType: "hypothesis" | "signal" = alphaTypeRaw;
+
+    const hypothesisId = getParamValue("hypothesisId");
+    const signalId = getParamValue("signalId");
+    const title = getParamValue("alphaTitle");
+    const signalFamily = getParamValue("alphaSignalFamily");
+    const formula = getParamValue("alphaFormula");
+    const ticker = getParamValue("ticker", "AAPL").toUpperCase();
+
+    return {
+      ticker,
+      assetClass: getParamValue("assetClass", "Equities"),
+      timeHorizon: getParamValue("timeHorizon", "2-6 weeks"),
+      expression: getParamValue("expression", "Long via equity"),
+      thesis: getParamValue("thesis"),
+      sourcePointer: getParamValue("sourcePointer"),
+      summary: `${alphaType === "hypothesis" ? "Hypothesis" : "Signal"}${title ? `: ${title}` : ""}`,
+      link: {
+        source: "alpha" as const,
+        objectType: alphaType,
+        hypothesisId: hypothesisId || undefined,
+        signalId: signalId || undefined,
+        title: title || undefined,
+        signalFamily: signalFamily || undefined,
+        formula: formula || undefined,
+        ticker,
+        createdAt: new Date().toISOString()
+      }
+    };
+  }, [initialParams]);
+
   const [step, setStep] = useState<Step>(1);
-  const [ticker, setTicker] = useState("AAPL");
-  const [assetClass, setAssetClass] = useState("Equities");
-  const [timeHorizon, setTimeHorizon] = useState("2-6 weeks");
-  const [expression, setExpression] = useState("Long via equity");
-  const [thesis, setThesis] = useState("");
-  const [sources, setSources] = useState<string[]>([]);
+  const [ticker, setTicker] = useState(alphaContext?.ticker ?? "AAPL");
+  const [assetClass, setAssetClass] = useState(alphaContext?.assetClass ?? "Equities");
+  const [timeHorizon, setTimeHorizon] = useState(alphaContext?.timeHorizon ?? "2-6 weeks");
+  const [expression, setExpression] = useState(alphaContext?.expression ?? "Long via equity");
+  const [thesis, setThesis] = useState(alphaContext?.thesis ?? "");
+  const [sources, setSources] = useState<string[]>(alphaContext?.sourcePointer ? [alphaContext.sourcePointer] : []);
   const [sourceDraft, setSourceDraft] = useState("");
   const [creating, setCreating] = useState(false);
   const [createMessage, setCreateMessage] = useState<string | null>(null);
@@ -54,6 +100,11 @@ export function NewReviewFlow() {
       },
       reviews.length
     );
+
+    if (alphaContext?.link) {
+      setReviewAlphaLink(review.id, alphaContext.link);
+    }
+
     setCreateMessage(source === "api" ? "Review created through the API. Opening decision workbench..." : "API unavailable, so Ambrosia saved a local durable review. Opening decision workbench...");
     router.push(`/review/${encodeURIComponent(review.id)}`);
   }
@@ -65,6 +116,7 @@ export function NewReviewFlow() {
         <p className="mt-2 max-w-3xl text-sm leading-6 text-ink/70">
           Creating a review adds it to the Ambrosia review archive, increments dashboard totals, and makes the packet re-openable from History and Recent Reviews.
         </p>
+        {alphaContext ? <p className="mt-2 rounded-md border border-line bg-fog/70 px-3 py-2 text-xs text-ink/75">Prefilled from Alpha Lab: {alphaContext.summary}</p> : null}
         <div className="mt-4 flex flex-wrap items-center gap-2 text-sm">
           {STEPS.map((item) => (
             <button

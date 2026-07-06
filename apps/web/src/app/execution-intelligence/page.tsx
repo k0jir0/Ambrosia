@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { AsyncJobQueuePanel, JobDetailsPanel, ScannerLaunchPanel } from "@/components/advanced-panels";
 import { Panel, SectionTitle } from "@/components/ui";
 import { RouteLoading, RouteNotice, RouteStatusBadge, type RouteStatus } from "@/components/route-state";
 import { fetchControlPlane, mapStatus, numberOrFallback, textOrFallback } from "@/lib/index84-control-plane";
@@ -76,6 +77,19 @@ export default function ExecutionIntelligencePage() {
           <li className="rounded-md border border-line bg-fog/70 px-3 py-2">Operator read path for pre-trade and post-fill diagnostics.</li>
         </ul>
       </Panel>
+
+      <Panel className="p-5">
+        <SectionTitle eyebrow="Execution Queue" title="Async jobs" />
+        <p className="mt-3 max-w-3xl text-sm leading-6 text-ink/70">
+          Background scanner, backtest, and report controls now live with execution intelligence.
+        </p>
+      </Panel>
+
+      <section className="grid gap-4 xl:grid-cols-2">
+        <AsyncJobQueuePanel />
+        <JobDetailsPanel />
+        <ScannerLaunchPanel />
+      </section>
     </div>
   );
 }

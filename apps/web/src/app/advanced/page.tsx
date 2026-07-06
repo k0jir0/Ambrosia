@@ -1,106 +1,73 @@
-"use client";
-
-import type { ComponentType } from "react";
-import {
-  AlertQueuePanel,
-  ApprovalWorkflowPanel,
-  AsyncJobQueuePanel,
-  CalibrableBandPanel,
-  CalibrableCohortPanel,
-  CalibrableDetailPanel,
-  CalibrationAlertsPanel,
-  CalibrationHealthPanel,
-  CertificationPanel,
-  CommentsPanel,
-  FeedbackHistoryPanel,
-  FeedbackRecordPanel,
-  JobDetailsPanel,
-  MetricsScoreboardPanel,
-  PacketLibraryPanel,
-  PacketSharingPanel,
-  ProviderStatusPanel,
-  ReviewArchivePanel,
-  ScannerLaunchPanel,
-  SystemHealthPanel,
-  TemplateCreatePanel,
-  TemplateLibraryPanel,
-  TemplatePublishPanel,
-  ToolBoundariesPanel,
-  WorkspaceManagerPanel
-} from "@/components/advanced-panels";
+import Link from "next/link";
 import { Badge, Panel, SectionTitle } from "@/components/ui";
 
-type AdvancedGroup = {
+type ModuleRoute = {
   title: string;
   eyebrow: string;
   description: string;
-  endpointGroup: string;
-  defaultOpen?: boolean;
-  panels: ComponentType[];
+  href: string;
+  destination: string;
+  panels: string;
 };
 
-const ADVANCED_GROUPS: AdvancedGroup[] = [
+const MODULE_ROUTES: ModuleRoute[] = [
   {
     title: "Calibration & Feedback",
     eyebrow: "Quality Loop",
-    description: "Confidence calibration, outcome feedback, cohort review, and anomaly visibility.",
-    endpointGroup: "GET /metrics, GET /feedback/*, POST /feedback/record",
-    panels: [
-      CalibrableBandPanel,
-      CalibrableCohortPanel,
-      CalibrationHealthPanel,
-      CalibrationAlertsPanel,
-      FeedbackRecordPanel,
-      FeedbackHistoryPanel,
-      CalibrableDetailPanel
-    ]
+    description: "Confidence bands, cohort diagnostics, anomaly visibility, and outcome recording.",
+    href: "/calibration",
+    destination: "Calibration",
+    panels: "7 panels"
   },
   {
     title: "Team Collaboration",
     eyebrow: "Governance",
     description: "Workspace management, packet sharing, comments, and approval workflow proof.",
-    endpointGroup: "POST /workspaces, POST /packets/{id}/comments, POST /packets/{id}/approval",
-    panels: [WorkspaceManagerPanel, PacketSharingPanel, CommentsPanel, ApprovalWorkflowPanel]
+    href: "/team",
+    destination: "Team",
+    panels: "4 panels"
   },
   {
     title: "Workflow Templates",
     eyebrow: "Marketplace",
     description: "Template browse, create, publish, archive, and version-management surfaces.",
-    endpointGroup: "GET /workflows/templates, POST /workflows/templates/{id}/publish",
-    panels: [TemplateLibraryPanel, TemplateCreatePanel, TemplatePublishPanel]
+    href: "/team",
+    destination: "Team",
+    panels: "3 panels"
   },
   {
     title: "Admin & Monitoring",
     eyebrow: "Default Proof Surface",
-    description: "Open by default because technical reviewers first need system health, provider status, tool boundaries, alerts, and evidence gates.",
-    endpointGroup: "GET /health/detailed, GET /providers/status, GET /tools/boundaries, GET /alerts/queue",
-    defaultOpen: true,
-    panels: [
-      SystemHealthPanel,
-      MetricsScoreboardPanel,
-      CertificationPanel,
-      AlertQueuePanel,
-      ProviderStatusPanel,
-      ToolBoundariesPanel
-    ]
+    description: "System health, provider status, tool boundaries, alerts, and certification gates.",
+    href: "/admin",
+    destination: "Admin",
+    panels: "6 panels"
+  },
+  {
+    title: "Provider Modes",
+    eyebrow: "Runtime",
+    description: "Local, hosted, and hybrid provider-path visibility for platform operators.",
+    href: "/platform",
+    destination: "Platform",
+    panels: "1 panel"
   },
   {
     title: "Async Jobs",
     eyebrow: "Execution Queue",
     description: "Background scanner, backtest, and report job controls with progress visibility.",
-    endpointGroup: "GET /jobs, GET /jobs/{id}, POST /scanner/run/async",
-    panels: [AsyncJobQueuePanel, JobDetailsPanel, ScannerLaunchPanel]
+    href: "/execution-intelligence",
+    destination: "Execution Intelligence",
+    panels: "3 panels"
   },
   {
     title: "Archive & Search",
     eyebrow: "Decision Memory",
     description: "Packet and review lookup surfaces for reusable, searchable, auditable history.",
-    endpointGroup: "GET /packets, GET /reviews",
-    panels: [PacketLibraryPanel, ReviewArchivePanel]
+    href: "/history",
+    destination: "History",
+    panels: "2 panels"
   }
 ];
-
-const PROVIDER_MODES = ["Local deterministic", "Ollama local", "Hosted", "Hybrid"];
 
 export default function AdvancedPage() {
   return (
@@ -108,55 +75,33 @@ export default function AdvancedPage() {
       <Panel className="p-6">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
-            <SectionTitle eyebrow="Advanced" title="Operator and instrumentation surface" />
+            <SectionTitle eyebrow="Advanced" title="Module directory" />
             <p className="mt-3 max-w-4xl text-sm leading-6 text-ink/75">
-              This page is the control-plane proof layer for Ambrosia. It exposes the advanced panel inventory
-              from the frontend evolution plan while keeping most groups collapsed until a reviewer needs the detail.
+              The advanced inventory has been moved into the route where each module belongs. Use this page as a
+              cross-surface index when you need to jump between operator, team, calibration, execution, and history views.
             </p>
           </div>
-          <Badge tone="info">25 panels / 6 groups</Badge>
+          <Badge tone="info">26 panels / 7 destinations</Badge>
         </div>
       </Panel>
 
-      <Panel className="p-5">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <SectionTitle eyebrow="Demo Mode" title="Provider path is visible" />
-          <Badge tone="warn">Selection is demonstrational until wired to runtime controls</Badge>
-        </div>
-        <div className="mt-4 grid gap-2 md:grid-cols-4">
-          {PROVIDER_MODES.map((mode) => (
-            <button
-              type="button"
-              key={mode}
-              className="focus-ring rounded-md border border-line bg-fog/70 px-3 py-2 text-left text-sm font-semibold text-ink transition hover:border-teal/50"
-            >
-              {mode}
-              <span className="mt-1 block text-xs font-normal text-ink/60">Shown in packet providerInfo and fallback badges.</span>
-            </button>
-          ))}
-        </div>
-      </Panel>
-
-      <section className="space-y-3">
-        {ADVANCED_GROUPS.map((group) => (
-          <details key={group.title} open={group.defaultOpen} className="rounded-lg border border-line bg-paper">
-            <summary className="cursor-pointer list-none p-5">
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div>
-                  <p className="text-xs font-semibold uppercase tracking-wide text-teal">{group.eyebrow}</p>
-                  <h2 className="text-base font-semibold text-ink">{group.title}</h2>
-                  <p className="mt-2 max-w-3xl text-sm leading-6 text-ink/70">{group.description}</p>
-                </div>
-                <Badge tone={group.defaultOpen ? "good" : "neutral"}>{group.panels.length} panels</Badge>
+      <section className="grid gap-4 xl:grid-cols-2">
+        {MODULE_ROUTES.map((route) => (
+          <Link
+            key={`${route.title}-${route.href}`}
+            href={route.href}
+            className="focus-ring rounded-lg border border-line bg-paper p-5 transition hover:border-teal/50"
+          >
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wide text-teal">{route.eyebrow}</p>
+                <h2 className="text-base font-semibold text-ink">{route.title}</h2>
+                <p className="mt-2 max-w-3xl text-sm leading-6 text-ink/70">{route.description}</p>
               </div>
-              <p className="mt-3 rounded-md border border-line bg-fog px-2 py-1 text-xs text-ink/60">{group.endpointGroup}</p>
-            </summary>
-            <div className="grid gap-4 border-t border-line p-5 xl:grid-cols-2">
-              {group.panels.map((PanelComponent) => (
-                <PanelComponent key={PanelComponent.name} />
-              ))}
+              <Badge tone="neutral">{route.panels}</Badge>
             </div>
-          </details>
+            <p className="mt-4 text-xs font-semibold uppercase tracking-wide text-ink/50">Moved to {route.destination}</p>
+          </Link>
         ))}
       </section>
     </div>

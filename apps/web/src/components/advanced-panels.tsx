@@ -5,6 +5,31 @@ import { Download, Eye, Filter, Plus, Search, Trash2 } from "lucide-react";
 import { BarChart, Bar, ResponsiveContainer, XAxis, YAxis, CartesianGrid, Tooltip } from "recharts";
 import { Badge, Panel, SectionTitle } from "./ui";
 
+export function ProviderModePanel() {
+  const modes = ["Local deterministic", "Ollama local", "Hosted", "Hybrid"];
+
+  return (
+    <Panel className="p-5">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <SectionTitle eyebrow="Runtime Provider Path" title="Provider path is visible" />
+        <Badge tone="warn">Selection is demonstrational until wired to runtime controls</Badge>
+      </div>
+      <div className="mt-4 grid gap-2 md:grid-cols-4">
+        {modes.map((mode) => (
+          <button
+            type="button"
+            key={mode}
+            className="focus-ring rounded-md border border-line bg-fog/70 px-3 py-2 text-left text-sm font-semibold text-ink transition hover:border-teal/50"
+          >
+            {mode}
+            <span className="mt-1 block text-xs font-normal text-ink/60">Shown in packet providerInfo and fallback badges.</span>
+          </button>
+        ))}
+      </div>
+    </Panel>
+  );
+}
+
 // ============================================================================
 // SECTION 1: CALIBRATION & FEEDBACK PANELS
 // ============================================================================

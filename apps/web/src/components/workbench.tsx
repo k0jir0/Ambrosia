@@ -8,6 +8,7 @@ import {
   derivePacketConfidence,
   evaluatePacketRisk,
   generateReport as generatePacketReport,
+  getApiBaseUrl,
   getMarketSnapshot,
   getMarketTechnicals,
   getPacket,
@@ -18,7 +19,17 @@ import {
   refreshPacketMetrics,
   runPacketAgents
 } from "@/lib/api";
-import { getLocalReviews, loadReviewArchive, resolveReview, upsertLocalReview } from "@/lib/review-store";
+import {
+  getLocalReviews,
+  getReviewAlphaLink,
+  listAlphaWritebacks,
+  listReviewAlphaLinks,
+  loadReviewArchive,
+  resolveReview,
+  upsertAlphaWritebackForReview,
+  upsertLocalReview,
+  type ReviewAlphaLink
+} from "@/lib/review-store";
 import { sampleReviews } from "@/lib/sample-data";
 import type {
   AuditEvent,
@@ -78,6 +89,12 @@ type WorkflowStage = {
   summary: string;
 };
 
+type AlphaDecaySnapshot = {
+  signalId: string;
+  decayDetected: boolean;
+  recommendedAction: string;
+};
+
 const statusLabels: Record<ReviewStatus, string> = {
   intake: "Intake",
   retrieval: "Retrieval",
@@ -107,6 +124,8 @@ export function Workbench({ initialReviewId }: { initialReviewId?: string } = {}
     return initialReviewId && initialReviews.some((review) => review.id === initialReviewId) ? initialReviewId : initialReviews[0]?.id ?? "";
   });
   const [activeAction, setActiveAction] = useState<string | null>(null);
+  const [activeAlphaLink, setActiveAlphaLink] = useState<ReviewAlphaLink | null>(null);
+  const [activeAlphaDecay, setActiveAlphaDecay] = useState<AlphaDecaySnapshot | null>(null);
   const [actionFeedback, setActionFeedback] = useState<{ tone: "neutral" | "good" | "warn"; message: string } | null>(null);
   const [liveMarketData, setLiveMarketData] = useState<LiveMarketData | null>(null);
   const [activePacketData, setActivePacketData] = useState<DecisionPacket | null>(null);
@@ -148,6 +167,8 @@ export function Workbench({ initialReviewId }: { initialReviewId?: string } = {}
     setLiveMarketData(null);
     setActivePacketData(null);
     setReportArtifact(null);
+    setActiveAlphaLink(activeId ? getReviewAlphaLink(activeId) : null);
+    setActiveAlphaDecay(null);
     setRunbookState({
       status: "idle",
       currentStepId: null,
@@ -162,6 +183,37 @@ export function Workbench({ initialReviewId }: { initialReviewId?: string } = {}
       setActiveId(initialReviewId);
     }
   }, [initialReviewId, reviews]);
+
+  useEffect(() => {
+    const signalId = activeAlphaLink?.signalId;
+    const apiBaseUrl = getApiBaseUrl();
+    if (!signalId || !apiBaseUrl) {
+      setActiveAlphaDecay(null);
+      return;
+    }
+
+    let cancelled = false;
+    fetch(`${apiBaseUrl}/signals/${encodeURIComponent(signalId)}/alpha-decay`)
+      .then((response) => {
+        if (!response.ok) throw new Error(`alpha-decay ${response.status}`);
+        return response.json() as Promise<Record<string, unknown>>;
+      })
+      .then((payload) => {
+        if (cancelled) return;
+        setActiveAlphaDecay({
+          signalId,
+          decayDetected: payload.decayDetected === true,
+          recommendedAction: typeof payload.recommendedAction === "string" ? payload.recommendedAction : "n/a"
+        });
+      })
+      .catch(() => {
+        if (!cancelled) setActiveAlphaDecay(null);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeAlphaLink]);
 
   const recentReviews = useMemo(() => reviews.slice(0, 4), [reviews]);
 
@@ -183,24 +235,57 @@ export function Workbench({ initialReviewId }: { initialReviewId?: string } = {}
     }));
   }
 
-  function updateDecision(decisionState: DecisionState) {
+  function updateDecision(
+    decisionState: DecisionState,
+    rationale?: string,
+    suggestedDecision?: DecisionState | null,
+    pursueGateViolations?: string[]
+  ) {
+    if (decisionState === "pursue" && pursueGateViolations && pursueGateViolations.length > 0) {
+      appendAuditEvent("decision.pursue.blocked", `Hard policy blocked pursue: ${pursueGateViolations.join(" ")}`);
+      setActionFeedback({
+        tone: "warn",
+        message: `Hard policy blocked Pursue: ${pursueGateViolations.join(" ")}`
+      });
+      return;
+    }
+
+    const override = suggestedDecision && decisionState !== suggestedDecision;
     updateReview(activeReview.id, (review) => ({
       ...review,
       decisionState,
       status: "decision_recorded",
       audit: [
         ...review.audit,
+        ...(override
+          ? [
+              {
+                id: `audit-${Date.now()}-override`,
+                timestamp: new Date().toLocaleTimeString(),
+                eventType: "decision.override",
+                detail: `Override rationale: ${rationale?.trim() ? rationale.trim() : "No rationale provided."}. Suggested ${decisionLabels[suggestedDecision]}; chosen ${decisionLabels[decisionState]}.`
+              } as AuditEvent
+            ]
+          : []),
         {
           id: `audit-${Date.now()}`,
           timestamp: new Date().toLocaleTimeString(),
           eventType: "decision.recorded",
-          detail: `Human decision captured: ${decisionLabels[decisionState]}`
+          detail: `Human decision captured: ${decisionLabels[decisionState]}${rationale?.trim() ? ` (${rationale.trim()})` : ""}`
         }
       ]
     }));
     void recordDecision(activeReview.id, decisionState).catch(() => {
       // Sample and fallback reviews may not exist in the API store; keep local decision memory intact.
     });
+
+    if (activeAlphaLink) {
+      upsertAlphaWritebackForReview(activeReview.id, activeAlphaLink, {
+        latestDecisionState: decisionState,
+        lastReviewedAt: new Date().toISOString(),
+        incrementOverrideCount: Boolean(override)
+      });
+    }
   }
 
   function appendAuditEvent(eventType: string, detail: string) {
@@ -443,9 +528,27 @@ export function Workbench({ initialReviewId }: { initialReviewId?: string } = {}
       });
       syncReviewFromPacket(reviewId, packet);
       appendAuditEvent("outcome.recorded", `Outcome attribution recorded for ${activeReview.ticker}.`);
+
+      if (activeAlphaLink) {
+        const quality = packet.decisionState ? `decision_${packet.decisionState}` : "decision_unset";
+        upsertAlphaWritebackForReview(activeReview.id, activeAlphaLink, {
+          latestOutcomeQuality: quality,
+          lastReviewedAt: new Date().toISOString(),
+          incrementOutcomeCount: true
+        });
+      }
+
       return "ok";
     } catch {
       appendAuditEvent("outcome.recorded.fallback", "Outcome attribution endpoint unavailable; local decision memory retained.");
+      if (activeAlphaLink) {
+        const quality = activeReview.decisionState ? `decision_${activeReview.decisionState}` : "decision_unset";
+        upsertAlphaWritebackForReview(activeReview.id, activeAlphaLink, {
+          latestOutcomeQuality: quality,
+          lastReviewedAt: new Date().toISOString(),
+          incrementOutcomeCount: true
+        });
+      }
       return "fallback";
     }
   }
@@ -696,10 +799,62 @@ export function Workbench({ initialReviewId }: { initialReviewId?: string } = {}
     [activeReview, activePacketData, liveMarketData, reportArtifact]
   );
 
+  const softPolicyReasons = useMemo(() => {
+    const reasons: string[] = [];
+    if (activeAlphaDecay?.decayDetected) {
+      reasons.push(`Alpha decay detected for linked signal ${activeAlphaDecay.signalId}; recommended action: ${activeAlphaDecay.recommendedAction}.`);
+    }
+    const hygieneIssues = activePacketData?.backtestResult?.hygienIssues ?? [];
+    if (hygieneIssues.length > 0) {
+      reasons.push(`Backtest hygiene issues present: ${hygieneIssues.join(", ")}.`);
+    }
+    return reasons;
+  }, [activeAlphaDecay, activePacketData]);
+
+  const softPolicySuggestedDecision: DecisionState | null = softPolicyReasons.length > 0 ? "needs_more_data" : null;
+
+  const pursueGateViolations = useMemo(() => {
+    const violations: string[] = [];
+    if (softPolicyReasons.length > 0) {
+      violations.push("Resolve soft-policy decay/hygiene advisories first.");
+    }
+    if (activeReview.validation.status !== "specified") {
+      violations.push("Validation protocol must be specified.");
+    }
+    if (activePacketData?.riskMonitor?.status === "alert") {
+      violations.push("Risk monitor is in alert state.");
+    }
+    return violations;
+  }, [activePacketData, activeReview.validation.status, softPolicyReasons]);
+
+  const integrationKpis = useMemo(() => {
+    const reviewLinks = listReviewAlphaLinks();
+    const writebacks = listAlphaWritebacks();
+    const linkedReviewCount = reviews.filter((review) => Boolean(reviewLinks[review.id])).length;
+    const totalReviews = reviews.length;
+    const linkedCoveragePct = totalReviews > 0 ? Math.round((linkedReviewCount / totalReviews) * 100) : 0;
+    const decisionOverrideCount = reviews.reduce(
+      (sum, review) => sum + review.audit.filter((event) => event.eventType === "decision.override").length,
+      0
+    );
+    const objectWritebackCount = Object.keys(writebacks).length;
+    const outcomeWritebackCount = Object.values(writebacks).reduce((sum, state) => sum + state.outcomeCount, 0);
+    return {
+      linkedCoveragePct,
+      linkedReviewCount,
+      totalReviews,
+      decisionOverrideCount,
+      objectWritebackCount,
+      outcomeWritebackCount
+    };
+  }, [reviews]);
+
   return (
     <main className="min-h-screen pb-36 text-ink">
       <div className="mx-auto max-w-[1500px] space-y-4">
         <TopBar review={activeReview} />
+        {activeAlphaLink ? <LinkedAlphaPanel link={activeAlphaLink} /> : null}
+        <IntegrationKpiPanel metrics={integrationKpis} />
         {actionFeedback ? <FeedbackBanner feedback={actionFeedback} /> : null}
         <RunbookStrip
           review={activeReview}
@@ -736,7 +891,15 @@ export function Workbench({ initialReviewId }: { initialReviewId?: string } = {}
           />
         </div>
 
-        <DecisionStrip review={activeReview} activeAction={activeAction} onConfidenceChange={updateConfidence} onDecision={updateDecision} />
+        <DecisionStrip
+          review={activeReview}
+          activeAction={activeAction}
+          onConfidenceChange={updateConfidence}
+          onDecision={(decisionState, rationale) => updateDecision(decisionState, rationale, softPolicySuggestedDecision, pursueGateViolations)}
+          suggestedDecision={softPolicySuggestedDecision}
+          advisoryReasons={softPolicyReasons}
+          pursueGateViolations={pursueGateViolations}
+        />
       </div>
     </main>
   );
@@ -764,6 +927,63 @@ function TopBar({ review }: { review: TradeReview }) {
           <Badge tone="neutral">{review.workflowVersion}</Badge>
           <Badge tone={review.decisionState ? "good" : "warn"}>{review.decisionState ? decisionLabels[review.decisionState] : "Decision pending"}</Badge>
         </div>
+      </div>
+    </Panel>
+  );
+}
+
+function LinkedAlphaPanel({ link }: { link: ReviewAlphaLink }) {
+  const objectId = link.objectType === "hypothesis" ? link.hypothesisId : link.signalId;
+
+  return (
+    <Panel className="p-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wide text-teal">Linked Alpha Context</p>
+          <p className="mt-1 text-sm text-ink/80">
+            {link.objectType === "hypothesis" ? "Hypothesis" : "Signal"}
+            {link.title ? `: ${link.title}` : ""}
+          </p>
+          <p className="mt-1 text-xs text-ink/65">
+            {objectId ? `ID ${objectId}` : "ID unavailable"}
+            {link.ticker ? ` | Ticker ${link.ticker}` : ""}
+            {link.signalFamily ? ` | Family ${link.signalFamily}` : ""}
+          </p>
+          {link.formula ? <p className="mt-1 text-xs text-ink/65">Formula: {link.formula}</p> : null}
+        </div>
+        <div className="flex items-center gap-2">
+          <Link href="/alpha" className="focus-ring rounded-md border border-line bg-paper px-3 py-1.5 text-xs font-semibold text-teal hover:border-teal/60">
+            Open Alpha Lab
+          </Link>
+          <Badge tone="info">{link.objectType}</Badge>
+        </div>
+      </div>
+    </Panel>
+  );
+}
+
+function IntegrationKpiPanel({
+  metrics
+}: {
+  metrics: {
+    linkedCoveragePct: number;
+    linkedReviewCount: number;
+    totalReviews: number;
+    decisionOverrideCount: number;
+    objectWritebackCount: number;
+    outcomeWritebackCount: number;
+  };
+}) {
+  return (
+    <Panel className="p-4">
+      <p className="text-xs font-semibold uppercase tracking-wide text-teal">Integration KPIs</p>
+      <div className="mt-3 grid gap-2 md:grid-cols-3 xl:grid-cols-6 text-sm">
+        <ContextMetric label="Linked coverage" value={`${metrics.linkedCoveragePct}%`} />
+        <ContextMetric label="Linked reviews" value={`${metrics.linkedReviewCount}/${metrics.totalReviews}`} />
+        <ContextMetric label="Decision overrides" value={String(metrics.decisionOverrideCount)} />
+        <ContextMetric label="Objects with writeback" value={String(metrics.objectWritebackCount)} />
+        <ContextMetric label="Outcome writebacks" value={String(metrics.outcomeWritebackCount)} />
+        <ContextMetric label="Governance mode" value="linked" />
       </div>
     </Panel>
   );
@@ -1297,19 +1517,39 @@ function DecisionStrip({
   review,
   activeAction,
   onConfidenceChange,
-  onDecision
+  onDecision,
+  suggestedDecision,
+  advisoryReasons,
+  pursueGateViolations
 }: {
   review: TradeReview;
   activeAction: string | null;
   onConfidenceChange: (value: number) => void;
-  onDecision: (decisionState: DecisionState) => void;
+  onDecision: (decisionState: DecisionState, rationale?: string) => void;
+  suggestedDecision: DecisionState | null;
+  advisoryReasons: string[];
+  pursueGateViolations: string[];
 }) {
+  const [overrideRationale, setOverrideRationale] = useState("");
+  const [decisionError, setDecisionError] = useState<string | null>(null);
+
+  function submitDecision(state: DecisionState) {
+    const requiresOverrideRationale = Boolean(suggestedDecision) && state !== suggestedDecision;
+    if (requiresOverrideRationale && !overrideRationale.trim()) {
+      setDecisionError("Soft policy suggests Needs more data. Add an override rationale to choose a different decision.");
+      return;
+    }
+    setDecisionError(null);
+    onDecision(state, overrideRationale.trim() || undefined);
+  }
+
   return (
     <Panel className="sticky bottom-3 z-30 border-2 border-teal/40 bg-paper/95 p-4 shadow-panel backdrop-blur">
       <div className="grid gap-4 lg:grid-cols-[minmax(220px,0.8fr)_minmax(360px,1.2fr)_minmax(220px,0.8fr)] lg:items-center">
         <div>
           <p className="text-xs font-semibold uppercase tracking-wide text-teal">Sticky decision strip</p>
           <p className="mt-1 text-sm text-slate-400">Human authority remains explicit. Ambrosia supports the decision; it does not make it.</p>
+          {suggestedDecision ? <p className="mt-2 text-xs text-amber">Soft policy suggestion: {decisionLabels[suggestedDecision]}.</p> : null}
         </div>
         <div className="space-y-2">
           <div className="flex items-center justify-between text-sm">
@@ -1328,17 +1568,44 @@ function DecisionStrip({
           <p className="text-xs text-slate-500">
             Trial impact: +{review.trialCountImpact} / Follow-up: {review.followUpDate}
           </p>
+          {advisoryReasons.length > 0 ? (
+            <div className="rounded-md border border-amber/30 bg-amber/10 p-2 text-xs text-amber">
+              {advisoryReasons.map((reason) => (
+                <p key={reason}>{reason}</p>
+              ))}
+            </div>
+          ) : null}
+          {pursueGateViolations.length > 0 ? (
+            <div className="rounded-md border border-coral/30 bg-coral/10 p-2 text-xs text-coral">
+              {pursueGateViolations.map((reason) => (
+                <p key={reason}>{reason}</p>
+              ))}
+            </div>
+          ) : null}
+          {suggestedDecision ? (
+            <input
+              value={overrideRationale}
+              onChange={(event) => setOverrideRationale(event.target.value)}
+              placeholder="Override rationale (required if not selecting Needs more data)"
+              className="focus-ring w-full rounded-md border border-line bg-fog/70 px-2 py-1.5 text-xs text-slate-200"
+            />
+          ) : null}
+          {decisionError ? <p className="text-xs text-amber">{decisionError}</p> : null}
         </div>
         <div className="grid grid-cols-2 gap-2">
           {(Object.entries(decisionLabels) as Array<[DecisionState, string]>).map(([state, label]) => (
             <button
               type="button"
               key={state}
-              onClick={() => onDecision(state)}
-              disabled={Boolean(activeAction)}
+              onClick={() => submitDecision(state)}
+              disabled={Boolean(activeAction) || (state === "pursue" && pursueGateViolations.length > 0)}
               className={cn(
                 "focus-ring rounded-md px-3 py-2 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-50",
-                review.decisionState === state ? "bg-teal text-fog" : "border border-line bg-fog/70 text-slate-200 hover:border-teal/50"
+                review.decisionState === state
+                  ? "bg-teal text-fog"
+                  : suggestedDecision === state
+                    ? "border border-amber/50 bg-amber/10 text-amber hover:border-amber"
+                    : "border border-line bg-fog/70 text-slate-200 hover:border-teal/50"
               )}
             >
               {label}

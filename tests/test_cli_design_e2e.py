@@ -46,6 +46,8 @@ def test_cli_no_args_is_discoverable_help() -> None:
     assert "signals" in result.stdout
     assert "enterprise" in result.stdout
     assert "Examples:" in result.stdout
+    assert "Current target" in result.stdout
+    assert "ambrosia quickstart" in result.stdout
     assert result.stderr == ""
 
 
@@ -74,12 +76,68 @@ def test_cli_version_examples_and_catalog_are_local_no_network_commands() -> Non
 
 
 def test_cli_command_detail_is_human_readable() -> None:
-    result = run_cli("commands", "show", "10")
+    catalog_result = run_cli("--json", "commands", "list")
+    catalog = json.loads(catalog_result.stdout)
+    health_index = next(item["index"] for item in catalog if item["command"] == "ambrosia health")
+
+    result = run_cli("commands", "show", str(health_index))
 
     assert result.returncode == 0
     assert result.stdout.splitlines()[0] == "ambrosia health"
     assert "{" not in result.stdout
     assert "Traceback" not in result.stderr
+
+
+def test_cli_status_reports_target_and_recovery_without_failing() -> None:
+    result = run_cli("--json", "--api-url", "http://127.0.0.1:1", "--timeout", "0.2", "status")
+
+    assert result.returncode == 0
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "ok"
+    assert payload["apiUrl"] == "http://127.0.0.1:1"
+    assert payload["apiUrlSource"] == "flag"
+    assert payload["apiReachable"] is False
+    assert any("setx AMBROSIA_API_URL" in item["command"] for item in payload["recovery"])
+
+
+def test_cli_api_unavailable_error_is_actionable() -> None:
+    result = run_cli("--api-url", "http://127.0.0.1:1", "--timeout", "0.2", "market", "snapshot", "GOOG")
+
+    assert result.returncode == 1
+    assert "Status: error" in result.stdout
+    assert "Tried: http://127.0.0.1:1/market/GOOG/snapshot" in result.stdout
+    assert "Use staging for this command" in result.stdout
+    assert "setx AMBROSIA_API_URL" in result.stdout
+    assert "Traceback" not in result.stderr
+
+
+def test_cli_quickstart_can_write_profile(tmp_path: Path) -> None:
+    env_home = tmp_path / "home"
+    env_home.mkdir()
+    env = {
+        **os.environ,
+        "PYTHONPATH": _pythonpath(),
+        "HOME": str(env_home),
+        "USERPROFILE": str(env_home),
+    }
+    result = subprocess.run(
+        [sys.executable, "-c", CLI_MAIN, "--json", "quickstart", "--target", "staging", "--write-profile"],
+        cwd=ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=15,
+        check=False,
+    )
+
+    assert result.returncode == 0
+    payload = json.loads(result.stdout)
+    assert payload["target"] == "staging"
+    assert payload["apiUrl"] == "https://ambrosia-api-staging.onrender.com"
+
+    config_path = env_home / ".ambrosia" / "config.json"
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    assert config["profiles"]["default"]["api_url"] == "https://ambrosia-api-staging.onrender.com"
 
 
 def test_cli_json_mode_and_token_file_are_scriptable(tmp_path: Path) -> None:
@@ -136,12 +194,24 @@ def test_root_scripts_expose_cli_install_and_distribution_flows() -> None:
         "cli:install:dist",
         "cli:install:path",
         "cli:menu",
+        "cli:status",
+        "cli:quickstart",
         "cli:examples",
         "cli:version",
     }
     assert expected_scripts.issubset(scripts)
     assert "install-ambrosia-cli.ps1" in scripts["cli:install:path"]
     assert "build-ambrosia-cli-exe.ps1" in scripts["cli:build:exe"]
+
+
+def test_windows_launcher_is_target_aware() -> None:
+    launcher = (ROOT / "launch-ambrosia-cli-menu.bat").read_text(encoding="utf-8")
+
+    assert "uv run ambrosia status" in launcher
+    assert "Choose API target" in launcher
+    assert "https://ambrosia-api-staging.onrender.com" in launcher
+    assert "quickstart --target custom" in launcher
+    assert "Run common quick checks" in launcher
 
 
 def test_standalone_executable_catalog_if_built() -> None:

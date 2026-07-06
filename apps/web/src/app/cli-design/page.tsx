@@ -2,20 +2,20 @@ import { Badge, Panel, SectionTitle } from "@/components/ui";
 
 const CLI_PILLARS = [
   {
-    title: "Install once",
-    detail: "Ambrosia should be installed into a local shell once, then run from any terminal as the ambrosia executable."
+    title: "Configure visibly",
+    detail: "Operators can now run ambrosia status to see the active profile, API URL source, token source, reachability, and recovery path before doing work."
   },
   {
-    title: "Discover locally",
-    detail: "Operators should reach ambrosia --help, ambrosia commands list, and numbered command details without knowing repo layout."
+    title: "Start cleanly",
+    detail: "ambrosia quickstart makes local, staging, production, and custom target setup explicit, with an option to persist the selected profile."
   },
   {
-    title: "Script cleanly",
-    detail: "Human output remains readable by default, while --json produces stable machine-readable payloads for automation."
+    title: "Recover quickly",
+    detail: "API-unavailable failures now report the attempted target and show concrete staging, setx, and local server recovery commands."
   },
   {
-    title: "Share one contract",
-    detail: "The CLI maps to SDK methods, and the SDK wraps the API so every operator path stays aligned with platform contracts."
+    title: "Prove positive function",
+    detail: "CLI-demo-script.bat runs a full staging demonstration across discovery, lifecycle, execution, and enterprise commands with a generated report."
   }
 ];
 
@@ -39,6 +39,16 @@ const ARCHITECTURE_LAYERS = [
 
 const INSTALL_PATHS = [
   {
+    title: "Fast hosted use",
+    commands: ["setx AMBROSIA_API_URL https://ambrosia-api-staging.onrender.com", "ambrosia status", "ambrosia market snapshot GOOG"],
+    note: "The simplest non-developer path is to target staging, open a new terminal, and verify the CLI/API connection with status and a market snapshot."
+  },
+  {
+    title: "Guided first run",
+    commands: ["ambrosia quickstart --target staging --write-profile", "ambrosia status", "ambrosia commands list"],
+    note: "quickstart persists the selected API target into ~/.ambrosia/config.json and gives the next operator commands."
+  },
+  {
     title: "Developer editable install",
     commands: ["cd Ambrosia/packages/cli", "uv pip install -e ../sdk-python", "uv pip install -e .", "ambrosia commands list"],
     note: "Works today and should remain documented for contributors."
@@ -56,7 +66,10 @@ const INSTALL_PATHS = [
 ];
 
 const COMMAND_EXAMPLES = [
+  "ambrosia status",
+  "ambrosia quickstart --target staging --write-profile",
   "ambrosia health",
+  "ambrosia --api-url https://ambrosia-api-staging.onrender.com market snapshot GOOG",
   "ambrosia scanner run --universe AAPL,MSFT,SPY --max-candidates 5",
   "ambrosia signals list",
   "ambrosia signals create --name Momentum --formula \"close/close_20d-1\"",
@@ -66,7 +79,7 @@ const COMMAND_EXAMPLES = [
   "ambrosia enterprise readiness"
 ];
 
-const DISCOVERY_COMMANDS = ["ambrosia --help", "ambrosia <resource> --help", "ambrosia commands list", "ambrosia commands show <index>"];
+const DISCOVERY_COMMANDS = ["ambrosia --help", "ambrosia status", "ambrosia quickstart --target staging", "ambrosia commands list", "ambrosia commands show <index>", "CLI-demo-script.bat --list-only"];
 
 const OUTPUT_MODES = [
   { mode: "Human default", example: "ambrosia signals list", purpose: "Readable terminal summaries for interactive use." },
@@ -77,11 +90,62 @@ const OUTPUT_MODES = [
 const CONFIG_PRIORITY = ["Explicit flags", "Environment variables", "Profile config", "Default local URL"];
 
 const ERROR_RULES = [
-  "API unavailable",
+  "API unavailable with attempted URL",
+  "Concrete staging/local recovery commands",
   "Invalid token",
   "Missing required flag",
   "Endpoint returned non-JSON response",
   "Validation failed"
+];
+
+const ACCESSIBILITY_UPDATES = [
+  {
+    title: "ambrosia status",
+    state: "Implemented",
+    detail: "Reports CLI version, SDK version, profile, config path, API URL, API URL source, token source, timeout, reachability, and recovery hints."
+  },
+  {
+    title: "ambrosia quickstart",
+    state: "Implemented",
+    detail: "Supports local, staging, production, and custom targets, optional health check, and --write-profile persistence."
+  },
+  {
+    title: "Actionable API failures",
+    state: "Implemented",
+    detail: "Connection failures include the target path tried plus one-command staging, persistent setx, and local API recovery instructions."
+  },
+  {
+    title: "Workflow catalog",
+    state: "Implemented",
+    detail: "commands list is grouped by setup, discovery, review, signals lifecycle, alpha/execution, enterprise controls, and automation."
+  },
+  {
+    title: "Target-aware launcher",
+    state: "Implemented",
+    detail: "launch-ambrosia-cli-menu.bat shows status, switches local/staging/production/custom targets, persists profiles, and runs quick checks."
+  },
+  {
+    title: "Positive demo script",
+    state: "Verified",
+    detail: "CLI-demo-script.bat demonstrated 59/59 commands passing against staging with 0 failures and 0 blocked steps."
+  }
+];
+
+const DEMO_RESULTS = [
+  { label: "Commands exercised", value: "59" },
+  { label: "Passed", value: "59" },
+  { label: "Failed", value: "0" },
+  { label: "Blocked", value: "0" },
+  { label: "Pass rate", value: "100%" }
+];
+
+const DEMO_DOMAINS = [
+  "setup/config/status/quickstart",
+  "health, market, scanner, relay",
+  "reviews, packets, jobs, plans",
+  "signals link-review and writebacks",
+  "alpha, backtests, paper trades, warm-path events",
+  "enterprise service accounts, audit, SSO, security packet, readiness"
 ];
 
 const SDK_METHODS = [
@@ -120,6 +184,18 @@ const API_REQUIREMENTS = [
 
 const IMPLEMENTATION_EVIDENCE = [
   {
+    title: "First-run target visibility",
+    detail: "ambrosia without arguments now prints the normal help plus current target context and a quickstart suggestion."
+  },
+  {
+    title: "Status and quickstart commands",
+    detail: "ambrosia status and ambrosia quickstart are implemented as local operator commands instead of paper recommendations."
+  },
+  {
+    title: "Actionable error recovery",
+    detail: "AmbrosiaApiError now carries the target URL, and the CLI prints the attempted endpoint plus recovery commands when the API is unavailable."
+  },
+  {
     title: "Self-contained local package graph",
     detail: "packages/cli/pyproject.toml declares ambrosia-sdk==0.1.0 and a uv local source, so uv sync can install the SDK dependency with the CLI."
   },
@@ -129,7 +205,11 @@ const IMPLEMENTATION_EVIDENCE = [
   },
   {
     title: "Windows local accessibility",
-    detail: "launch-ambrosia-cli-menu.bat and scripts/install-ambrosia-cli.ps1 provide double-click and optional PATH-based access."
+    detail: "launch-ambrosia-cli-menu.bat now shows status, supports target selection, persists target profiles, and runs common quick checks."
+  },
+  {
+    title: "Full CLI demo proof",
+    detail: "CLI-demo-script.bat generated a 59/59 passing staging report across every major command group."
   },
   {
     title: "SDK typed payload foundation",
@@ -146,10 +226,13 @@ const COMPLIANCE = [
   { item: "Noun-verb subcommands", state: "Pass", evidence: "reviews, scanner, signals, alpha, backtests, paper-trades, enterprise, and related resources are exposed." },
   { item: "Argparse help and examples", state: "Pass", evidence: "Top-level help includes examples, and ambrosia examples is implemented." },
   { item: "Numbered command menu", state: "Pass", evidence: "ambrosia commands list and ambrosia commands show <index> are implemented." },
-  { item: "Persistent Windows launcher", state: "Pass", evidence: "launch-ambrosia-cli-menu.bat is present as the operator bridge." },
+  { item: "Workflow-grouped command menu", state: "Pass", evidence: "commands list now groups commands by setup, discovery, review, signals, alpha/execution, enterprise, and automation workflows." },
+  { item: "Persistent Windows launcher", state: "Pass", evidence: "launch-ambrosia-cli-menu.bat is target-aware and includes status, target switching, persistence, and quick checks." },
   { item: "JSON output", state: "Pass", evidence: "--json emits structured payloads for script use." },
-  { item: "API URL and token configuration", state: "Pass", evidence: "Flags, environment variables, profile config, and --token-file are supported." },
+  { item: "API URL and token configuration", state: "Pass", evidence: "Flags, environment variables, profile config, --token-file, status, quickstart, and config helpers are supported." },
+  { item: "API-unavailable recovery", state: "Pass", evidence: "Errors include the attempted URL plus staging, setx, and local uvicorn recovery commands." },
   { item: "SDK wrapper", state: "Pass", evidence: "AmbrosiaClient covers the major public resource methods." },
+  { item: "Live positive-function demo", state: "Pass", evidence: "CLI-demo-script.bat ran 59 commands against staging with 59 passed, 0 failed, and 0 blocked." },
   { item: "One-step local install", state: "Pass", evidence: "pnpm cli:install and uv sync now resolve the local SDK dependency." },
   { item: "SDK dependency declared in CLI package", state: "Pass", evidence: "ambrosia-sdk==0.1.0 is declared in packages/cli/pyproject.toml." },
   { item: "PATH/global shell install documented", state: "Pass", evidence: "README and scripts/install-ambrosia-cli.ps1 document optional AddToPath flows." },
@@ -172,7 +255,7 @@ const ROADMAP = [
   {
     phase: "Phase 3",
     title: "Improve discoverability",
-    items: ["Done: top-level help includes examples.", "Done: ambrosia examples exists.", "Next: group command catalog by domain."]
+    items: ["Done: top-level help includes current target context.", "Done: ambrosia examples exists.", "Done: command catalog is grouped by workflow."]
   },
   {
     phase: "Phase 4",
@@ -182,22 +265,23 @@ const ROADMAP = [
   {
     phase: "Phase 5",
     title: "Contract coverage",
-    items: ["Expose or mark every public API route.", "Maintain route inventory, SDK/CLI smoke tests, and visibility matrix checks."]
+    items: ["Done: CLI design E2E covers status, quickstart, target recovery, and launcher behavior.", "Done: CLI demo script proves positive function across every major command group.", "Next: publish public distribution path."]
   }
 ];
 
 const OPERATOR_FLOW = [
   "Double-click launch-ambrosia-cli-menu.bat.",
-  "See the command menu.",
-  "Inspect a numbered command.",
-  "Run health --detailed or signals list.",
+  "See current CLI/API status and active target.",
+  "Choose local, staging, production, or custom API target.",
+  "Inspect grouped command catalog entries.",
+  "Run health --detailed, market snapshot GOOG, or signals list.",
   "Quit with Q."
 ];
 
 const DEVELOPER_FLOW = [
   "Install with pipx or uv.",
   "Open any shell.",
-  "Run ambrosia commands list.",
+  "Run ambrosia status and ambrosia commands list.",
   "Pipe ambrosia --json signals list into tooling."
 ];
 
@@ -350,8 +434,48 @@ export default function CliDesignPage() {
       </Panel>
 
       <Panel className="p-6">
+        <SectionTitle eyebrow="Index101 Accessibility" title="Current CLI operator access layer" />
+        <p className="mt-3 max-w-4xl text-sm leading-6 text-ink/70">
+          The current CLI is no longer just installable. It now makes target selection, first-run setup, recovery, and live function proof visible to a non-developer operator.
+        </p>
+        <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+          {ACCESSIBILITY_UPDATES.map((item) => (
+            <div key={item.title} className="rounded-md border border-line bg-fog/70 p-4 text-sm">
+              <div className="flex items-center justify-between gap-3">
+                <p className="font-semibold text-ink">{item.title}</p>
+                <Badge tone={item.state === "Verified" ? "good" : "info"}>{item.state}</Badge>
+              </div>
+              <p className="mt-2 leading-5 text-ink/70">{item.detail}</p>
+            </div>
+          ))}
+        </div>
+      </Panel>
+
+      <Panel className="p-6">
+        <SectionTitle eyebrow="Verified Demo" title="CLI-demo-script.bat staging proof" />
+        <div className="mt-4 grid gap-3 md:grid-cols-5">
+          {DEMO_RESULTS.map((metric) => (
+            <div key={metric.label} className="rounded-md border border-line bg-fog/70 p-4 text-center">
+              <p className="text-2xl font-semibold text-teal">{metric.value}</p>
+              <p className="mt-1 text-xs uppercase tracking-wide text-ink/55">{metric.label}</p>
+            </div>
+          ))}
+        </div>
+        <div className="mt-4 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+          {DEMO_DOMAINS.map((domain) => (
+            <div key={domain} className="rounded-md border border-line bg-paper/70 px-3 py-2 text-sm text-ink/75">
+              {domain}
+            </div>
+          ))}
+        </div>
+        <p className="mt-4 text-xs leading-5 text-ink/55">
+          Latest observed run: 59 commands passed against https://ambrosia-api-staging.onrender.com with zero failed or blocked steps. The script writes reports under .local/cli-demo/&lt;timestamp&gt;/.
+        </p>
+      </Panel>
+
+      <Panel className="p-6">
         <SectionTitle eyebrow="Installation" title="Recommended local access paths" />
-        <div className="mt-4 grid gap-3 lg:grid-cols-3">
+        <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
           {INSTALL_PATHS.map((path) => (
             <div key={path.title} className="rounded-md border border-line bg-fog/70 p-4">
               <p className="text-sm font-semibold text-ink">{path.title}</p>

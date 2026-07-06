@@ -10,6 +10,9 @@ from typing import Any
 from ambrosia_sdk import AmbrosiaApiError, AmbrosiaClient
 
 DEFAULT_VERSION = "0.1.0"
+DEFAULT_API_URL = "http://127.0.0.1:8001"
+STAGING_API_URL = "https://ambrosia-api-staging.onrender.com"
+PRODUCTION_API_URL = "https://ambrosia-api-69t6.onrender.com"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -18,24 +21,26 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.resource is None:
         parser.print_help()
+        try:
+            print()
+            print_context_hint(resolve_cli_context(args))
+        except AmbrosiaApiError as exc:
+            print()
+            print(f"Configuration warning: {exc}")
         return 0
 
+    context: dict[str, Any] | None = None
     try:
-        profile = load_profile(args.profile)
+        context = resolve_cli_context(args)
         client = AmbrosiaClient(
-            base_url=args.api_url or os.getenv("AMBROSIA_API_URL") or profile.get("api_url"),
-            token=args.token or read_token_file(args.token_file) or os.getenv("AMBROSIA_TOKEN") or profile.get("token"),
+            base_url=context["apiUrl"],
+            token=context["token"],
             timeout=args.timeout,
         )
-        result = dispatch(args, client)
+        result = dispatch(args, client, context)
     except AmbrosiaApiError as exc:
-        payload = {
-            "status": "error",
-            "message": str(exc),
-            "statusCode": exc.status_code,
-            "payload": exc.payload,
-        }
-        print_json(payload)
+        payload = error_payload(exc, args=args, context=context)
+        print_json(payload) if args.json else print_human(payload)
         return 1
 
     if args.json:
@@ -69,6 +74,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     subcommands = parser.add_subparsers(dest="resource", required=False)
 
+    subcommands.add_parser("status", help="Show CLI, profile, token, and API target status")
+
+    quickstart = subcommands.add_parser("quickstart", help="Show or write first-run target configuration")
+    quickstart.add_argument("--target", choices=["local", "staging", "production", "custom"], default="staging")
+    quickstart.add_argument("--api-url", dest="quickstart_api_url", default=None, help="API URL when --target custom is used")
+    quickstart.add_argument("--write-profile", action="store_true", help="Write the selected API URL to ~/.ambrosia/config.json")
+    quickstart.add_argument("--check", action="store_true", help="Check the selected API target health")
+
     commands = subcommands.add_parser("commands", help="Inspect numbered CLI command catalog")
     commands_sub = commands.add_subparsers(dest="action", required=True)
     commands_sub.add_parser("list", help="List all commands as numbered entries")
@@ -86,11 +99,16 @@ def build_parser() -> argparse.ArgumentParser:
 
     config = subcommands.add_parser("config", help="Read or describe CLI profile config")
     config_sub = config.add_subparsers(dest="action", required=True)
+    config_sub.add_parser("show", help="Show resolved profile, API URL, and token source")
+    config_sub.add_parser("profiles", help="List configured profile names")
     config_get = config_sub.add_parser("get", help="Get a config key")
     config_get.add_argument("key")
     config_set = config_sub.add_parser("set", help="Describe how a config key would be set")
     config_set.add_argument("key")
     config_set.add_argument("value")
+    config_set_api = config_sub.add_parser("set-api-url", help="Write an API URL for a profile")
+    config_set_api.add_argument("profile_name")
+    config_set_api.add_argument("api_url")
 
     health = subcommands.add_parser("health", help="Read API health")
     health.add_argument("--detailed", action="store_true", help="Read /health/detailed")
@@ -252,7 +270,13 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def dispatch(args: argparse.Namespace, client: AmbrosiaClient) -> Any:
+def dispatch(args: argparse.Namespace, client: AmbrosiaClient, context: dict[str, Any] | None = None) -> Any:
+    if args.resource == "status":
+        return get_status(context or client_context(args, client), client=client)
+
+    if args.resource == "quickstart":
+        return run_quickstart(args, client)
+
     if args.resource == "examples":
         return get_examples()
 
@@ -265,9 +289,9 @@ def dispatch(args: argparse.Namespace, client: AmbrosiaClient) -> Any:
         return catalog
 
     if args.resource == "auth":
-        return dispatch_auth(args, client)
+        return dispatch_auth(args, client, context)
     if args.resource == "config":
-        return dispatch_config(args)
+        return dispatch_config(args, context)
     if args.resource == "health":
         return client.health_detailed() if args.detailed else client.health()
     if args.resource == "reviews":
@@ -438,34 +462,243 @@ def dispatch(args: argparse.Namespace, client: AmbrosiaClient) -> Any:
     raise AmbrosiaApiError(f"Unsupported command: {args.resource}")
 
 
-def dispatch_auth(args: argparse.Namespace, client: AmbrosiaClient) -> dict[str, Any]:
+def dispatch_auth(args: argparse.Namespace, client: AmbrosiaClient, context: dict[str, Any] | None = None) -> dict[str, Any]:
     has_token = bool(client.token)
     if args.action == "login":
         return {"status": "ok" if has_token else "missing_token", "apiUrl": client.base_url}
     if args.action == "token":
-        return {"configured": has_token, "source": "argument-or-profile-or-env"}
+        return {"configured": has_token, "source": (context or {}).get("tokenSource", "argument-or-profile-or-env")}
     if args.action == "whoami":
-        return {"profile": args.profile, "apiUrl": client.base_url, "authenticated": has_token}
+        return {"profile": args.profile, "apiUrl": client.base_url, "apiUrlSource": (context or {}).get("apiUrlSource"), "authenticated": has_token}
     if args.action == "logout":
         return {"status": "noop", "message": "Remove token from ~/.ambrosia/config.json or AMBROSIA_TOKEN."}
     raise AmbrosiaApiError(f"Unsupported auth action: {args.action}")
 
 
-def dispatch_config(args: argparse.Namespace) -> dict[str, Any]:
+def dispatch_config(args: argparse.Namespace, context: dict[str, Any] | None = None) -> dict[str, Any]:
     profile = load_profile(args.profile)
+    if args.action == "show":
+        return public_context(context or resolve_cli_context(args))
+    if args.action == "profiles":
+        config = read_config()
+        profiles = config.get("profiles") if isinstance(config.get("profiles"), dict) else {}
+        return {"profiles": sorted(profiles.keys()), "activeProfile": args.profile, "path": str(config_path())}
     if args.action == "get":
         return {"key": args.key, "value": profile.get(args.key)}
+    if args.action == "set-api-url":
+        write_profile_api_url(args.profile_name, args.api_url)
+        return {"status": "written", "profile": args.profile_name, "apiUrl": args.api_url, "path": str(config_path())}
     return {"status": "dry_run", "key": args.key, "value": args.value, "path": str(Path.home() / ".ambrosia" / "config.json")}
 
 
-def load_profile(profile_name: str) -> dict[str, str | None]:
-    config_path = Path.home() / ".ambrosia" / "config.json"
-    if not config_path.exists():
+def resolve_cli_context(args: argparse.Namespace) -> dict[str, Any]:
+    profile = load_profile(args.profile)
+    api_url, api_url_source = resolve_api_url(args, profile)
+    token, token_source = resolve_token(args, profile)
+    return {
+        "profile": args.profile,
+        "configPath": str(config_path()),
+        "apiUrl": api_url,
+        "apiUrlSource": api_url_source,
+        "token": token,
+        "tokenConfigured": bool(token),
+        "tokenSource": token_source,
+        "timeout": args.timeout,
+    }
+
+
+def client_context(args: argparse.Namespace, client: AmbrosiaClient) -> dict[str, Any]:
+    return {
+        "profile": args.profile,
+        "configPath": str(config_path()),
+        "apiUrl": client.base_url,
+        "apiUrlSource": "client",
+        "token": client.token,
+        "tokenConfigured": bool(client.token),
+        "tokenSource": "client" if client.token else "missing",
+        "timeout": args.timeout,
+    }
+
+
+def resolve_api_url(args: argparse.Namespace, profile: dict[str, str | None]) -> tuple[str, str]:
+    if args.api_url:
+        return args.api_url, "flag"
+    env_url = os.getenv("AMBROSIA_API_URL")
+    if env_url:
+        return env_url, "env"
+    if profile.get("api_url"):
+        return str(profile["api_url"]), "profile"
+    return DEFAULT_API_URL, "default-local"
+
+
+def resolve_token(args: argparse.Namespace, profile: dict[str, str | None]) -> tuple[str | None, str]:
+    if args.token:
+        return args.token, "flag"
+    token_from_file = read_token_file(args.token_file)
+    if token_from_file:
+        return token_from_file, "token-file"
+    env_token = os.getenv("AMBROSIA_TOKEN")
+    if env_token:
+        return env_token, "env"
+    if profile.get("token"):
+        return str(profile["token"]), "profile"
+    return None, "missing"
+
+
+def get_status(context: dict[str, Any], *, client: AmbrosiaClient | None = None) -> dict[str, Any]:
+    payload = public_context(context)
+    payload.update(
+        {
+            "status": "ok",
+            "cliVersion": cli_version(),
+            "sdkVersion": package_version("ambrosia-sdk"),
+            "quickstart": "ambrosia quickstart",
+        }
+    )
+    if client is not None:
+        try:
+            health = client.health()
+            payload["apiReachable"] = True
+            payload["apiHealth"] = health
+        except AmbrosiaApiError as exc:
+            payload["apiReachable"] = False
+            payload["apiError"] = str(exc)
+            payload["recovery"] = recovery_hints(context, target=exc.target)
+    return payload
+
+
+def run_quickstart(args: argparse.Namespace, client: AmbrosiaClient) -> dict[str, Any]:
+    api_url = quickstart_api_url(args)
+    result: dict[str, Any] = {
+        "status": "ready",
+        "target": args.target,
+        "apiUrl": api_url,
+        "writeProfile": bool(args.write_profile),
+        "profile": args.profile,
+        "nextCommands": [
+            "ambrosia status",
+            "ambrosia health --detailed",
+            "ambrosia market snapshot GOOG",
+            "ambrosia commands list",
+        ],
+    }
+    if args.write_profile:
+        write_profile_api_url(args.profile, api_url)
+        result["configPath"] = str(config_path())
+        result["message"] = f"Profile '{args.profile}' now uses {api_url}."
+    else:
+        result["message"] = "Dry run only. Add --write-profile to persist this API target."
+
+    if args.check:
+        check_client = AmbrosiaClient(base_url=api_url, token=client.token, timeout=client.timeout)
+        try:
+            result["apiReachable"] = True
+            result["apiHealth"] = check_client.health()
+        except AmbrosiaApiError as exc:
+            result["apiReachable"] = False
+            result["apiError"] = str(exc)
+            result["recovery"] = recovery_hints({"apiUrl": api_url}, target=exc.target)
+    return result
+
+
+def quickstart_api_url(args: argparse.Namespace) -> str:
+    if args.target == "local":
+        return DEFAULT_API_URL
+    if args.target == "staging":
+        return STAGING_API_URL
+    if args.target == "production":
+        return PRODUCTION_API_URL
+    if args.quickstart_api_url:
+        return args.quickstart_api_url
+    raise AmbrosiaApiError("--api-url is required when --target custom is used")
+
+
+def public_context(context: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "profile": context.get("profile"),
+        "configPath": context.get("configPath"),
+        "apiUrl": context.get("apiUrl"),
+        "apiUrlSource": context.get("apiUrlSource"),
+        "tokenConfigured": bool(context.get("tokenConfigured")),
+        "tokenSource": context.get("tokenSource"),
+        "timeout": context.get("timeout"),
+    }
+
+
+def error_payload(exc: AmbrosiaApiError, *, args: argparse.Namespace, context: dict[str, Any] | None) -> dict[str, Any]:
+    payload = {
+        "status": "error",
+        "message": str(exc),
+        "statusCode": exc.status_code,
+        "payload": exc.payload,
+    }
+    target = exc.target or (context or {}).get("apiUrl")
+    if target:
+        payload["target"] = target
+    if "Ambrosia API unavailable" in str(exc):
+        payload["recovery"] = recovery_hints(context or {"apiUrl": target}, target=target, command=args)
+    return payload
+
+
+def recovery_hints(context: dict[str, Any], *, target: str | None = None, command: argparse.Namespace | None = None) -> list[dict[str, str]]:
+    command_text = command_example(command) if command is not None else "ambrosia health --detailed"
+    tried = target or str(context.get("apiUrl") or DEFAULT_API_URL)
+    return [
+        {
+            "label": "Use staging for this command",
+            "command": command_text.replace("ambrosia ", f"ambrosia --api-url {STAGING_API_URL} ", 1),
+        },
+        {"label": "Make staging the default in new Windows terminals", "command": f"setx AMBROSIA_API_URL {STAGING_API_URL}"},
+        {
+            "label": "Start the local API from C:\\Users\\user\\Desktop\\ARC",
+            "command": f"uv run uvicorn --app-dir Ambrosia services.api.app.main:app --host 127.0.0.1 --port 8001  # attempted {tried}",
+        },
+    ]
+
+
+def command_example(command: argparse.Namespace) -> str:
+    resource = getattr(command, "resource", None)
+    action = getattr(command, "action", None)
+    if resource == "market" and action == "snapshot":
+        return f"ambrosia market snapshot {command.ticker}"
+    if resource == "health":
+        return "ambrosia health --detailed" if getattr(command, "detailed", False) else "ambrosia health"
+    if resource:
+        return f"ambrosia {resource}"
+    return "ambrosia health --detailed"
+
+
+def write_profile_api_url(profile_name: str, api_url: str) -> None:
+    path = config_path()
+    data = read_config()
+    profiles = data.setdefault("profiles", {})
+    if not isinstance(profiles, dict):
+        raise AmbrosiaApiError(f"Invalid profiles object in config: {path}")
+    profile = profiles.setdefault(profile_name, {})
+    if not isinstance(profile, dict):
+        raise AmbrosiaApiError(f"Invalid profile '{profile_name}' in config: {path}")
+    profile["api_url"] = api_url
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def config_path() -> Path:
+    return Path.home() / ".ambrosia" / "config.json"
+
+
+def read_config() -> dict[str, Any]:
+    path = config_path()
+    if not path.exists():
         return {}
     try:
-        data = json.loads(config_path.read_text(encoding="utf-8"))
+        existing = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
-        raise AmbrosiaApiError(f"Invalid profile config: {config_path}") from exc
+        raise AmbrosiaApiError(f"Invalid profile config: {path}") from exc
+    return existing if isinstance(existing, dict) else {}
+
+
+def load_profile(profile_name: str) -> dict[str, str | None]:
+    data = read_config()
     profile = data.get("profiles", {}).get(profile_name, {})
     if not isinstance(profile, dict):
         return {}
@@ -488,16 +721,23 @@ def read_token_file(token_file: str | None) -> str | None:
 
 
 def cli_version() -> str:
+    return package_version("ambrosia-cli")
+
+
+def package_version(package_name: str) -> str:
     try:
-        return version("ambrosia-cli")
+        return version(package_name)
     except PackageNotFoundError:
         return DEFAULT_VERSION
 
 
 def get_examples() -> list[dict[str, str]]:
     return [
+        {"description": "Show current target/profile status", "command": "ambrosia status"},
+        {"description": "Configure hosted staging target", "command": "ambrosia quickstart --target staging --write-profile"},
         {"description": "Show the command catalog", "command": "ambrosia commands list"},
         {"description": "Read API health", "command": "ambrosia health --detailed"},
+        {"description": "Read hosted market data", "command": f"ambrosia --api-url {STAGING_API_URL} market snapshot GOOG"},
         {"description": "List signals as JSON", "command": "ambrosia --json signals list"},
         {"description": "Run the scanner", "command": "ambrosia scanner run --universe AAPL,MSFT,SPY --max-candidates 5"},
         {"description": "Create a signal", "command": "ambrosia signals create --name Momentum --formula \"close/close_20d-1\""},
@@ -530,6 +770,7 @@ def get_command_catalog() -> list[dict[str, Any]]:
                     "index": len(catalog) + 1,
                     "command": f"ambrosia {resource_name}",
                     "resource": resource_name,
+                    "workflow": command_workflow(resource_name),
                     "summary": (getattr(resource_parser, "description", None) or "").strip(),
                 }
             )
@@ -543,6 +784,7 @@ def get_command_catalog() -> list[dict[str, Any]]:
                     "command": f"ambrosia {resource_name} {action_name}",
                     "resource": resource_name,
                     "action": action_name,
+                    "workflow": command_workflow(resource_name),
                     "summary": (getattr(action_parser, "description", None) or "").strip(),
                     "usage": usage,
                 }
@@ -551,14 +793,86 @@ def get_command_catalog() -> list[dict[str, Any]]:
     return catalog
 
 
+def command_workflow(resource_name: str) -> str:
+    workflows = {
+        "status": "Setup and diagnostics",
+        "quickstart": "Setup and diagnostics",
+        "commands": "Setup and diagnostics",
+        "examples": "Setup and diagnostics",
+        "auth": "Setup and diagnostics",
+        "config": "Setup and diagnostics",
+        "health": "Setup and diagnostics",
+        "market": "Discovery",
+        "scanner": "Discovery",
+        "relay": "Discovery",
+        "reviews": "Review and packets",
+        "packets": "Review and packets",
+        "signals": "Signals lifecycle",
+        "alpha": "Alpha and execution",
+        "backtests": "Alpha and execution",
+        "paper-trades": "Alpha and execution",
+        "warm-path": "Alpha and execution",
+        "enterprise": "Enterprise controls",
+        "jobs": "Automation",
+        "plans": "Automation",
+    }
+    return workflows.get(resource_name, "Automation")
+
+
 def print_json(payload: Any) -> None:
     print(json.dumps(payload, indent=2, sort_keys=True))
 
 
 def print_human(payload: Any) -> None:
+    if isinstance(payload, dict) and payload.get("status") == "error":
+        print("Status: error")
+        print(f"Reason: {payload.get('message')}")
+        if payload.get("target"):
+            print(f"Tried: {payload['target']}")
+        recovery = payload.get("recovery")
+        if isinstance(recovery, list) and recovery:
+            print("Try one of these:")
+            for index, item in enumerate(recovery, start=1):
+                if isinstance(item, dict):
+                    print(f"{index}. {item.get('label')}")
+                    print(f"   {item.get('command')}")
+        return
+
+    if isinstance(payload, dict) and {"cliVersion", "apiUrl", "apiReachable"}.issubset(payload.keys()):
+        print("Ambrosia CLI status")
+        print(f"CLI version: {payload.get('cliVersion')}")
+        print(f"SDK version: {payload.get('sdkVersion')}")
+        print(f"Profile: {payload.get('profile')}")
+        print(f"API URL: {payload.get('apiUrl')} ({payload.get('apiUrlSource')})")
+        print(f"API reachable: {payload.get('apiReachable')}")
+        print(f"Token: {payload.get('tokenSource')} ({'configured' if payload.get('tokenConfigured') else 'not configured'})")
+        if payload.get("quickstart"):
+            print(f"Quickstart: {payload['quickstart']}")
+        recovery = payload.get("recovery")
+        if isinstance(recovery, list) and recovery:
+            print("Recovery:")
+            for item in recovery:
+                if isinstance(item, dict):
+                    print(f"- {item.get('label')}: {item.get('command')}")
+        return
+
+    if isinstance(payload, dict) and {"target", "apiUrl", "nextCommands"}.issubset(payload.keys()):
+        print(f"Quickstart target: {payload.get('target')}")
+        print(f"API URL: {payload.get('apiUrl')}")
+        print(str(payload.get("message", "")))
+        print("Next commands:")
+        for command in payload.get("nextCommands", []):
+            print(f"- {command}")
+        return
+
     if isinstance(payload, list) and payload and isinstance(payload[0], dict) and "index" in payload[0] and "command" in payload[0]:
         print(f"{len(payload)} command(s)")
+        current_workflow = None
         for item in payload:
+            workflow = item.get("workflow")
+            if workflow and workflow != current_workflow:
+                current_workflow = workflow
+                print(f"\n{workflow}")
             print(f"{item['index']:>3}. {item['command']}")
         return
 
@@ -599,6 +913,14 @@ def print_human(payload: Any) -> None:
         print(summary_line(payload))
         return
     print(payload)
+
+
+def print_context_hint(context: dict[str, Any]) -> None:
+    print("Current target")
+    print(f"  Profile: {context.get('profile')}")
+    print(f"  API URL: {context.get('apiUrl')} ({context.get('apiUrlSource')})")
+    print(f"  Token: {context.get('tokenSource')} ({'configured' if context.get('tokenConfigured') else 'not configured'})")
+    print("  Suggested next step: ambrosia quickstart")
 
 
 def summary_line(item: dict[str, Any]) -> str:

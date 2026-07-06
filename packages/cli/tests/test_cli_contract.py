@@ -52,6 +52,40 @@ def test_examples_command_is_discoverable() -> None:
     assert any("ambrosia commands list" in item["command"] for item in result)
 
 
+def test_status_dispatch_reports_context_and_health() -> None:
+    parser = build_parser()
+    args = parser.parse_args(["status"])
+    context = {
+        "profile": "default",
+        "configPath": "~/.ambrosia/config.json",
+        "apiUrl": "https://api.example.test",
+        "apiUrlSource": "flag",
+        "tokenConfigured": True,
+        "tokenSource": "token-file",
+        "timeout": 65.0,
+    }
+    result = dispatch(args, make_client(), context)
+
+    assert result["status"] == "ok"
+    assert result["apiUrl"] == "https://api.example.test"
+    assert result["apiUrlSource"] == "flag"
+    assert result["tokenConfigured"] is True
+    assert result["apiReachable"] is True
+    assert result["apiHealth"]["path"] == "/health"
+
+
+def test_quickstart_dry_run_returns_staging_commands() -> None:
+    parser = build_parser()
+    args = parser.parse_args(["quickstart", "--target", "staging"])
+    result = dispatch(args, make_client())
+
+    assert result["status"] == "ready"
+    assert result["target"] == "staging"
+    assert result["apiUrl"] == "https://ambrosia-api-staging.onrender.com"
+    assert result["writeProfile"] is False
+    assert "ambrosia status" in result["nextCommands"]
+
+
 def test_relay_runs_dispatch_path() -> None:
     parser = build_parser()
     args = parser.parse_args(["relay", "runs", "--limit", "25", "--offset", "5"])

@@ -74,6 +74,8 @@
     "cli:install:dist": "powershell -ExecutionPolicy Bypass -File scripts/install-ambrosia-cli.ps1 -Distribution -BuildDistribution",
     "cli:install:path": "powershell -ExecutionPolicy Bypass -File scripts/install-ambrosia-cli.ps1 -Distribution -BuildDistribution -AddToPath",
     "cli:menu": "cd packages/cli && uv run ambrosia commands list",
+    "cli:status": "cd packages/cli && uv run ambrosia status",
+    "cli:quickstart": "cd packages/cli && uv run ambrosia quickstart --target staging",
     "cli:examples": "cd packages/cli && uv run ambrosia examples",
     "cli:version": "cd packages/cli && uv run ambrosia --version",
     "smoke:test": "python scripts/deploy-smoke-test.py",

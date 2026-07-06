@@ -27,11 +27,14 @@ The Ambrosia CLI design suite lives at [tests/test_cli_design_e2e.py](tests/test
 It validates:
 
 - `ambrosia` no-argument help/discovery behavior.
+- Target/profile status and quickstart behavior.
+- API-unavailable recovery output with actionable staging/local commands.
 - Version, examples, numbered command catalog, and command-detail output.
 - JSON output and `--token-file` behavior without leaking token contents.
 - Clean error handling without tracebacks for expected user mistakes.
 - CLI package metadata for the local SDK dependency and entrypoint.
 - Root package scripts for local install, wheel distribution, PATH install, and executable build.
+- Windows launcher target-awareness for status, target choice, and quick checks.
 - The optional standalone executable catalog when `dist/ambrosia-cli-exe/ambrosia.exe` exists.
 
 Run it from the repository root:

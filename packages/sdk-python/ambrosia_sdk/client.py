@@ -16,10 +16,11 @@ Transport = Callable[[str, str, JsonObject | None, dict[str, str], float], JsonO
 
 
 class AmbrosiaApiError(RuntimeError):
-    def __init__(self, message: str, *, status_code: int | None = None, payload: Any = None) -> None:
+    def __init__(self, message: str, *, status_code: int | None = None, payload: Any = None, target: str | None = None) -> None:
         super().__init__(message)
         self.status_code = status_code
         self.payload = payload
+        self.target = target
 
 
 @dataclass(frozen=True)
@@ -206,7 +207,8 @@ class AmbrosiaClient:
             data = json.dumps(body).encode("utf-8")
             headers["Content-Type"] = "application/json"
 
-        request = Request(f"{self.base_url}{path}", data=data, headers=headers, method=method)
+        target = f"{self.base_url}{path}"
+        request = Request(target, data=data, headers=headers, method=method)
         try:
             with urlopen(request, timeout=self.timeout) as response:  # noqa: S310 - caller controls API URL.
                 content_type = response.headers.get("content-type", "")
@@ -214,12 +216,12 @@ class AmbrosiaClient:
         except HTTPError as exc:
             payload = _decode_error_payload(exc)
             message = _error_message(payload) or f"Ambrosia API request failed with HTTP {exc.code}"
-            raise AmbrosiaApiError(message, status_code=exc.code, payload=payload) from exc
+            raise AmbrosiaApiError(message, status_code=exc.code, payload=payload, target=target) from exc
         except URLError as exc:
-            raise AmbrosiaApiError(f"Ambrosia API unavailable: {exc.reason}") from exc
+            raise AmbrosiaApiError(f"Ambrosia API unavailable: {exc.reason}", target=target) from exc
 
         if "application/json" not in content_type:
-            raise AmbrosiaApiError("Ambrosia API returned a non-JSON response")
+            raise AmbrosiaApiError("Ambrosia API returned a non-JSON response", target=target)
         return json.loads(raw) if raw else None
 
 

@@ -3,6 +3,30 @@
 Ambrosia CLI for Index84/Index85 automation. Supports read and write operations
 for relay evaluation, signals, backtests, paper trades, and enterprise controls.
 
+## Fastest hosted use
+
+For immediate hosted operation, point the CLI at staging and verify status:
+
+```powershell
+setx AMBROSIA_API_URL https://ambrosia-api-staging.onrender.com
+ambrosia status
+ambrosia market snapshot GOOG
+```
+
+Open a new terminal after `setx`. For a one-command override, put the target on
+the command itself:
+
+```powershell
+ambrosia --api-url https://ambrosia-api-staging.onrender.com market snapshot GOOG
+```
+
+The CLI also includes a first-run helper:
+
+```powershell
+ambrosia quickstart --target staging --write-profile
+ambrosia status
+```
+
 ## Install locally
 
 From the repository root:
@@ -45,7 +69,9 @@ uv run ambrosia commands list
 ```
 
 For Windows operators, double-click `launch-ambrosia-cli-menu.bat` at the repo
-root. It opens a persistent command menu and remains usable until you choose `Q`.
+root. It opens a persistent command menu, shows the active API target, lets you
+choose local/staging/production/custom targets, and remains usable until you
+choose `Q`.
 
 To make `ambrosia` available from new PowerShell sessions, run:
 
@@ -66,15 +92,21 @@ Open a new terminal after changing PATH.
 ```bash
 ambrosia --help
 ambrosia --version
+ambrosia status
+ambrosia quickstart --target staging
 ambrosia examples
 ambrosia commands list
 ambrosia commands show 12
+ambrosia config show
+ambrosia config profiles
 ```
 
 Examples:
 
 ```bash
 ambrosia --json health --detailed
+ambrosia --json status
+ambrosia --json quickstart --target staging
 ambrosia --json reviews list
 ambrosia --json reviews create --thesis "Semiconductor breadth improving" --ticker SOXX
 ambrosia --json packets get pkt-123

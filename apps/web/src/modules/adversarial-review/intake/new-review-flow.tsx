@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowRight, CircleDashed } from "lucide-react";
 import { Panel, SectionTitle } from "@/components/ui";
+import { linkSignalReview } from "@/lib/api";
 import { createReviewRecord, setReviewAlphaLink, useReviewArchive } from "@/lib/review-store";
 
 type Step = 1 | 2 | 3;
@@ -36,6 +37,8 @@ export function NewReviewFlow({ initialParams }: NewReviewFlowProps) {
 
     const hypothesisId = getParamValue("hypothesisId");
     const signalId = getParamValue("signalId");
+    const signalVersionRaw = Number(getParamValue("alphaSignalVersion", ""));
+    const signalVersion = Number.isFinite(signalVersionRaw) && signalVersionRaw >= 1 ? Math.floor(signalVersionRaw) : undefined;
     const title = getParamValue("alphaTitle");
     const signalFamily = getParamValue("alphaSignalFamily");
     const formula = getParamValue("alphaFormula");
@@ -54,6 +57,7 @@ export function NewReviewFlow({ initialParams }: NewReviewFlowProps) {
         objectType: alphaType,
         hypothesisId: hypothesisId || undefined,
         signalId: signalId || undefined,
+        signalVersion,
         title: title || undefined,
         signalFamily: signalFamily || undefined,
         formula: formula || undefined,
@@ -103,6 +107,15 @@ export function NewReviewFlow({ initialParams }: NewReviewFlowProps) {
 
     if (alphaContext?.link) {
       setReviewAlphaLink(review.id, alphaContext.link);
+      if (alphaContext.link.signalId) {
+        void linkSignalReview(alphaContext.link.signalId, {
+          reviewId: review.id,
+          hypothesisId: alphaContext.link.hypothesisId,
+          signalVersion: alphaContext.link.signalVersion,
+        }).catch(() => {
+          // Keep intake resilient when the API path is unavailable; local link remains intact.
+        });
+      }
     }
 
     setCreateMessage(source === "api" ? "Review created through the API. Opening decision workbench..." : "API unavailable, so Ambrosia saved a local durable review. Opening decision workbench...");

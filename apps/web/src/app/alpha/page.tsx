@@ -4,8 +4,8 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { Panel, SectionTitle } from "@/components/ui";
 import { RouteLoading, RouteNotice, RouteStatusBadge, type RouteStatus } from "@/components/route-state";
-import { fetchControlPlane, mapStatus, textOrFallback } from "@/lib/index84-control-plane";
-import { getApiBaseUrl } from "@/lib/api";
+import { fetchControlPlane, mapStatus, numberOrFallback, textOrFallback } from "@/lib/index84-control-plane";
+import { constrainSignal, getApiBaseUrl, getSignalsProgramMetrics, listSignalPolicyEvents, listSignalValidationRuns, promoteSignal, retireSignal, validateSignal } from "@/lib/api";
 
 export default function AlphaPage() {
   const apiBaseUrl = getApiBaseUrl();
@@ -18,6 +18,11 @@ export default function AlphaPage() {
   const [openDataPayloads, setOpenDataPayloads] = useState<Record<string, Record<string, unknown>>>({});
   const [openDataLoading, setOpenDataLoading] = useState<Record<string, boolean>>({});
   const [openDataErrors, setOpenDataErrors] = useState<Record<string, string>>({});
+  const [signalActionBusy, setSignalActionBusy] = useState(false);
+  const [signalActionMessage, setSignalActionMessage] = useState<string | null>(null);
+  const [latestValidationStatus, setLatestValidationStatus] = useState<string>("n/a");
+  const [latestPolicyEvent, setLatestPolicyEvent] = useState<string>("n/a");
+  const [programMetrics, setProgramMetrics] = useState<Record<string, unknown> | null>(null);
 
   function panelKey(kind: "hypothesis" | "signal", id: string): string {
     return `${kind}:${id}`;
@@ -72,11 +77,31 @@ export default function AlphaPage() {
 
     let decayData: Record<string, unknown> | null = null;
     const firstSignalId = textOrFallback(signalItems[0]?.signalId, "");
+    try {
+      const metrics = await getSignalsProgramMetrics();
+      setProgramMetrics(metrics);
+    } catch {
+      setProgramMetrics(null);
+    }
     if (firstSignalId) {
       const decayResult = await fetchControlPlane(`/signals/${firstSignalId}/alpha-decay`);
       if (decayResult.ok && decayResult.data && typeof decayResult.data === "object") {
         decayData = decayResult.data as Record<string, unknown>;
       }
+
+      try {
+        const [runs, events] = await Promise.all([listSignalValidationRuns(firstSignalId), listSignalPolicyEvents(firstSignalId)]);
+        const latestRun = runs[0];
+        const latestEvent = events[0];
+        setLatestValidationStatus(textOrFallback(latestRun?.status, "n/a"));
+        setLatestPolicyEvent(textOrFallback(latestEvent?.eventType, "n/a"));
+      } catch {
+        setLatestValidationStatus("n/a");
+        setLatestPolicyEvent("n/a");
+      }
+    } else {
+      setLatestValidationStatus("n/a");
+      setLatestPolicyEvent("n/a");
     }
 
     setHypotheses(alphaItems);
@@ -84,6 +109,34 @@ export default function AlphaPage() {
     setDecay(decayData);
     setStatus(alphaItems.length === 0 && signalItems.length === 0 ? "empty" : "success");
     setMessage("Alpha data loaded.");
+  }
+
+  async function runSignalLifecycleAction(action: "validate" | "promote" | "constrain" | "retire") {
+    const signalId = textOrFallback(signals[0]?.signalId, "");
+    if (!signalId || signalId === "n/a") {
+      setSignalActionMessage("No signal selected for lifecycle action.");
+      return;
+    }
+
+    setSignalActionBusy(true);
+    setSignalActionMessage(`${action} in progress...`);
+    try {
+      if (action === "validate") {
+        await validateSignal(signalId, {});
+      } else if (action === "promote") {
+        await promoteSignal(signalId, { actor: "alpha-ui", reason: "Manual promote from Alpha Lab" });
+      } else if (action === "constrain") {
+        await constrainSignal(signalId, { actor: "alpha-ui", reason: "Manual constrain from Alpha Lab" });
+      } else {
+        await retireSignal(signalId, { actor: "alpha-ui", reason: "Manual retire from Alpha Lab" });
+      }
+      setSignalActionMessage(`${action} completed.`);
+      await load();
+    } catch (error) {
+      setSignalActionMessage(`${action} failed: ${error instanceof Error ? error.message : "unknown error"}`);
+    } finally {
+      setSignalActionBusy(false);
+    }
   }
 
   useEffect(() => {
@@ -122,6 +175,20 @@ export default function AlphaPage() {
           <Metric label="Signals tracked" value={String(signals.length)} />
           <Metric label="Primary quality tier" value={textOrFallback(hypotheses[0]?.quality, "research")} />
           <Metric label="Decay action" value={textOrFallback(decay?.recommendedAction, "pending diagnostics")} />
+        </div>
+      </Panel>
+
+      <Panel className="p-6">
+        <SectionTitle eyebrow="Signals Program" title="Index93 integration metrics" />
+        <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+          <Metric label="Signals linked" value={`${numberOrFallback(programMetrics?.linkedSignals, "0")}/${numberOrFallback(programMetrics?.totalSignals, "0")}`} />
+          <Metric label="Linked coverage" value={`${numberOrFallback(programMetrics?.linkedSignalsPct, "0")}%`} />
+          <Metric label="Validated signals" value={`${numberOrFallback(programMetrics?.validatedSignals, "0")}/${numberOrFallback(programMetrics?.totalSignals, "0")}`} />
+          <Metric label="Decision links" value={numberOrFallback(programMetrics?.totalDecisionLinks, "0")} />
+          <Metric label="Promoted" value={numberOrFallback(programMetrics?.promotedSignals, "0")} />
+          <Metric label="Constrained" value={numberOrFallback(programMetrics?.constrainedSignals, "0")} />
+          <Metric label="Retired" value={numberOrFallback(programMetrics?.retiredSignals, "0")} />
+          <Metric label="Recorded outcomes" value={numberOrFallback(programMetrics?.recordedOutcomes, "0")} />
         </div>
       </Panel>
 
@@ -260,6 +327,57 @@ export default function AlphaPage() {
       </Panel>
 
       <Panel className="p-6">
+        <SectionTitle eyebrow="Writeback" title="Signal-review integration status" />
+        <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+          <Metric label="Active signal version" value={numberOrFallback(signals[0]?.activeVersion, "1")} />
+          <Metric label="Linked reviews" value={numberOrFallback(signals[0]?.linkedReviewCount, "0")} />
+          <Metric label="Latest decision" value={textOrFallback(signals[0]?.latestDecisionState, "pending")} />
+          <Metric label="Latest outcome quality" value={textOrFallback(signals[0]?.latestOutcomeQuality, "n/a")} />
+        </div>
+        <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+          <Metric label="Validation status" value={latestValidationStatus} />
+          <Metric label="Policy event" value={latestPolicyEvent} />
+          <Metric label="Signal status" value={textOrFallback(signals[0]?.status, "hypothesis")} />
+          <Metric label="Override count" value={numberOrFallback(signals[0]?.overrideCount, "0")} />
+        </div>
+        <div className="mt-4 flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() => void runSignalLifecycleAction("validate")}
+            disabled={signalActionBusy}
+            className="focus-ring rounded-md border border-line bg-paper/80 px-2 py-1 text-xs font-semibold text-ink/80 disabled:opacity-50"
+          >
+            Validate
+          </button>
+          <button
+            type="button"
+            onClick={() => void runSignalLifecycleAction("promote")}
+            disabled={signalActionBusy}
+            className="focus-ring rounded-md border border-line bg-paper/80 px-2 py-1 text-xs font-semibold text-ink/80 disabled:opacity-50"
+          >
+            Promote
+          </button>
+          <button
+            type="button"
+            onClick={() => void runSignalLifecycleAction("constrain")}
+            disabled={signalActionBusy}
+            className="focus-ring rounded-md border border-line bg-paper/80 px-2 py-1 text-xs font-semibold text-ink/80 disabled:opacity-50"
+          >
+            Constrain
+          </button>
+          <button
+            type="button"
+            onClick={() => void runSignalLifecycleAction("retire")}
+            disabled={signalActionBusy}
+            className="focus-ring rounded-md border border-line bg-paper/80 px-2 py-1 text-xs font-semibold text-ink/80 disabled:opacity-50"
+          >
+            Retire
+          </button>
+        </div>
+        {signalActionMessage ? <p className="mt-2 text-xs text-ink/65">{signalActionMessage}</p> : null}
+      </Panel>
+
+      <Panel className="p-6">
         <SectionTitle eyebrow="Validation" title="Evidence quality and multiple-testing controls" />
         <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
           <Metric label="Disconfirming tests" value={Array.isArray(hypotheses[0]?.disconfirmingTests) ? String((hypotheses[0]?.disconfirmingTests as unknown[]).length) : "0"} />
@@ -361,6 +479,8 @@ function formatDropdownValue(value: unknown): string {
 function buildReviewPrefillHref(kind: "hypothesis" | "signal", item: Record<string, unknown>): string {
   const id = kind === "hypothesis" ? textOrFallback(item.hypothesisId, "") : textOrFallback(item.signalId, "");
   const title = kind === "hypothesis" ? textOrFallback(item.title, "") : textOrFallback(item.name, "");
+  const signalVersionRaw = kind === "signal" ? item.activeVersion ?? item.version : null;
+  const signalVersion = typeof signalVersionRaw === "number" ? signalVersionRaw : Number.NaN;
   const ticker = inferTicker(item);
   const thesis =
     kind === "hypothesis"
@@ -385,6 +505,9 @@ function buildReviewPrefillHref(kind: "hypothesis" | "signal", item: Record<stri
   } else {
     params.set("signalId", id);
     params.set("alphaFormula", textOrFallback(item.formula, ""));
+    if (Number.isFinite(signalVersion) && signalVersion >= 1) {
+      params.set("alphaSignalVersion", String(signalVersion));
+    }
   }
 
   return `/review/new?${params.toString()}`;

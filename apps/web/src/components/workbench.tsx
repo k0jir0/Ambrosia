@@ -14,10 +14,13 @@ import {
   getPacket,
   getSentiment,
   preparePacketBacktest,
+  linkSignalReview,
   recordDecision,
   recordPacketOutcome,
   refreshPacketMetrics,
-  runPacketAgents
+  runPacketAgents,
+  writebackSignalDecision,
+  writebackSignalOutcome
 } from "@/lib/api";
 import {
   getLocalReviews,
@@ -285,6 +288,30 @@ export function Workbench({ initialReviewId }: { initialReviewId?: string } = {}
         lastReviewedAt: new Date().toISOString(),
         incrementOverrideCount: Boolean(override)
       });
+
+      if (activeAlphaLink.signalId) {
+        const signalId = activeAlphaLink.signalId;
+        const reviewId = activeReview.id;
+        const hypothesisId = activeAlphaLink.hypothesisId;
+        void (async () => {
+          try {
+            await linkSignalReview(signalId, {
+              reviewId,
+              hypothesisId,
+              signalVersion: activeAlphaLink.signalVersion
+            });
+            await writebackSignalDecision(signalId, {
+              reviewId,
+              signalVersion: activeAlphaLink.signalVersion,
+              decisionState,
+              rationale,
+              overrideUsed: Boolean(override)
+            });
+          } catch {
+            // Keep workbench non-blocking when server-side writeback is unavailable.
+          }
+        })();
+      }
     }
   }
 
@@ -536,6 +563,24 @@ export function Workbench({ initialReviewId }: { initialReviewId?: string } = {}
           lastReviewedAt: new Date().toISOString(),
           incrementOutcomeCount: true
         });
+
+        if (activeAlphaLink.signalId) {
+          try {
+            await linkSignalReview(activeAlphaLink.signalId, {
+              reviewId: activeReview.id,
+              hypothesisId: activeAlphaLink.hypothesisId,
+              signalVersion: activeAlphaLink.signalVersion
+            });
+            await writebackSignalOutcome(activeAlphaLink.signalId, {
+              reviewId: activeReview.id,
+              signalVersion: activeAlphaLink.signalVersion,
+              outcomeQuality: quality,
+              lastReviewedAt: new Date().toISOString()
+            });
+          } catch {
+            // Local writeback remains available when API persistence is unavailable.
+          }
+        }
       }
 
       return "ok";
@@ -548,6 +593,24 @@ export function Workbench({ initialReviewId }: { initialReviewId?: string } = {}
           lastReviewedAt: new Date().toISOString(),
           incrementOutcomeCount: true
         });
+
+        if (activeAlphaLink.signalId) {
+          try {
+            await linkSignalReview(activeAlphaLink.signalId, {
+              reviewId: activeReview.id,
+              hypothesisId: activeAlphaLink.hypothesisId,
+              signalVersion: activeAlphaLink.signalVersion
+            });
+            await writebackSignalOutcome(activeAlphaLink.signalId, {
+              reviewId: activeReview.id,
+              signalVersion: activeAlphaLink.signalVersion,
+              outcomeQuality: quality,
+              lastReviewedAt: new Date().toISOString()
+            });
+          } catch {
+            // Local writeback remains available when API persistence is unavailable.
+          }
+        }
       }
       return "fallback";
     }
@@ -815,6 +878,9 @@ export function Workbench({ initialReviewId }: { initialReviewId?: string } = {}
 
   const pursueGateViolations = useMemo(() => {
     const violations: string[] = [];
+    if (activeAlphaLink?.signalId && !activeAlphaLink.signalVersion) {
+      violations.push("Signal-backed reviews require signalVersion linkage before Pursue.");
+    }
     if (softPolicyReasons.length > 0) {
       violations.push("Resolve soft-policy decay/hygiene advisories first.");
     }
@@ -825,7 +891,7 @@ export function Workbench({ initialReviewId }: { initialReviewId?: string } = {}
       violations.push("Risk monitor is in alert state.");
     }
     return violations;
-  }, [activePacketData, activeReview.validation.status, softPolicyReasons]);
+  }, [activeAlphaLink?.signalId, activeAlphaLink?.signalVersion, activePacketData, activeReview.validation.status, softPolicyReasons]);
 
   const integrationKpis = useMemo(() => {
     const reviewLinks = listReviewAlphaLinks();

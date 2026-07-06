@@ -15,6 +15,7 @@ export type ReviewAlphaLink = {
   objectType: "hypothesis" | "signal";
   hypothesisId?: string;
   signalId?: string;
+  signalVersion?: number;
   title?: string;
   signalFamily?: string;
   formula?: string;

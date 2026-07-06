@@ -16,6 +16,10 @@ _relay_runs: dict[str, dict] = {}
 _features: dict[str, dict] = {}
 _signals: dict[str, dict] = {}
 _backtests: dict[str, dict] = {}
+_signal_review_links: dict[str, dict] = {}
+_signal_versions: dict[str, list[dict]] = {}
+_signal_validation_runs: dict[str, list[dict]] = {}
+_signal_policy_events: dict[str, list[dict]] = {}
 _paper_trades: dict[str, dict] = {}
 _fills: dict[str, dict] = {}
 _service_accounts: dict[str, dict] = {}
@@ -35,6 +39,7 @@ _sso_config: dict = {
 
 _ROOT = Path(__file__).resolve().parents[3]
 _RELEASE_EVIDENCE_PATH = _ROOT / "artifacts" / "release-evidence.json"
+_SIGNAL_STATE_PATH = _ROOT / "artifacts" / "signal-lifecycle-state.json"
 
 
 def _now() -> str:
@@ -46,6 +51,40 @@ def _stable_id(prefix: str, seed: str | None = None) -> str:
         digest = hashlib.sha256(seed.encode("utf-8")).hexdigest()[:10]
         return f"{prefix}-{digest}"
     return f"{prefix}-{uuid4().hex[:10]}"
+
+
+def _persist_signal_state() -> None:
+    payload = {
+        "schemaVersion": "signal-lifecycle-state.v1",
+        "updatedAt": _now(),
+        "signals": _signals,
+        "signalVersions": _signal_versions,
+        "signalReviewLinks": _signal_review_links,
+        "signalValidationRuns": _signal_validation_runs,
+        "signalPolicyEvents": _signal_policy_events,
+    }
+    _SIGNAL_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    _SIGNAL_STATE_PATH.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+
+def _load_signal_state() -> None:
+    if not _SIGNAL_STATE_PATH.exists():
+        return
+    try:
+        payload = json.loads(_SIGNAL_STATE_PATH.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return
+
+    if isinstance(payload.get("signals"), dict):
+        _signals.update(payload["signals"])
+    if isinstance(payload.get("signalVersions"), dict):
+        _signal_versions.update(payload["signalVersions"])
+    if isinstance(payload.get("signalReviewLinks"), dict):
+        _signal_review_links.update(payload["signalReviewLinks"])
+    if isinstance(payload.get("signalValidationRuns"), dict):
+        _signal_validation_runs.update(payload["signalValidationRuns"])
+    if isinstance(payload.get("signalPolicyEvents"), dict):
+        _signal_policy_events.update(payload["signalPolicyEvents"])
 
 
 class ChatMessage(BaseModel):
@@ -87,6 +126,32 @@ class SignalCreateRequest(BaseModel):
     validationGates: list[str] = Field(default_factory=lambda: ["point_in_time", "costs", "walk_forward"])
 
 
+class SignalVersionCreateRequest(BaseModel):
+    horizon: str | None = None
+    formula: str | None = None
+    universe: list[str] | None = None
+    costModel: str | None = None
+    benchmark: str | None = None
+    validationGates: list[str] | None = None
+    createdBy: str = "research"
+
+
+class SignalValidateRequest(BaseModel):
+    signalVersion: int | None = Field(default=None, ge=1)
+    runType: str = "event_driven_backtest"
+    sampleWindows: dict = Field(default_factory=lambda: {"train": "2024-01-01/2024-12-31", "validation": "2025-01-01/2025-06-30", "test": "2025-07-01/2026-01-01"})
+    pointInTimeGuaranteed: bool = True
+    includesCosts: bool = True
+    includesSlippage: bool = True
+    includesLiquidity: bool = True
+
+
+class SignalPolicyTransitionRequest(BaseModel):
+    signalVersion: int | None = Field(default=None, ge=1)
+    actor: str = "system"
+    reason: str | None = None
+
+
 class BacktestRunRequest(BaseModel):
     signalId: str = Field(min_length=1)
     startDate: str = "2025-01-01"
@@ -94,6 +159,32 @@ class BacktestRunRequest(BaseModel):
     walkForward: bool = True
     includeCosts: bool = True
     includeSlippage: bool = True
+
+
+class SignalReviewLinkRequest(BaseModel):
+    reviewId: str = Field(min_length=1)
+    hypothesisId: str | None = None
+    signalVersion: int | None = Field(default=None, ge=1)
+
+
+class SignalDecisionWritebackRequest(BaseModel):
+    reviewId: str = Field(min_length=1)
+    signalVersion: int | None = Field(default=None, ge=1)
+    decisionState: str = Field(min_length=3)
+    rationale: str | None = None
+    overrideUsed: bool = False
+
+
+class SignalOutcomeWritebackRequest(BaseModel):
+    reviewId: str = Field(min_length=1)
+    signalVersion: int | None = Field(default=None, ge=1)
+    outcomeQuality: str = Field(min_length=3)
+    lastReviewedAt: str | None = None
+
+
+class AlphaHypothesisSignalLinkRequest(BaseModel):
+    signalId: str = Field(min_length=1)
+    signalVersion: int | None = Field(default=None, ge=1)
 
 
 class AlphaHypothesisCreateRequest(BaseModel):
@@ -163,6 +254,9 @@ class AuditExportRequest(BaseModel):
     requestedBy: str = "admin"
     scope: str = "all"
     format: str = "jsonl"
+
+
+_load_signal_state()
 
 
 @router.post("/v1/chat/completions")
@@ -251,16 +345,49 @@ def get_feature(feature_id: str) -> dict:
 @router.post("/signals", status_code=201)
 def create_signal(request: SignalCreateRequest) -> dict:
     signal_id = request.signalId or _stable_id("signal", request.name)
+    existing = _signals.get(signal_id, {})
+    active_version = int(existing.get("activeVersion", existing.get("version", 1)))
+    spec_keys = ["universe", "horizon", "formula", "costModel", "benchmark", "validationGates"]
+    spec_changed = bool(existing) and any(existing.get(key) != request.model_dump().get(key) for key in spec_keys)
+    next_version = active_version + 1 if spec_changed else active_version
     signal = {
         "signalId": signal_id,
         "schemaVersion": "signal.v1",
         **request.model_dump(exclude={"signalId"}),
-        "version": 1,
-        "status": "hypothesis",
-        "createdAt": _signals.get(signal_id, {}).get("createdAt", _now()),
+        "version": next_version,
+        "activeVersion": next_version,
+        "status": existing.get("status", "hypothesis"),
+        "linkedHypothesisIds": existing.get("linkedHypothesisIds", []),
+        "linkedReviewIds": existing.get("linkedReviewIds", []),
+        "linkedReviewCount": existing.get("linkedReviewCount", 0),
+        "latestDecisionState": existing.get("latestDecisionState"),
+        "latestOutcomeQuality": existing.get("latestOutcomeQuality"),
+        "lastReviewedAt": existing.get("lastReviewedAt"),
+        "overrideCount": existing.get("overrideCount", 0),
+        "outcomeCount": existing.get("outcomeCount", 0),
+        "createdAt": existing.get("createdAt", _now()),
         "updatedAt": _now(),
     }
     _signals[signal_id] = signal
+    versions = _signal_versions.setdefault(signal_id, [])
+    version_exists = any(int(item.get("version", 0)) == next_version for item in versions)
+    if not version_exists:
+        versions.append(
+            {
+                "schemaVersion": "signal-version.v1",
+                "signalId": signal_id,
+                "version": next_version,
+                "horizon": signal["horizon"],
+                "formula": signal["formula"],
+                "universe": signal["universe"],
+                "costModel": signal["costModel"],
+                "benchmark": signal["benchmark"],
+                "validationGates": signal["validationGates"],
+                "createdBy": "system",
+                "createdAt": _now(),
+            }
+        )
+    _persist_signal_state()
     return signal
 
 
@@ -273,6 +400,7 @@ def create_alpha_hypothesis(request: AlphaHypothesisCreateRequest) -> dict:
         **request.model_dump(exclude={"hypothesisId"}),
         "quality": "D3",
         "status": "active",
+        "linkedSignals": _alpha_hypotheses.get(hypothesis_id, {}).get("linkedSignals", []),
         "createdAt": _alpha_hypotheses.get(hypothesis_id, {}).get("createdAt", _now()),
         "updatedAt": _now(),
     }
@@ -304,6 +432,571 @@ def get_signal(signal_id: str) -> dict:
     if signal is None:
         raise HTTPException(status_code=404, detail="Signal not found")
     return signal
+
+
+def _resolve_signal_version(signal_id: str, requested: int | None) -> int:
+    signal = _signals.get(signal_id)
+    if signal is None:
+        raise HTTPException(status_code=404, detail="Signal not found")
+    version = requested or int(signal.get("activeVersion", signal.get("version", 1)))
+    versions = _signal_versions.get(signal_id, [])
+    if not any(int(item.get("version", 0)) == version for item in versions):
+        raise HTTPException(status_code=404, detail="Signal version not found")
+    return version
+
+
+def _find_signal_review_link(signal_id: str, review_id: str, signal_version: int | None = None) -> dict | None:
+    candidates = [
+        link
+        for link in _signal_review_links.values()
+        if link.get("signalId") == signal_id and link.get("reviewId") == review_id
+    ]
+    if signal_version is not None:
+        for link in candidates:
+            if int(link.get("signalVersion", 0)) == signal_version:
+                return link
+        return None
+    if not candidates:
+        return None
+    candidates.sort(key=lambda item: int(item.get("signalVersion", 0)), reverse=True)
+    return candidates[0]
+
+
+@router.post("/signals/{signal_id}/versions", status_code=201)
+def create_signal_version(signal_id: str, request: SignalVersionCreateRequest) -> dict:
+    signal = _signals.get(signal_id)
+    if signal is None:
+        raise HTTPException(status_code=404, detail="Signal not found")
+
+    current_version = int(signal.get("activeVersion", signal.get("version", 1)))
+    next_version = current_version + 1
+    version = {
+        "schemaVersion": "signal-version.v1",
+        "signalId": signal_id,
+        "version": next_version,
+        "horizon": request.horizon or signal.get("horizon"),
+        "formula": request.formula or signal.get("formula"),
+        "universe": request.universe if request.universe is not None else signal.get("universe", []),
+        "costModel": request.costModel or signal.get("costModel"),
+        "benchmark": request.benchmark or signal.get("benchmark"),
+        "validationGates": request.validationGates if request.validationGates is not None else signal.get("validationGates", []),
+        "createdBy": request.createdBy,
+        "createdAt": _now(),
+    }
+    _signal_versions.setdefault(signal_id, []).append(version)
+
+    signal["horizon"] = version["horizon"]
+    signal["formula"] = version["formula"]
+    signal["universe"] = version["universe"]
+    signal["costModel"] = version["costModel"]
+    signal["benchmark"] = version["benchmark"]
+    signal["validationGates"] = version["validationGates"]
+    signal["version"] = next_version
+    signal["activeVersion"] = next_version
+    signal["updatedAt"] = _now()
+    _persist_signal_state()
+    return version
+
+
+@router.get("/signals/{signal_id}/versions")
+def list_signal_versions(signal_id: str) -> list[dict]:
+    if signal_id not in _signals:
+        raise HTTPException(status_code=404, detail="Signal not found")
+    versions = _signal_versions.get(signal_id, [])
+    return sorted(versions, key=lambda item: int(item.get("version", 0)), reverse=True)
+
+
+@router.get("/signals/{signal_id}/versions/{version}")
+def get_signal_version(signal_id: str, version: int) -> dict:
+    if signal_id not in _signals:
+        raise HTTPException(status_code=404, detail="Signal not found")
+    for item in _signal_versions.get(signal_id, []):
+        if int(item.get("version", 0)) == version:
+            return item
+    raise HTTPException(status_code=404, detail="Signal version not found")
+
+
+def _signal_links(signal_id: str) -> list[dict]:
+    return [link for link in _signal_review_links.values() if link.get("signalId") == signal_id]
+
+
+def _signal_validation_runs_for(signal_id: str) -> list[dict]:
+    return _signal_validation_runs.get(signal_id, [])
+
+
+def _signal_latest_validation(signal_id: str, signal_version: int | None = None) -> dict | None:
+    runs = _signal_validation_runs_for(signal_id)
+    if signal_version is not None:
+        runs = [run for run in runs if int(run.get("signalVersion", 0)) == signal_version]
+    if not runs:
+        return None
+    return sorted(runs, key=lambda item: item.get("completedAt", ""), reverse=True)[0]
+
+
+def _append_signal_policy_event(signal_id: str, event_type: str, to_status: str, actor: str, reason: str | None, signal_version: int | None = None) -> dict:
+    event = {
+        "eventId": _stable_id("signal-policy", f"{signal_id}:{event_type}:{to_status}:{actor}:{len(_signal_policy_events.get(signal_id, []))}"),
+        "schemaVersion": "signal-policy-event.v1",
+        "signalId": signal_id,
+        "signalVersion": signal_version,
+        "eventType": event_type,
+        "toStatus": to_status,
+        "actor": actor,
+        "reason": reason,
+        "createdAt": _now(),
+    }
+    _signal_policy_events.setdefault(signal_id, []).append(event)
+    return event
+
+
+def _required_validation_gates_present(signal: dict) -> tuple[bool, list[str]]:
+    required = {"point_in_time", "costs", "walk_forward"}
+    gates = set(signal.get("validationGates", []))
+    missing = sorted(required - gates)
+    return len(missing) == 0, missing
+
+
+def _signal_rollup(signal_id: str) -> dict:
+    signal = _signals.get(signal_id)
+    if signal is None:
+        raise HTTPException(status_code=404, detail="Signal not found")
+
+    links = _signal_links(signal_id)
+    pursued_count = sum(1 for link in links if link.get("reviewDecisionState") == "pursue")
+    rejected_count = sum(1 for link in links if link.get("reviewDecisionState") == "reject")
+    needs_more_data_count = sum(1 for link in links if link.get("reviewDecisionState") == "needs_more_data")
+    override_count = sum(1 for link in links if link.get("overrideUsed") is True)
+    outcome_count = sum(1 for link in links if bool(link.get("outcomeQuality")))
+    latest_outcome = max((link.get("lastOutcomeAt") for link in links if link.get("lastOutcomeAt")), default=None)
+    latest_reviewed = max((link.get("lastReviewedAt") for link in links if link.get("lastReviewedAt")), default=signal.get("lastReviewedAt"))
+
+    return {
+        "schemaVersion": "signal-outcome-rollup.v1",
+        "signalId": signal_id,
+        "signalVersion": signal.get("version", 1),
+        "linkedDecisionCount": len(links),
+        "pursuedCount": pursued_count,
+        "rejectedCount": rejected_count,
+        "needsMoreDataCount": needs_more_data_count,
+        "overrideCount": override_count,
+        "outcomeCount": outcome_count,
+        "latestDecisionState": signal.get("latestDecisionState"),
+        "latestOutcomeQuality": signal.get("latestOutcomeQuality"),
+        "status": signal.get("status", "hypothesis"),
+        "activeVersion": signal.get("activeVersion", signal.get("version", 1)),
+        "latestValidationStatus": (_signal_latest_validation(signal_id) or {}).get("status"),
+        "lastReviewedAt": latest_reviewed,
+        "lastOutcomeAt": latest_outcome,
+        "updatedAt": _now(),
+    }
+
+
+@router.post("/signals/{signal_id}/validate")
+def validate_signal(signal_id: str, request: SignalValidateRequest) -> dict:
+    signal = _signals.get(signal_id)
+    if signal is None:
+        raise HTTPException(status_code=404, detail="Signal not found")
+
+    signal_version = _resolve_signal_version(signal_id, request.signalVersion)
+    hygiene_issues: list[str] = []
+    if not request.pointInTimeGuaranteed:
+        hygiene_issues.append("missing_point_in_time_guarantee")
+    if not request.includesCosts:
+        hygiene_issues.append("missing_transaction_costs")
+    if not request.includesSlippage:
+        hygiene_issues.append("missing_slippage_model")
+    if not request.includesLiquidity:
+        hygiene_issues.append("missing_liquidity_model")
+
+    has_required_gates, missing_gates = _required_validation_gates_present(signal)
+    if not has_required_gates:
+        hygiene_issues.extend([f"missing_validation_gate:{gate}" for gate in missing_gates])
+
+    status = "passed" if len(hygiene_issues) == 0 else "failed"
+    run = {
+        "validationRunId": _stable_id("signal-validation", f"{signal_id}:{signal_version}:{len(_signal_validation_runs_for(signal_id))}"),
+        "schemaVersion": "signal-validation-run.v1",
+        "signalId": signal_id,
+        "signalVersion": signal_version,
+        "runType": request.runType,
+        "sampleWindows": request.sampleWindows,
+        "pointInTimeGuaranteed": request.pointInTimeGuaranteed,
+        "includesCosts": request.includesCosts,
+        "includesSlippage": request.includesSlippage,
+        "includesLiquidity": request.includesLiquidity,
+        "benchmarkComparison": {"benchmark": signal.get("benchmark"), "activeReturn": 0.039},
+        "hygieneIssues": hygiene_issues,
+        "metrics": {
+            "sharpeRatio": 1.21,
+            "maxDrawdown": -0.082,
+            "hitRate": 0.57,
+            "implementationShortfallBps": 10.6,
+        },
+        "artifactRefs": [f"artifacts/signals/{signal_id}/validation/{signal_version}"],
+        "status": status,
+        "completedAt": _now(),
+    }
+    _signal_validation_runs.setdefault(signal_id, []).append(run)
+
+    signal["updatedAt"] = _now()
+    signal["status"] = "validation_passed" if status == "passed" else "validation_pending"
+
+    _append_signal_policy_event(
+        signal_id=signal_id,
+        event_type="validation.completed",
+        to_status=signal["status"],
+        actor="system",
+        reason="Validation run completed",
+        signal_version=signal_version,
+    )
+    _persist_signal_state()
+    return run
+
+
+@router.get("/signals/{signal_id}/validation-runs")
+def list_signal_validation_runs(signal_id: str) -> list[dict]:
+    if signal_id not in _signals:
+        raise HTTPException(status_code=404, detail="Signal not found")
+    runs = _signal_validation_runs_for(signal_id)
+    return sorted(runs, key=lambda item: item.get("completedAt", ""), reverse=True)
+
+
+@router.post("/signals/{signal_id}/promote")
+def promote_signal(signal_id: str, request: SignalPolicyTransitionRequest) -> dict:
+    signal = _signals.get(signal_id)
+    if signal is None:
+        raise HTTPException(status_code=404, detail="Signal not found")
+
+    signal_version = _resolve_signal_version(signal_id, request.signalVersion)
+    latest_validation = _signal_latest_validation(signal_id, signal_version)
+    if latest_validation is None:
+        raise HTTPException(status_code=409, detail="Promotion blocked: missing validation run for signal version")
+    if latest_validation.get("status") != "passed":
+        raise HTTPException(status_code=409, detail="Promotion blocked: validation status is not passed")
+
+    signal["status"] = "active_candidate"
+    signal["updatedAt"] = _now()
+    event = _append_signal_policy_event(
+        signal_id=signal_id,
+        event_type="signal.promoted",
+        to_status="active_candidate",
+        actor=request.actor,
+        reason=request.reason,
+        signal_version=signal_version,
+    )
+    _persist_signal_state()
+    return {
+        "schemaVersion": "signal-policy-transition.v1",
+        "signalId": signal_id,
+        "signalVersion": signal_version,
+        "status": signal["status"],
+        "event": event,
+    }
+
+
+@router.post("/signals/{signal_id}/constrain")
+def constrain_signal(signal_id: str, request: SignalPolicyTransitionRequest) -> dict:
+    signal = _signals.get(signal_id)
+    if signal is None:
+        raise HTTPException(status_code=404, detail="Signal not found")
+    signal_version = _resolve_signal_version(signal_id, request.signalVersion)
+    signal["status"] = "constrained"
+    signal["updatedAt"] = _now()
+    event = _append_signal_policy_event(
+        signal_id=signal_id,
+        event_type="signal.constrained",
+        to_status="constrained",
+        actor=request.actor,
+        reason=request.reason or "manual constraint",
+        signal_version=signal_version,
+    )
+    _persist_signal_state()
+    return {
+        "schemaVersion": "signal-policy-transition.v1",
+        "signalId": signal_id,
+        "signalVersion": signal_version,
+        "status": signal["status"],
+        "event": event,
+    }
+
+
+@router.post("/signals/{signal_id}/retire")
+def retire_signal(signal_id: str, request: SignalPolicyTransitionRequest) -> dict:
+    signal = _signals.get(signal_id)
+    if signal is None:
+        raise HTTPException(status_code=404, detail="Signal not found")
+    signal_version = _resolve_signal_version(signal_id, request.signalVersion)
+    signal["status"] = "retired"
+    signal["updatedAt"] = _now()
+    event = _append_signal_policy_event(
+        signal_id=signal_id,
+        event_type="signal.retired",
+        to_status="retired",
+        actor=request.actor,
+        reason=request.reason or "manual retirement",
+        signal_version=signal_version,
+    )
+    _persist_signal_state()
+    return {
+        "schemaVersion": "signal-policy-transition.v1",
+        "signalId": signal_id,
+        "signalVersion": signal_version,
+        "status": signal["status"],
+        "event": event,
+    }
+
+
+@router.get("/signals/{signal_id}/policy-events")
+def list_signal_policy_events(signal_id: str) -> list[dict]:
+    if signal_id not in _signals:
+        raise HTTPException(status_code=404, detail="Signal not found")
+    events = _signal_policy_events.get(signal_id, [])
+    return sorted(events, key=lambda item: item.get("createdAt", ""), reverse=True)
+
+
+@router.get("/signals/program-metrics")
+def get_signal_program_metrics() -> dict:
+    total_signals = len(_signals)
+    total_links = len(_signal_review_links)
+    linked_signals = sum(1 for signal in _signals.values() if int(signal.get("linkedReviewCount", 0)) > 0)
+    validated_signals = sum(1 for signal in _signals.values() if signal.get("status") in {"validation_passed", "active_candidate", "constrained", "retired"})
+    promoted_signals = sum(1 for signal in _signals.values() if signal.get("status") == "active_candidate")
+    constrained_signals = sum(1 for signal in _signals.values() if signal.get("status") == "constrained")
+    retired_signals = sum(1 for signal in _signals.values() if signal.get("status") == "retired")
+    outcome_rollups = [_signal_rollup(signal_id) for signal_id in _signals.keys()]
+    pursued_total = sum(int(item.get("pursuedCount", 0)) for item in outcome_rollups)
+    rejected_total = sum(int(item.get("rejectedCount", 0)) for item in outcome_rollups)
+    outcome_total = sum(int(item.get("outcomeCount", 0)) for item in outcome_rollups)
+
+    return {
+        "schemaVersion": "signals-program-metrics.v1",
+        "totalSignals": total_signals,
+        "linkedSignals": linked_signals,
+        "linkedSignalsPct": round((linked_signals / total_signals) * 100, 1) if total_signals else 0.0,
+        "totalDecisionLinks": total_links,
+        "validatedSignals": validated_signals,
+        "validatedSignalsPct": round((validated_signals / total_signals) * 100, 1) if total_signals else 0.0,
+        "promotedSignals": promoted_signals,
+        "constrainedSignals": constrained_signals,
+        "retiredSignals": retired_signals,
+        "pursuedDecisions": pursued_total,
+        "rejectedDecisions": rejected_total,
+        "recordedOutcomes": outcome_total,
+        "updatedAt": _now(),
+    }
+
+
+@router.post("/signals/{signal_id}/link-review", status_code=201)
+def link_signal_review(signal_id: str, request: SignalReviewLinkRequest) -> dict:
+    signal = _signals.get(signal_id)
+    if signal is None:
+        raise HTTPException(status_code=404, detail="Signal not found")
+
+    signal_version = _resolve_signal_version(signal_id, request.signalVersion)
+    key = f"{signal_id}:{signal_version}:{request.reviewId}"
+    link_id = _stable_id("signal-review-link", key)
+    existing = _signal_review_links.get(link_id)
+    linked_at = existing.get("linkedAt") if existing else _now()
+
+    link = {
+        "linkId": link_id,
+        "schemaVersion": "signal-review-link.v1",
+        "signalId": signal_id,
+        "signalVersion": signal_version,
+        "hypothesisId": request.hypothesisId,
+        "reviewId": request.reviewId,
+        "reviewDecisionState": existing.get("reviewDecisionState") if existing else None,
+        "overrideUsed": existing.get("overrideUsed", False) if existing else False,
+        "overrideRationale": existing.get("overrideRationale") if existing else None,
+        "outcomeQuality": existing.get("outcomeQuality") if existing else None,
+        "linkedAt": linked_at,
+        "lastReviewedAt": existing.get("lastReviewedAt") if existing else None,
+        "lastOutcomeAt": existing.get("lastOutcomeAt") if existing else None,
+        "updatedAt": _now(),
+    }
+    _signal_review_links[link_id] = link
+
+    linked_ids = list(dict.fromkeys([*signal.get("linkedReviewIds", []), request.reviewId]))
+    signal["linkedReviewIds"] = linked_ids
+    signal["linkedReviewCount"] = len(linked_ids)
+    signal["lastReviewedAt"] = signal.get("lastReviewedAt") or linked_at
+    signal["updatedAt"] = _now()
+    _persist_signal_state()
+    return link
+
+
+@router.get("/signals/{signal_id}/decision-links")
+def get_signal_decision_links(signal_id: str) -> list[dict]:
+    if signal_id not in _signals:
+        raise HTTPException(status_code=404, detail="Signal not found")
+    links = _signal_links(signal_id)
+    return sorted(links, key=lambda link: link.get("updatedAt", ""), reverse=True)
+
+
+@router.post("/signals/{signal_id}/writeback-decision")
+def writeback_signal_decision(signal_id: str, request: SignalDecisionWritebackRequest) -> dict:
+    signal = _signals.get(signal_id)
+    if signal is None:
+        raise HTTPException(status_code=404, detail="Signal not found")
+
+    signal_version = _resolve_signal_version(signal_id, request.signalVersion)
+    existing = _find_signal_review_link(signal_id, request.reviewId, signal_version)
+    if existing is None:
+        raise HTTPException(status_code=404, detail="Signal review link not found")
+
+    was_override = existing.get("overrideUsed") is True
+    is_override = request.overrideUsed is True
+
+    existing["reviewDecisionState"] = request.decisionState
+    existing["overrideUsed"] = is_override
+    existing["overrideRationale"] = request.rationale
+    existing["lastReviewedAt"] = _now()
+    existing["updatedAt"] = _now()
+
+    signal["latestDecisionState"] = request.decisionState
+    signal["lastReviewedAt"] = existing["lastReviewedAt"]
+    if is_override and not was_override:
+        signal["overrideCount"] = int(signal.get("overrideCount", 0)) + 1
+    signal["updatedAt"] = _now()
+    _persist_signal_state()
+
+    return {
+        "schemaVersion": "signal-writeback-decision.v1",
+        "signalId": signal_id,
+        "reviewId": request.reviewId,
+        "latestDecisionState": signal["latestDecisionState"],
+        "overrideCount": signal.get("overrideCount", 0),
+        "lastReviewedAt": signal.get("lastReviewedAt"),
+    }
+
+
+@router.post("/signals/{signal_id}/writeback-outcome")
+def writeback_signal_outcome(signal_id: str, request: SignalOutcomeWritebackRequest) -> dict:
+    signal = _signals.get(signal_id)
+    if signal is None:
+        raise HTTPException(status_code=404, detail="Signal not found")
+
+    signal_version = _resolve_signal_version(signal_id, request.signalVersion)
+    existing = _find_signal_review_link(signal_id, request.reviewId, signal_version)
+    if existing is None:
+        raise HTTPException(status_code=404, detail="Signal review link not found")
+
+    timestamp = request.lastReviewedAt or _now()
+    already_counted = bool(existing.get("outcomeQuality"))
+    existing["outcomeQuality"] = request.outcomeQuality
+    existing["lastReviewedAt"] = timestamp
+    existing["lastOutcomeAt"] = timestamp
+    existing["updatedAt"] = _now()
+
+    signal["latestOutcomeQuality"] = request.outcomeQuality
+    signal["lastReviewedAt"] = timestamp
+    if not already_counted:
+        signal["outcomeCount"] = int(signal.get("outcomeCount", 0)) + 1
+    signal["updatedAt"] = _now()
+    _persist_signal_state()
+
+    return _signal_rollup(signal_id)
+
+
+@router.get("/signals/{signal_id}/outcome-rollup")
+def get_signal_outcome_rollup(signal_id: str) -> dict:
+    return _signal_rollup(signal_id)
+
+
+@router.post("/alpha/hypotheses/{hypothesis_id}/link-signal")
+def link_alpha_hypothesis_signal(hypothesis_id: str, request: AlphaHypothesisSignalLinkRequest) -> dict:
+    hypothesis = _alpha_hypotheses.get(hypothesis_id)
+    if hypothesis is None:
+        raise HTTPException(status_code=404, detail="Alpha hypothesis not found")
+    signal = _signals.get(request.signalId)
+    if signal is None:
+        raise HTTPException(status_code=404, detail="Signal not found")
+
+    signal_version = _resolve_signal_version(request.signalId, request.signalVersion)
+    links = hypothesis.get("linkedSignals", [])
+    entry = {
+        "signalId": request.signalId,
+        "signalVersion": signal_version,
+        "linkedAt": _now(),
+    }
+    exists = any(
+        item.get("signalId") == request.signalId and int(item.get("signalVersion", 0)) == signal_version
+        for item in links
+    )
+    if not exists:
+        links.append(entry)
+    hypothesis["linkedSignals"] = links
+    hypothesis["updatedAt"] = _now()
+
+    linked_hypotheses = list(dict.fromkeys([*signal.get("linkedHypothesisIds", []), hypothesis_id]))
+    signal["linkedHypothesisIds"] = linked_hypotheses
+    signal["updatedAt"] = _now()
+    _persist_signal_state()
+    return {
+        "schemaVersion": "alpha-hypothesis-signal-link.v1",
+        "hypothesisId": hypothesis_id,
+        "signalId": request.signalId,
+        "signalVersion": signal_version,
+        "linkedSignals": links,
+    }
+
+
+@router.get("/alpha/hypotheses/{hypothesis_id}/signals")
+def list_alpha_hypothesis_signals(hypothesis_id: str) -> list[dict]:
+    hypothesis = _alpha_hypotheses.get(hypothesis_id)
+    if hypothesis is None:
+        raise HTTPException(status_code=404, detail="Alpha hypothesis not found")
+
+    results: list[dict] = []
+    for link in hypothesis.get("linkedSignals", []):
+        signal_id = link.get("signalId")
+        if not signal_id or signal_id not in _signals:
+            continue
+        signal = _signals[signal_id]
+        results.append(
+            {
+                "signalId": signal_id,
+                "name": signal.get("name"),
+                "status": signal.get("status"),
+                "activeVersion": signal.get("activeVersion", signal.get("version", 1)),
+                "linkedVersion": link.get("signalVersion"),
+                "linkedAt": link.get("linkedAt"),
+            }
+        )
+    return results
+
+
+@router.get("/signals/{signal_id}/alpha-context")
+def get_signal_alpha_context(signal_id: str) -> dict:
+    signal = _signals.get(signal_id)
+    if signal is None:
+        raise HTTPException(status_code=404, detail="Signal not found")
+
+    linked_hypotheses = signal.get("linkedHypothesisIds", [])
+    hypotheses = []
+    for hypothesis_id in linked_hypotheses:
+        hypothesis = _alpha_hypotheses.get(hypothesis_id)
+        if hypothesis:
+            hypotheses.append(
+                {
+                    "hypothesisId": hypothesis_id,
+                    "title": hypothesis.get("title"),
+                    "signalFamily": hypothesis.get("signalFamily"),
+                    "status": hypothesis.get("status"),
+                    "updatedAt": hypothesis.get("updatedAt"),
+                }
+            )
+
+    return {
+        "schemaVersion": "signal-alpha-context.v1",
+        "signal": signal,
+        "signalVersions": _signal_versions.get(signal_id, []),
+        "validationRuns": _signal_validation_runs_for(signal_id),
+        "policyEvents": _signal_policy_events.get(signal_id, []),
+        "linkedHypotheses": hypotheses,
+        "outcomeRollup": _signal_rollup(signal_id),
+        "updatedAt": _now(),
+    }
 
 
 @router.post("/backtests/run")
@@ -356,6 +1049,38 @@ def run_backtest(request: BacktestRunRequest) -> dict:
         "createdAt": _now(),
     }
     _backtests[backtest_id] = result
+
+    signal_version = int(signal.get("activeVersion", signal.get("version", 1)))
+    validation_run = {
+        "validationRunId": _stable_id("signal-validation", backtest_id),
+        "schemaVersion": "signal-validation-run.v1",
+        "signalId": request.signalId,
+        "signalVersion": signal_version,
+        "runType": "event_driven_backtest",
+        "sampleWindows": {"train": request.startDate, "test": request.endDate},
+        "pointInTimeGuaranteed": True,
+        "includesCosts": request.includeCosts,
+        "includesSlippage": request.includeSlippage,
+        "includesLiquidity": True,
+        "benchmarkComparison": {"benchmark": signal.get("benchmark"), "activeReturn": result["metrics"]["activeReturn"]},
+        "hygieneIssues": hygiene,
+        "metrics": result["metrics"],
+        "artifactRefs": [f"backtests/{backtest_id}"],
+        "status": "passed" if not hygiene else "failed",
+        "completedAt": _now(),
+    }
+    _signal_validation_runs.setdefault(request.signalId, []).append(validation_run)
+    signal["status"] = "validation_passed" if not hygiene else "validation_pending"
+    signal["updatedAt"] = _now()
+    _append_signal_policy_event(
+        signal_id=request.signalId,
+        event_type="backtest.completed",
+        to_status=signal["status"],
+        actor="system",
+        reason="Backtest run updated validation posture",
+        signal_version=signal_version,
+    )
+    _persist_signal_state()
     return result
 
 

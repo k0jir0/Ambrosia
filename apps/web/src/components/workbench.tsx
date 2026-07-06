@@ -881,9 +881,6 @@ export function Workbench({ initialReviewId }: { initialReviewId?: string } = {}
     if (activeAlphaLink?.signalId && !activeAlphaLink.signalVersion) {
       violations.push("Signal-backed reviews require signalVersion linkage before Pursue.");
     }
-    if (softPolicyReasons.length > 0) {
-      violations.push("Resolve soft-policy decay/hygiene advisories first.");
-    }
     if (activeReview.validation.status !== "specified") {
       violations.push("Validation protocol must be specified.");
     }
@@ -891,7 +888,7 @@ export function Workbench({ initialReviewId }: { initialReviewId?: string } = {}
       violations.push("Risk monitor is in alert state.");
     }
     return violations;
-  }, [activeAlphaLink?.signalId, activeAlphaLink?.signalVersion, activePacketData, activeReview.validation.status, softPolicyReasons]);
+  }, [activeAlphaLink?.signalId, activeAlphaLink?.signalVersion, activePacketData, activeReview.validation.status]);
 
   const integrationKpis = useMemo(() => {
     const reviewLinks = listReviewAlphaLinks();
@@ -916,7 +913,7 @@ export function Workbench({ initialReviewId }: { initialReviewId?: string } = {}
   }, [reviews]);
 
   return (
-    <main className="min-h-screen pb-36 text-ink">
+    <main className="min-h-screen pb-10 text-ink">
       <div className="mx-auto max-w-[1500px] space-y-4">
         <TopBar review={activeReview} />
         {activeAlphaLink ? <LinkedAlphaPanel link={activeAlphaLink} /> : null}
@@ -1600,9 +1597,8 @@ function DecisionStrip({
   const [decisionError, setDecisionError] = useState<string | null>(null);
 
   function submitDecision(state: DecisionState) {
-    const requiresOverrideRationale = Boolean(suggestedDecision) && state !== suggestedDecision;
-    if (requiresOverrideRationale && !overrideRationale.trim()) {
-      setDecisionError("Soft policy suggests Needs more data. Add an override rationale to choose a different decision.");
+    if (state === "pursue" && pursueGateViolations.length > 0) {
+      setDecisionError("Pursue is locked until the hard gate items are resolved. Watch, Reject, or Needs more data remain available.");
       return;
     }
     setDecisionError(null);
@@ -1610,12 +1606,16 @@ function DecisionStrip({
   }
 
   return (
-    <Panel className="sticky bottom-3 z-30 border-2 border-teal/40 bg-paper/95 p-4 shadow-panel backdrop-blur">
+    <Panel className="border-2 border-teal/40 bg-paper p-4 shadow-panel">
       <div className="grid gap-4 lg:grid-cols-[minmax(220px,0.8fr)_minmax(360px,1.2fr)_minmax(220px,0.8fr)] lg:items-center">
         <div>
-          <p className="text-xs font-semibold uppercase tracking-wide text-teal">Sticky decision strip</p>
+          <p className="text-xs font-semibold uppercase tracking-wide text-teal">Decision controls</p>
           <p className="mt-1 text-sm text-slate-400">Human authority remains explicit. Ambrosia supports the decision; it does not make it.</p>
-          {suggestedDecision ? <p className="mt-2 text-xs text-amber">Soft policy suggestion: {decisionLabels[suggestedDecision]}.</p> : null}
+          {suggestedDecision ? (
+            <p className="mt-2 text-xs text-amber">
+              Soft policy suggests {decisionLabels[suggestedDecision]}; Watch and Reject remain available with optional rationale.
+            </p>
+          ) : null}
         </div>
         <div className="space-y-2">
           <div className="flex items-center justify-between text-sm">
@@ -1643,6 +1643,7 @@ function DecisionStrip({
           ) : null}
           {pursueGateViolations.length > 0 ? (
             <div className="rounded-md border border-coral/30 bg-coral/10 p-2 text-xs text-coral">
+              <p className="font-semibold">Pursue locked until these hard gates clear:</p>
               {pursueGateViolations.map((reason) => (
                 <p key={reason}>{reason}</p>
               ))}
@@ -1652,7 +1653,7 @@ function DecisionStrip({
             <input
               value={overrideRationale}
               onChange={(event) => setOverrideRationale(event.target.value)}
-              placeholder="Override rationale (required if not selecting Needs more data)"
+              placeholder="Optional rationale when choosing outside the soft-policy suggestion"
               className="focus-ring w-full rounded-md border border-line bg-fog/70 px-2 py-1.5 text-xs text-slate-200"
             />
           ) : null}

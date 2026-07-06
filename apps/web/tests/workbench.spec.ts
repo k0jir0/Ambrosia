@@ -55,7 +55,8 @@ test("review route uses focused decision workbench", async ({ page }) => {
   await expect(page.getByText("Thesis and sources")).toBeVisible();
   await expect(page.getByText("Live workflow feed")).toBeVisible();
   await expect(page.getByText("TLT market dock")).toBeVisible();
-  await expect(page.getByText("Sticky decision strip")).toBeVisible();
+  await expect(page.getByText("Decision controls")).toBeVisible();
+  await expect(page.locator("section").filter({ hasText: "Decision controls" })).toHaveCSS("position", "static");
   await expect(page.getByText("Core Actions")).toHaveCount(0);
   await expect(page.getByText("Run a thesis through Ambrosia")).toHaveCount(0);
   const exportButton = page.getByRole("button", { name: "Generate / export report" });
@@ -66,6 +67,46 @@ test("review route uses focused decision workbench", async ({ page }) => {
   ]);
   expect(download.suggestedFilename()).toBe("tlt-investment-decision-report.md");
   await expect(page.getByText("Report exported from local fallback").first()).toBeVisible();
+});
+
+test("soft-policy advisories do not lock watch and reject decisions", async ({ page }) => {
+  await page.unroute(LOCAL_API_ROUTE);
+  await page.route(LOCAL_API_ROUTE, async (route) => {
+    if (route.request().url().endsWith("/signals/signal-e2e-alpha-decay/alpha-decay")) {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ decayDetected: true, recommendedAction: "downgrade_or_recalibrate" })
+      });
+      return;
+    }
+    await route.abort();
+  });
+  await page.addInitScript(() => {
+    window.localStorage.setItem(
+      "ambrosia.review-alpha-links.v1",
+      JSON.stringify({
+        "atr-003": {
+          source: "alpha",
+          objectType: "signal",
+          signalId: "signal-e2e-alpha-decay",
+          signalVersion: 1,
+          title: "QA signal",
+          signalFamily: "quality-momentum",
+          ticker: "TLT",
+          createdAt: "2026-07-06T00:00:00.000Z"
+        }
+      })
+    );
+  });
+
+  await page.goto("/review/atr-003");
+  await expect(page.getByText(/Alpha decay detected for linked signal signal-e2e-alpha-decay/)).toBeVisible();
+  await expect(page.getByText("Resolve soft-policy decay/hygiene advisories first.")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Watch" })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Reject" })).toBeEnabled();
+  await page.getByRole("button", { name: "Watch" }).click();
+  await expect(page.getByText("Human decision: Watch.").first()).toBeVisible();
 });
 
 test("sidebar navigation reaches core routes", async ({ page }) => {

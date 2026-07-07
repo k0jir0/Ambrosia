@@ -4,7 +4,9 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { Activity, ArrowRight, Beaker, CheckCircle2, Circle, Clock3, Download, RefreshCw, ShieldCheck, SlidersHorizontal } from "lucide-react";
 import {
+  createAlphaHypothesis,
   createPacket,
+  createSignal,
   derivePacketConfidence,
   evaluatePacketRisk,
   generateReport as generatePacketReport,
@@ -14,6 +16,7 @@ import {
   getPacket,
   getSentiment,
   preparePacketBacktest,
+  linkAlphaHypothesisSignal,
   linkSignalReview,
   recordDecision,
   recordPacketOutcome,
@@ -29,6 +32,7 @@ import {
   listReviewAlphaLinks,
   loadReviewArchive,
   resolveReview,
+  setReviewAlphaLink,
   upsertAlphaWritebackForReview,
   upsertLocalReview,
   type ReviewAlphaLink
@@ -345,28 +349,28 @@ export function Workbench({ initialReviewId }: { initialReviewId?: string } = {}
       setActionFeedback({ tone: "warn", message: "Record a review decision before writing a signal action." });
       return;
     }
-    if (!activeAlphaLink?.signalId) {
-      setActionFeedback({ tone: "warn", message: "Signal action remains pending because this review is not linked to a server signal." });
-      appendAuditEvent("signal.decision.writeback.blocked", "Signal Decision Proposal could not write back: no linked signal is available.");
-      return;
-    }
 
-    const signalId = activeAlphaLink.signalId;
     const reviewId = activeReview.id;
     const readiness = resolveExecutionReadiness(action, activeReview, activePacketData, pursueGateViolations);
     const decisionRationale = rationale?.trim() || `Signal Decision Proposal accepted: ${action}.`;
 
     setActiveAction("Write signal decision");
-    setActionFeedback({ tone: "neutral", message: `Writing ${action} to linked signal ${signalId}...` });
+    setActionFeedback({ tone: "neutral", message: activeAlphaLink?.signalId ? `Writing ${action} to linked signal ${activeAlphaLink.signalId}...` : `Creating a linked signal, then writing ${action}...` });
     try {
+      const signalLink = activeAlphaLink?.signalId ? activeAlphaLink : await createSignalLinkForReview(activeReview);
+      const signalId = signalLink.signalId;
+      if (!signalId) {
+        throw new Error("Signal creation did not return a signal id.");
+      }
+
       await linkSignalReview(signalId, {
         reviewId,
-        hypothesisId: activeAlphaLink.hypothesisId,
-        signalVersion: activeAlphaLink.signalVersion
+        hypothesisId: signalLink.hypothesisId,
+        signalVersion: signalLink.signalVersion
       });
       await writebackSignalDecision(signalId, {
         reviewId,
-        signalVersion: activeAlphaLink.signalVersion,
+        signalVersion: signalLink.signalVersion,
         decisionState: activeReview.decisionState,
         decisionAction: action,
         decisionUse: ["buy", "sell", "hold", "hedge", "risk_adjust"],
@@ -378,18 +382,70 @@ export function Workbench({ initialReviewId }: { initialReviewId?: string } = {}
         outcomeWritebackRequired: true,
         decisionQuality: deriveDecisionQuality(activeReview)
       });
-      upsertAlphaWritebackForReview(reviewId, activeAlphaLink, {
+      upsertAlphaWritebackForReview(reviewId, signalLink, {
         latestDecisionState: activeReview.decisionState,
         lastReviewedAt: new Date().toISOString()
       });
+      setActiveAlphaLink(signalLink);
       appendAuditEvent("signal.decision.writeback", `Signal Decision Proposal wrote ${action} to ${signalId}; readiness ${readiness}.`);
       setActionFeedback({ tone: "good", message: `Signal updated: ${action} / ${readiness}.` });
     } catch (error) {
-      appendAuditEvent("signal.decision.writeback.failed", `Signal Decision Proposal failed for ${signalId}: ${error instanceof Error ? error.message : "unknown error"}.`);
+      appendAuditEvent("signal.decision.writeback.failed", `Signal Decision Proposal failed for ${activeAlphaLink?.signalId ?? "new signal"}: ${error instanceof Error ? error.message : "unknown error"}.`);
       setActionFeedback({ tone: "warn", message: `Signal writeback failed: ${error instanceof Error ? error.message : "unknown error"}` });
     } finally {
       setActiveAction(null);
     }
+  }
+
+  async function createSignalLinkForReview(review: TradeReview): Promise<ReviewAlphaLink> {
+    const ticker = review.ticker.toUpperCase();
+    const signalFamily = inferSignalFamily(review.thesis);
+    const title = `${ticker} Review-Derived Thesis`;
+    const hypothesis = await createAlphaHypothesis({
+      title,
+      signalFamily,
+      universe: [ticker],
+      horizon: review.timeHorizon,
+      thesis: review.thesis,
+      planQuality: "P2",
+      disconfirmingTests: [review.disconfirmingTest, review.validation.nullHypothesis],
+      costModel: "10 bps round-trip",
+      owner: "research"
+    });
+    const hypothesisId = readText(hypothesis.hypothesisId);
+
+    const signal = await createSignal({
+      name: `${ticker} Review Signal`,
+      universe: [ticker],
+      horizon: review.timeHorizon,
+      formula: review.intendedExpression || `review_expression:${ticker}`,
+      costModel: "10 bps round-trip",
+      benchmark: "SPY",
+      validationGates: ["point_in_time", "costs", "walk_forward"]
+    });
+    const signalId = readText(signal.signalId);
+    const signalVersion = readVersion(signal.activeVersion, signal.version);
+
+    if (!hypothesisId || !signalId) {
+      throw new Error("Alpha hypothesis or signal id was missing from the API response.");
+    }
+
+    await linkAlphaHypothesisSignal(hypothesisId, { signalId, signalVersion });
+    const link: ReviewAlphaLink = {
+      source: "alpha",
+      objectType: "signal",
+      hypothesisId,
+      signalId,
+      signalVersion,
+      title,
+      signalFamily,
+      formula: review.intendedExpression,
+      ticker,
+      createdAt: new Date().toISOString()
+    };
+    setReviewAlphaLink(review.id, link);
+    appendAuditEvent("signal.created", `Signal Decision Proposal created ${signalId} and linked it to ${review.id}.`);
+    return link;
   }
 
   function appendAuditEvent(eventType: string, detail: string) {
@@ -1104,7 +1160,7 @@ function TopBar({ review }: { review: TradeReview }) {
     const readiness = resolveExecutionReadiness(selectedAction, review, packet, pursueGateViolations);
     const blockers = buildSignalDecisionBlockers(review, link, packet, pursueGateViolations);
     const signalId = link?.signalId ?? null;
-    const canWrite = Boolean(review.decisionState && signalId && !activeAction);
+    const canWrite = Boolean(review.decisionState && !activeAction);
 
     useEffect(() => {
       setSelectedAction(proposedAction ?? "HOLD");
@@ -1122,7 +1178,7 @@ function TopBar({ review }: { review: TradeReview }) {
             </p>
             <div className="mt-3 flex flex-wrap gap-2">
               <Badge tone={review.decisionState ? "good" : "warn"}>{review.decisionState ? `Review: ${decisionLabels[review.decisionState]}` : "Review decision pending"}</Badge>
-              <Badge tone={signalId ? "info" : "warn"}>{signalId ? `Signal: ${signalId}` : "No linked signal"}</Badge>
+              <Badge tone={signalId ? "info" : "warn"}>{signalId ? `Signal: ${signalId}` : "Signal will be created"}</Badge>
               <Badge tone={readiness === "paper_trade_ready" || readiness === "execution_candidate" ? "good" : readiness === "execution_blocked" ? "warn" : "neutral"}>{readiness}</Badge>
             </div>
             {link?.signalVersion ? <p className="mt-2 text-xs text-slate-500">Version v{link.signalVersion}</p> : null}
@@ -1179,7 +1235,7 @@ function TopBar({ review }: { review: TradeReview }) {
               disabled={!canWrite}
               className="focus-ring w-full rounded-md bg-teal px-3 py-2 text-sm font-semibold text-fog transition hover:bg-teal/90 disabled:cursor-not-allowed disabled:opacity-50"
             >
-              {activeAction === "Write signal decision" ? "Writing signal decision..." : `Write ${selectedAction} to Signal`}
+              {activeAction === "Write signal decision" ? "Writing signal decision..." : signalId ? `Write ${selectedAction} to Signal` : `Create Signal + Write ${selectedAction}`}
             </button>
             {signalId ? (
               <Link href="/signals" className="focus-ring inline-flex w-full items-center justify-center gap-1 rounded-md border border-line bg-fog/70 px-3 py-2 text-xs font-semibold text-teal hover:border-teal/60">
@@ -1217,7 +1273,7 @@ function TopBar({ review }: { review: TradeReview }) {
   function buildSignalDecisionBlockers(review: TradeReview, link: ReviewAlphaLink | null, packet: DecisionPacket | null, pursueGateViolations: string[]) {
     const blockers: string[] = [];
     if (!review.decisionState) blockers.push("Record a review decision first.");
-    if (!link?.signalId) blockers.push("No linked server signal is available for writeback.");
+    if (!link?.signalId) blockers.push("No linked signal yet; Ambrosia will create one before writeback.");
     if (link?.signalId && !link.signalVersion) blockers.push("Signal version is missing.");
     if (review.validation.status !== "specified") blockers.push("Validation protocol is not specified.");
     if (!packet?.riskMonitor) blockers.push("Risk evaluation has not been recorded for execution readiness.");
@@ -1237,6 +1293,25 @@ function TopBar({ review }: { review: TradeReview }) {
     if (review.confidence >= 80 && review.validation.status === "specified") return "D4";
     if (review.confidence >= 60) return "D3";
     return "D2";
+  }
+
+  function inferSignalFamily(thesis: string): string {
+    const lower = thesis.toLowerCase();
+    if (/momentum|trend|breakout|relative strength/.test(lower)) return "momentum";
+    if (/liquid|volume|spread|depth/.test(lower)) return "liquidity";
+    if (/quality|margin|balance sheet|earnings/.test(lower)) return "quality";
+    if (/duration|curve|rate|yield|macro/.test(lower)) return "macro";
+    return "review-derived";
+  }
+
+  function readText(value: unknown): string {
+    return typeof value === "string" ? value : "";
+  }
+
+  function readVersion(activeVersion: unknown, fallbackVersion: unknown): number {
+    if (typeof activeVersion === "number" && activeVersion >= 1) return Math.floor(activeVersion);
+    if (typeof fallbackVersion === "number" && fallbackVersion >= 1) return Math.floor(fallbackVersion);
+    return 1;
   }
 
 function LinkedAlphaPanel({ link }: { link: ReviewAlphaLink }) {

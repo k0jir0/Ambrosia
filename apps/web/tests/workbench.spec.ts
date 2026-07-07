@@ -57,7 +57,7 @@ test("review route uses focused decision workbench", async ({ page }) => {
   await expect(page.getByText("TLT market dock")).toBeVisible();
   await expect(page.getByText("Decision controls")).toBeVisible();
   await expect(page.getByText("Signal Decision Proposal")).toBeVisible();
-  await expect(page.getByText("No linked signal")).toBeVisible();
+  await expect(page.getByText("Signal will be created")).toBeVisible();
   await expect(page.locator("section").filter({ hasText: "Decision controls" })).toHaveCSS("position", "static");
   await expect(page.getByText("Core Actions")).toHaveCount(0);
   await expect(page.getByText("Run a thesis through Ambrosia")).toHaveCount(0);

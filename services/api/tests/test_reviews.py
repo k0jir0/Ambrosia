@@ -576,6 +576,58 @@ def test_scanner_candidate_promote_alpha_creates_hypothesis_signal_and_link() ->
     assert signal["sourceSignal"] == "momentum_up"
 
 
+def test_signal_decision_writeback_accepts_finance_action() -> None:
+    promote_response = client.post(
+        "/scanner/candidates/promote-alpha",
+        json={
+            "ticker": "QQQ",
+            "signal": "momentum_up",
+            "thesisSuggestion": "QQQ trend and breadth support a governed hold decision path.",
+            "score": 0.81,
+            "price": 520.0,
+            "trend": "uptrend",
+            "rsi": 58.0,
+            "volume": 10_000_000,
+            "scannerRunId": "scanner-run-decision-action-test",
+            "universe": ["QQQ"],
+            "horizon": "2-6 weeks",
+            "costModel": "10 bps round-trip",
+            "benchmark": "SPY",
+            "owner": "research",
+            "promotedBy": "test-suite",
+        },
+    )
+    assert promote_response.status_code == 201
+    promotion = promote_response.json()
+    signal_id = promotion["link"]["signalId"]
+    signal_version = promotion["link"].get("signalVersion") or 1
+    hypothesis_id = promotion["link"]["hypothesisId"]
+    review_id = "review-decision-action-test"
+
+    link_response = client.post(
+        f"/signals/{signal_id}/link-review",
+        json={"reviewId": review_id, "hypothesisId": hypothesis_id, "signalVersion": signal_version},
+    )
+    assert link_response.status_code == 201
+
+    decision_response = client.post(
+        f"/signals/{signal_id}/writeback-decision",
+        json={
+            "reviewId": review_id,
+            "signalVersion": signal_version,
+            "decisionState": "watch",
+            "decisionAction": "HOLD",
+            "decisionQuality": "D3",
+            "rationale": "Adversarial review supports monitoring but not execution.",
+        },
+    )
+    assert decision_response.status_code == 200
+    payload = decision_response.json()
+    assert payload["latestDecisionState"] == "watch"
+    assert payload["latestDecisionAction"] == "HOLD"
+    assert payload["executionReadiness"] == "not_executable"
+
+
 def test_scanner_candidate_promotions_endpoint_returns_records() -> None:
     response = client.get("/scanner/candidates/promotions")
     assert response.status_code == 200

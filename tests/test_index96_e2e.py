@@ -163,6 +163,7 @@ def test_signal_lifecycle_and_review_writeback_flow(api_client) -> None:
             "reviewId": review_id,
             "signalVersion": signal_version,
             "decisionState": "watch",
+            "decisionAction": "HOLD",
             "rationale": "Further evidence required before deployment.",
             "overrideUsed": False,
             "decisionQuality": "D3",

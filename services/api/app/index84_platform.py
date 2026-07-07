@@ -236,6 +236,19 @@ class SignalDecisionWritebackRequest(BaseModel):
     reviewId: str = Field(min_length=1)
     signalVersion: int | None = Field(default=None, ge=1)
     decisionState: str = Field(min_length=3)
+    decisionAction: str | None = None
+    decisionUse: list[str] = Field(default_factory=list)
+    instrumentAction: dict | None = None
+    riskBudgetId: str | None = None
+    maxPositionSize: float | None = Field(default=None, gt=0)
+    maxDrawdownLimit: float | None = None
+    hedgePlan: str | None = None
+    riskAdjustment: str | None = None
+    liquidityCheck: str | None = None
+    costCheck: str | None = None
+    approvalState: str | None = None
+    executionReadiness: str | None = None
+    outcomeWritebackRequired: bool = True
     rationale: str | None = None
     overrideUsed: bool = False
     decisionQuality: str = "D2"
@@ -259,6 +272,8 @@ class AlphaHypothesisSignalLinkRequest(BaseModel):
 DECISION_QUALITY_STATES = {"D0", "D1", "D2", "D3", "D4", "D5"}
 PLAN_QUALITY_STATES = {"P0", "P1", "P2", "P3", "P4"}
 PROMOTION_STATES = {"promoted", "promote", "go_live", "deploy", "pursue"}
+SIGNAL_DECISION_ACTIONS = {"BUY", "SELL", "HOLD", "HEDGE", "RISK_ADJUST", "BLOCK", "RETIRE"}
+ACTIONABLE_SIGNAL_DECISIONS = {"BUY", "SELL", "HEDGE", "RISK_ADJUST"}
 
 INDEX97_VALIDATION_WINDOWS = {
     "train": "2022-01-01/2023-12-31",
@@ -372,6 +387,7 @@ INDEX97_SIGNAL_SEED: list[dict] = [
         "review": {
             "reviewId": "review-index97-aapl-momo-01",
             "decisionState": "pursue",
+            "decisionAction": "BUY",
             "decisionQuality": "D4",
             "outcomeQuality": "validated",
             "rationale": "Validation passed with complete point-in-time, cost, slippage, and liquidity hygiene.",
@@ -404,6 +420,7 @@ INDEX97_SIGNAL_SEED: list[dict] = [
         "review": {
             "reviewId": "review-index97-soxx-breadth-01",
             "decisionState": "pursue",
+            "decisionAction": "BUY",
             "decisionQuality": "D4",
             "outcomeQuality": "validated",
             "rationale": "Semiconductor breadth and benchmark-relative returns passed the seeded validation gates.",
@@ -436,6 +453,7 @@ INDEX97_SIGNAL_SEED: list[dict] = [
         "review": {
             "reviewId": "review-index97-arkk-liquidity-01",
             "decisionState": "pursue",
+            "decisionAction": "RISK_ADJUST",
             "decisionQuality": "D4",
             "outcomeQuality": "degraded",
             "rationale": "Signal had validation support, but liquidity and implementation shortfall require a live trading constraint.",
@@ -468,6 +486,7 @@ INDEX97_SIGNAL_SEED: list[dict] = [
         "review": {
             "reviewId": "review-index97-tlt-duration-01",
             "decisionState": "pursue",
+            "decisionAction": "RETIRE",
             "decisionQuality": "D4",
             "outcomeQuality": "retired_after_decay",
             "rationale": "Duration signal was once promotion-ready but is now retired after outcome decay and regime instability.",
@@ -944,6 +963,8 @@ def seed_index97_signals() -> dict:
                     reviewId=review_id,
                     signalVersion=signal_version,
                     decisionState=str(review_payload["decisionState"]),
+                    decisionAction=str(review_payload.get("decisionAction", "")) or None,
+                    decisionUse=["buy", "sell", "hold", "hedge", "risk_adjust"],
                     decisionQuality=str(review_payload["decisionQuality"]),
                     overrideUsed=False,
                     rationale=str(review_payload["rationale"]),
@@ -1758,6 +1779,49 @@ def get_signal_decision_links(signal_id: str) -> list[dict]:
     return sorted(links, key=lambda link: link.get("updatedAt", ""), reverse=True)
 
 
+def _normalize_signal_decision_action(action: str | None) -> str | None:
+    if action is None or not action.strip():
+        return None
+    normalized = action.strip().upper().replace("-", "_").replace(" ", "_")
+    if normalized == "RISK":
+        normalized = "RISK_ADJUST"
+    if normalized not in SIGNAL_DECISION_ACTIONS:
+        allowed = ", ".join(sorted(SIGNAL_DECISION_ACTIONS))
+        raise HTTPException(status_code=400, detail=f"decisionAction must be one of {allowed}")
+    return normalized
+
+
+def _has_decision_risk_budget(signal: dict, request: SignalDecisionWritebackRequest) -> bool:
+    return any(
+        value is not None and value != ""
+        for value in [
+            request.riskBudgetId,
+            request.maxPositionSize,
+            request.maxDrawdownLimit,
+            request.hedgePlan,
+            signal.get("riskBudget"),
+            signal.get("riskLimits"),
+            signal.get("maxPositionSize"),
+            signal.get("maxDrawdownLimit"),
+            signal.get("hedgePlan"),
+        ]
+    )
+
+
+def _resolve_execution_readiness(signal: dict, action: str | None, request: SignalDecisionWritebackRequest) -> str:
+    if request.executionReadiness:
+        return request.executionReadiness
+    if action in {"BLOCK", "RETIRE"}:
+        return "execution_blocked"
+    if action in ACTIONABLE_SIGNAL_DECISIONS and not _has_decision_risk_budget(signal, request):
+        return "execution_blocked"
+    if action in ACTIONABLE_SIGNAL_DECISIONS and (request.approvalState or "").lower() == "approved":
+        return "execution_candidate"
+    if action in ACTIONABLE_SIGNAL_DECISIONS:
+        return "paper_trade_ready"
+    return "not_executable"
+
+
 @router.post("/signals/{signal_id}/writeback-decision")
 def writeback_signal_decision(
     signal_id: str,
@@ -1778,7 +1842,8 @@ def writeback_signal_decision(
         raise HTTPException(status_code=400, detail="decisionQuality must be one of D0-D5")
 
     normalized_state = request.decisionState.strip().lower()
-    requires_promotion_evidence = normalized_state in PROMOTION_STATES
+    decision_action = _normalize_signal_decision_action(request.decisionAction)
+    requires_promotion_evidence = normalized_state in PROMOTION_STATES or decision_action in ACTIONABLE_SIGNAL_DECISIONS
     if requires_promotion_evidence:
         if not request.evidenceLinks:
             raise HTTPException(status_code=400, detail="Promotion decisions require evidenceLinks")
@@ -1794,8 +1859,22 @@ def writeback_signal_decision(
 
     was_override = existing.get("overrideUsed") is True
     is_override = request.overrideUsed is True
+    execution_readiness = _resolve_execution_readiness(signal, decision_action, request)
 
     existing["reviewDecisionState"] = request.decisionState
+    existing["decisionAction"] = decision_action
+    existing["decisionUse"] = request.decisionUse
+    existing["instrumentAction"] = request.instrumentAction
+    existing["riskBudgetId"] = request.riskBudgetId
+    existing["maxPositionSize"] = request.maxPositionSize
+    existing["maxDrawdownLimit"] = request.maxDrawdownLimit
+    existing["hedgePlan"] = request.hedgePlan
+    existing["riskAdjustment"] = request.riskAdjustment
+    existing["liquidityCheck"] = request.liquidityCheck
+    existing["costCheck"] = request.costCheck
+    existing["approvalState"] = request.approvalState
+    existing["executionReadiness"] = execution_readiness
+    existing["outcomeWritebackRequired"] = request.outcomeWritebackRequired
     existing["decisionQuality"] = decision_quality
     existing["overrideUsed"] = is_override
     existing["overrideRationale"] = request.rationale
@@ -1806,6 +1885,10 @@ def writeback_signal_decision(
     existing["updatedAt"] = _now()
 
     signal["latestDecisionState"] = request.decisionState
+    signal["latestDecisionAction"] = decision_action
+    signal["latestDecisionUse"] = request.decisionUse
+    signal["executionReadiness"] = execution_readiness
+    signal["approvalState"] = request.approvalState
     signal["latestDecisionQuality"] = decision_quality
     signal["lastReviewedAt"] = existing["lastReviewedAt"]
     if is_override and not was_override:
@@ -1818,6 +1901,8 @@ def writeback_signal_decision(
         "signalId": signal_id,
         "reviewId": request.reviewId,
         "latestDecisionState": signal["latestDecisionState"],
+        "latestDecisionAction": signal.get("latestDecisionAction"),
+        "executionReadiness": signal.get("executionReadiness"),
         "latestDecisionQuality": signal.get("latestDecisionQuality"),
         "overrideCount": signal.get("overrideCount", 0),
         "lastReviewedAt": signal.get("lastReviewedAt"),

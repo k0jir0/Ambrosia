@@ -107,6 +107,8 @@ def test_signal_writeback_decision_payload() -> None:
             "review-9",
             "--decision-state",
             "pursue",
+            "--decision-action",
+            "BUY",
             "--decision-quality",
             "D4",
             "--evidence-links",
@@ -122,6 +124,7 @@ def test_signal_writeback_decision_payload() -> None:
     assert result["method"] == "POST"
     assert result["path"] == "/signals/signal-1/writeback-decision"
     assert result["body"]["reviewId"] == "review-9"
+    assert result["body"]["decisionAction"] == "BUY"
     assert result["body"]["decisionQuality"] == "D4"
     assert result["body"]["evidenceLinks"] == ["docs/evidence-a", "docs/evidence-b"]
 

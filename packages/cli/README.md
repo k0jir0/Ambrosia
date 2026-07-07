@@ -117,7 +117,7 @@ ambrosia --json relay get relay-run-123
 ambrosia --json signals create --name Momentum --formula "close/close_20d-1"
 ambrosia --json signals get signal-123
 ambrosia --json signals link-review --signal-id signal-123 --review-id review-1
-ambrosia --json signals writeback-decision --signal-id signal-123 --review-id review-1 --decision-state pursue --decision-quality D4 --evidence-links "docs/evidence-1,docs/evidence-2" --verifier-status passed --review-date 2026-07-06
+ambrosia --json signals writeback-decision --signal-id signal-123 --review-id review-1 --decision-state pursue --decision-action BUY --decision-quality D4 --evidence-links "docs/evidence-1,docs/evidence-2" --verifier-status passed --review-date 2026-07-06
 ambrosia --json signals writeback-outcome --signal-id signal-123 --review-id review-1 --outcome-quality O3
 ambrosia --json signals quality-scorecard
 ambrosia --json backtests run --signal-id signal-123

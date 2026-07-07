@@ -73,7 +73,7 @@ const COMMAND_EXAMPLES = [
   "ambrosia scanner run --universe AAPL,MSFT,SPY --max-candidates 5",
   "ambrosia signals list",
   "ambrosia signals create --name Momentum --formula \"close/close_20d-1\"",
-  "ambrosia signals writeback-decision --signal-id signal-1 --review-id review-1 --decision-state pursue",
+  "ambrosia signals writeback-decision --signal-id signal-1 --review-id review-1 --decision-state pursue --decision-action BUY",
   "ambrosia alpha list",
   "ambrosia paper-trades list --limit 20",
   "ambrosia enterprise readiness"

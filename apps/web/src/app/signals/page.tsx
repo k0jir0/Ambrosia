@@ -231,6 +231,8 @@ export default function SignalsPage() {
             const origin = signalOrigin(signal);
             const validation = latestValidationStatus(signal, details);
             const risk = riskPosture(signal, details);
+            const decision = latestDecisionAction(signal, details);
+            const readiness = executionReadiness(signal, details);
             const nextAction = signalNextAction(signal, details);
             const nextTone = nextActionTone(nextAction);
             const reviewIds = stringList(signal.linkedReviewIds);
@@ -272,7 +274,9 @@ export default function SignalsPage() {
                   <SignalFact label="Risk posture" value={risk.label} tone={risk.tone} />
                   <SignalFact label="Risk budget" value={risk.budget} tone={risk.budget === "defined" ? "good" : "warn"} />
                   <SignalFact label="Outcome" value={textOrFallback(signal.latestOutcomeQuality, "open")} />
+                  <SignalFact label="Signal action" value={decision.label} tone={decision.tone} />
                   <SignalFact label="Latest decision" value={textOrFallback(signal.latestDecisionState, "pending")} />
+                  <SignalFact label="Execution" value={readiness.label} tone={readiness.tone} />
                   <SignalFact label="Review links" value={String(Math.max(reviewIds.length, numberValue(signal.linkedReviewCount)))} />
                   <SignalFact label="Policy events" value={String(details.policyEvents.length)} />
                   <SignalFact label="Updated" value={formatDate(textOrFallback(signal.updatedAt, ""))} />
@@ -478,6 +482,8 @@ function renderDetailTab(signal: Record<string, unknown>, details: SignalDetails
         <DetailItem label="Origin" value={signalOrigin(signal)} />
         <DetailItem label="Next action" value={signalNextAction(signal, details)} />
         <DetailItem label="Decision use" value="buy, sell, hold, hedge, or risk-adjust" />
+        <DetailItem label="Signal action" value={latestDecisionAction(signal, details).label} />
+        <DetailItem label="Execution readiness" value={executionReadiness(signal, details).label} />
         <DetailItem label="Latest validation" value={`${textOrFallback(latestRun.status, latestValidationStatus(signal, details).label)} · ${textOrFallback(latestRun.runType, "run type n/a")}`} />
         <DetailItem label="Latest policy event" value={`${textOrFallback(latestPolicyEvent.eventType, "none")} -> ${textOrFallback(latestPolicyEvent.toStatus, "n/a")}`} />
         <DetailItem label="Latest version" value={`v${numberOrFallback(latestVersion.version, numberOrFallback(signal.activeVersion, "1"))} · ${textOrFallback(latestVersion.formula, textOrFallback(signal.formula))}`} />
@@ -536,6 +542,8 @@ function renderDetailTab(signal: Record<string, unknown>, details: SignalDetails
     return (
       <DetailGrid>
         <DetailItem label="Decision-linked trade state" value={details.decisionLinks.length ? "decision-linked" : "not linked"} />
+        <DetailItem label="Signal action" value={latestDecisionAction(signal, details).label} />
+        <DetailItem label="Execution readiness" value={executionReadiness(signal, details).label} />
         <DetailItem label="Execution surface" value="execution-intelligence" />
         <DetailItem label="Cost model" value={textOrFallback(signal.costModel)} />
         <DetailItem label="Implementation note" value="Compare expected edge against cost, slippage, liquidity, and market impact before promotion." />
@@ -548,7 +556,7 @@ function renderDetailTab(signal: Record<string, unknown>, details: SignalDetails
       <DetailList
         empty="No review links recorded."
         items={details.decisionLinks.length ? details.decisionLinks : stringList(signal.linkedReviewIds).map((reviewId) => ({ reviewId }))}
-        renderItem={(item) => `${textOrFallback(item.reviewId, "review")} · ${textOrFallback(item.reviewDecisionState, textOrFallback(signal.latestDecisionState, "pending"))}`}
+        renderItem={(item) => `${textOrFallback(item.reviewId, "review")} · ${textOrFallback(item.decisionAction, textOrFallback(signal.latestDecisionAction, "action pending"))} · ${textOrFallback(item.reviewDecisionState, textOrFallback(signal.latestDecisionState, "pending"))}`}
       />
     );
   }
@@ -701,6 +709,25 @@ function latestValidationStatus(signal: Record<string, unknown>, details: Signal
   if (["validation_passed", "active_candidate", "constrained", "retired"].includes(signalStatus)) return { label: "passed", tone: "good" };
   if (signalStatus === "validation_pending") return { label: "pending", tone: "warn" };
   return { label: "missing", tone: "warn" };
+}
+
+function latestDecisionAction(signal: Record<string, unknown>, details: SignalDetails): { label: string; tone: BadgeTone } {
+  const latestLink = details.decisionLinks[0] ?? {};
+  const action = textOrFallback(signal.latestDecisionAction, textOrFallback(latestLink.decisionAction, "action pending"));
+  const normalized = action.toUpperCase();
+  if (["BUY", "SELL", "HEDGE", "RISK_ADJUST"].includes(normalized)) return { label: normalized, tone: "info" };
+  if (normalized === "HOLD") return { label: normalized, tone: "neutral" };
+  if (["BLOCK", "RETIRE"].includes(normalized)) return { label: normalized, tone: "bad" };
+  return { label: action, tone: "warn" };
+}
+
+function executionReadiness(signal: Record<string, unknown>, details: SignalDetails): { label: string; tone: BadgeTone } {
+  const latestLink = details.decisionLinks[0] ?? {};
+  const readiness = textOrFallback(signal.executionReadiness, textOrFallback(latestLink.executionReadiness, "not_executable"));
+  if (readiness === "execution_candidate") return { label: readiness, tone: "good" };
+  if (readiness === "paper_trade_ready") return { label: readiness, tone: "info" };
+  if (readiness === "execution_blocked") return { label: readiness, tone: "bad" };
+  return { label: readiness, tone: "neutral" };
 }
 
 function riskPosture(signal: Record<string, unknown>, details: SignalDetails): { label: string; tone: BadgeTone; budget: string } {

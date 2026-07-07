@@ -38,6 +38,7 @@ class SignalCreate:
 class SignalDecisionWriteback:
     review_id: str
     decision_state: str
+    decision_action: str | None = None
     decision_quality: str = "D2"
     override_used: bool = False
     rationale: str | None = None
@@ -50,6 +51,7 @@ class SignalDecisionWriteback:
             {
                 "reviewId": self.review_id,
                 "decisionState": self.decision_state,
+                "decisionAction": self.decision_action,
                 "decisionQuality": self.decision_quality,
                 "overrideUsed": self.override_used,
                 "rationale": self.rationale,

@@ -189,6 +189,7 @@ def build_parser() -> argparse.ArgumentParser:
     signal_wb_decision.add_argument("--signal-id", required=True)
     signal_wb_decision.add_argument("--review-id", required=True)
     signal_wb_decision.add_argument("--decision-state", required=True)
+    signal_wb_decision.add_argument("--decision-action", choices=["BUY", "SELL", "HOLD", "HEDGE", "RISK_ADJUST", "BLOCK", "RETIRE"], default=None)
     signal_wb_decision.add_argument("--decision-quality", default="D2")
     signal_wb_decision.add_argument("--override-used", action="store_true")
     signal_wb_decision.add_argument("--rationale", default=None)
@@ -349,6 +350,7 @@ def dispatch(args: argparse.Namespace, client: AmbrosiaClient, context: dict[str
             payload = {
                 "reviewId": args.review_id,
                 "decisionState": args.decision_state,
+                "decisionAction": args.decision_action,
                 "decisionQuality": args.decision_quality,
                 "overrideUsed": args.override_used,
                 "rationale": args.rationale,

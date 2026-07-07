@@ -119,6 +119,13 @@ const decisionLabels: Record<DecisionState, string> = {
   needs_more_data: "Needs more data"
 };
 
+const signalDecisionActions: Record<DecisionState, "BUY" | "HOLD" | "RISK_ADJUST" | "BLOCK"> = {
+  pursue: "BUY",
+  watch: "HOLD",
+  needs_more_data: "RISK_ADJUST",
+  reject: "BLOCK"
+};
+
 export function Workbench({ initialReviewId }: { initialReviewId?: string } = {}) {
   const [reviews, setReviews] = useState<TradeReview[]>(() => mergeReviews(getLocalReviews(), sampleReviews));
   const [packetIdsByReviewId, setPacketIdsByReviewId] = useState<Record<string, string>>({});
@@ -304,6 +311,11 @@ export function Workbench({ initialReviewId }: { initialReviewId?: string } = {}
               reviewId,
               signalVersion: activeAlphaLink.signalVersion,
               decisionState,
+              decisionAction: signalDecisionActions[decisionState],
+              decisionUse: ["buy", "sell", "hold", "hedge", "risk_adjust"],
+              evidenceLinks: [`review:${reviewId}`],
+              verifierStatus: "passed",
+              reviewDate: new Date().toISOString().slice(0, 10),
               rationale,
               overrideUsed: Boolean(override)
             });

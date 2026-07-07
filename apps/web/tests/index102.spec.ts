@@ -349,6 +349,8 @@ test("signals cockpit exposes stack links, risk posture, and next action", async
             linkedReviewIds: ["review-jpm-001"],
             linkedReviewCount: 1,
             latestDecisionState: "needs_more_data",
+            latestDecisionAction: "BUY",
+            executionReadiness: "execution_blocked",
             latestOutcomeQuality: "decision_unset",
             outcomeCount: 0,
             overrideCount: 0,
@@ -402,7 +404,7 @@ test("signals cockpit exposes stack links, risk posture, and next action", async
     }
 
     if (request.method() === "GET" && url.pathname === "/signals/signal-index106-jpm/decision-links") {
-      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([{ reviewId: "review-jpm-001", reviewDecisionState: "needs_more_data" }]) });
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([{ reviewId: "review-jpm-001", reviewDecisionState: "needs_more_data", decisionAction: "BUY", executionReadiness: "execution_blocked" }]) });
       return;
     }
 
@@ -427,6 +429,8 @@ test("signals cockpit exposes stack links, risk posture, and next action", async
   await expect(page.getByRole("heading", { name: "JPM Momentum Up Signal" })).toBeVisible();
   await expect(page.getByText("Define risk budget").first()).toBeVisible();
   await expect(page.getByText("risk_blocked").first()).toBeVisible();
+  await expect(page.getByText("BUY").first()).toBeVisible();
+  await expect(page.getByText("execution_blocked").first()).toBeVisible();
   await expect(page.getByText("scanner-run-index106").first()).toBeVisible();
   await expect(page.getByText("alpha-jpm-momentum").first()).toBeVisible();
   await expect(page.getByText("review-jpm-001").first()).toBeVisible();

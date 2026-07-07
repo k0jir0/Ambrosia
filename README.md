@@ -10,24 +10,37 @@ The product is organized around three connected surfaces:
 
 ## Current State
 
-Ambrosia is now a working monorepo with a Next.js frontend, a FastAPI backend, a Rust hot-path service boundary, local full-stack scripts, CI validation, and production deployment wiring.
+Ambrosia is a working monorepo with a Next.js frontend, a FastAPI backend, a Rust hot-path service boundary, a Python CLI/SDK layer, local full-stack scripts, CI validation, and Render deployment wiring.
 
-The Index84 implementation and closure chain is fully wired and passing in repository scope:
+The current product loop is no longer just review generation. The repository now supports a finance-native decision path:
 
-- Roadmap completion evidence gate passes.
-- Literal feature coverage gate passes.
-- Hot-path design/readiness gate passes.
-- Phase 7 hot-path governance go/no-go gate passes.
-- Index86 closure gate passes.
+1. Scanner, Alpha Lab, Signals, or review intake creates a candidate thesis.
+2. The candidate can become a measurable alpha hypothesis and signal.
+3. Adversarial Review evaluates the thesis, records evidence, and captures a human decision.
+4. Signal Decision Proposal translates the review into a finance action.
+5. The signal records `BUY`, `SELL`, `HOLD`, `HEDGE`, `RISK_ADJUST`, `BLOCK`, or `RETIRE` plus execution readiness.
+6. Signals, outcomes, scorecards, execution intelligence, and history carry the decision forward.
 
-Recent implementation developments (July 2026):
+The Index84 closure chain remains wired in repository scope:
 
-- Index95 implementation baseline is live in repository scope, including durable signal lifecycle storage, idempotent write behavior, and expanded control-plane contracts.
-- A dedicated Signals page is now available at `/signals` and linked in the left navigation.
-- Market Scanner now supports natural alpha formation with a primary `Promote to Alpha` action and lifecycle-aware candidate controls.
-- New backend convenience route `POST /scanner/candidates/promote-alpha` creates hypothesis + signal + link in one call.
-- Scanner promotion lifecycle visibility is available at `GET /scanner/candidates/promotions`.
-- Review intake now supports an optional `Create Alpha from Review` path for intentional thesis-origin alpha creation.
+- Roadmap completion evidence gate.
+- Literal feature coverage gate.
+- Hot-path design/readiness gate.
+- Phase 7 hot-path governance go/no-go gate.
+- Index86 closure gate.
+
+Current July 2026 implementation developments:
+
+- Index97 seeded signal lifecycle inventory exists for demo and validation flows.
+- A dedicated Signals cockpit at `/signals` shows formulas, universes, horizons, benchmarks, validation state, risk posture, stack links, review links, latest signal action, execution readiness, and next action.
+- Review workbench now includes Signal Decision Proposal, an explicit final handoff that writes adversarial review decisions back into signal memory.
+- Signal Decision Proposal can create a linked alpha hypothesis and signal when a review has no valid signal link, then write the selected finance action.
+- Backend signal decision writeback accepts finance-native actions, records execution readiness, enforces evidence/verifier/date requirements for promotion-style decisions, and persists lifecycle snapshots.
+- Market Scanner supports natural alpha formation with `Promote to Alpha`, candidate lifecycle controls, and promotion records.
+- `POST /scanner/candidates/promote-alpha` creates hypothesis + signal + link in one call.
+- `GET /scanner/candidates/promotions` exposes scanner promotion lifecycle visibility.
+- Review intake supports an optional `Create Alpha from Review` path for intentional thesis-origin alpha creation.
+- CLI and SDK packages cover hosted/local status, review, packet, market, relay, signal, backtest, paper-trade, and enterprise operations.
 
 The frontend includes:
 
@@ -37,8 +50,10 @@ The frontend includes:
 - Discovery / market intelligence surface
 - Market Scanner lifecycle actions including `Promote to Alpha`, `Create Review`, and validation queueing
 - Alpha Lab origin visibility for scanner-promoted objects (origin, source ticker/signal, promotion metadata)
-- Signals inventory surface at `/signals`
+- Signals cockpit at `/signals`
+- Signal Decision Proposal in the review workbench, including editable finance actions and signal writeback confirmation
 - History, calibration, team, reports, governance, admin, and advanced operations pages
+- Relay Benchmarks, Platform, Enterprise, Execution Intelligence, and CLI Design pages
 - Global navigation with the Operating Model panel visible beneath the Admin pressable banner
 - API-first behavior with deterministic local fallback when services are unavailable
 - Visible paragraphs describing Agentic AI for Investments, Investment Trading Decisions, Swarm Intelligence, and Agentic Swarm
@@ -53,7 +68,9 @@ The backend includes:
 - Index84 platform routes for relay, feature store MVP, signals, backtests, paper trades, execution intelligence, enterprise governance, and readiness/evidence flows
 - Extended alpha and execution intelligence surfaces including alpha hypothesis, alpha decay analytics, warm-path event processing, and enterprise security packet endpoints
 - Scanner-to-alpha promotion routes with durable lifecycle snapshots and promotion record persistence
-- Expanded signal writeback and lifecycle endpoints for validation, policy transitions, and outcome rollups
+- Expanded signal writeback and lifecycle endpoints for validation, policy transitions, review links, decision writeback, outcome writeback, and outcome rollups
+- Index97 signal/review seed routes for lifecycle demonstrations and regression checks
+- CLI/SDK-facing contracts for hosted and local operations
 
 The hot-path service includes:
 
@@ -80,6 +97,7 @@ Ambrosia is an Agentic Swarm because the workflow is not a static dashboard. Age
 - Rust hot-path execution service scaffold for deterministic low-latency order gating
 - SQLAlchemy and PostgreSQL-oriented schema patterns
 - Provider modes for deterministic local execution, Ollama, hosted models, and hybrid operation
+- Python SDK and Typer-based CLI for operator workflows and automation
 - Playwright, pytest, Ruff, visibility checks, eval scripts, and stack contract tests
 - Render deployment entrypoints through root `index.js` and `render.yaml`
 
@@ -90,6 +108,8 @@ The root is intentionally kept small. Configuration and entrypoint files stay at
 - `apps/web/` - Next.js frontend
 - `services/api/` - FastAPI backend
 - `services/hotpath-rs/` - Rust deterministic hot-path service (kill switch + pre-trade risk checks)
+- `packages/cli/` - Ambrosia CLI package and command contracts
+- `packages/sdk-python/` - Python SDK package
 - `packages/evals/` - evaluation and ablation runners
 - `packages/schemas/` - shared schema contracts
 - `scripts/` - deployment, validation, local stack, and automation scripts
@@ -149,6 +169,8 @@ pnpm db:migrations:check
 pnpm scorecard:check
 pnpm m1:readiness
 pnpm test:stack
+pnpm signals:index97:check
+pnpm docs:consistency:check
 ```
 
 Index84 and closure checks:
@@ -171,6 +193,9 @@ Recent verification status:
 - Web build and lint were brought back to green locally.
 - API test suite was brought to green locally.
 - Scanner promotion endpoint and promotion listing tests are passing locally.
+- Signal decision writeback API coverage verifies `decisionAction` and `executionReadiness` updates.
+- Playwright workbench coverage verifies Signal Decision Proposal visibility, stale-link recovery, and sanitized signal creation.
+- Signals cockpit coverage verifies stack links, risk posture, and next-action visibility.
 - Visibility and provider workflow gates are green in GitHub Actions.
 - The production web surface is live at `https://ambrosia-5aec.onrender.com/`.
 - The split production web/API stack is live at `https://ambrosia-web-c3ax.onrender.com/` and `https://ambrosia-api-69t6.onrender.com/health`.
@@ -198,15 +223,39 @@ GitHub production deploy wiring exists, but Render deploy hook secrets must be p
 
 ## Roadmap
 
-1. Restore and continuously verify production API health on Render.
-2. Move advanced sandbox state from in-memory fallback behavior into durable PostgreSQL-backed storage.
-3. Expand review lifecycle persistence across accounts, teams, and historical search.
-4. Connect more frontend operating panels directly to live advanced backend endpoints.
-5. Expand provider ablations, evaluation reporting, and regression gates.
-6. Harden enterprise governance, marketplace packaging, and permission boundaries.
-7. Add broker-sandbox workflows, advanced attribution, mobile alerting, and portfolio-level action loops.
+1. Continuously verify production and staging API health on Render, including cold-start behavior.
+2. Move remaining advanced sandbox and lifecycle fallback state into durable PostgreSQL-backed storage.
+3. Expand review and signal lifecycle persistence across accounts, teams, historical search, and outcome cohorts.
+4. Tighten the Signal Decision Proposal path with richer risk-budget, liquidity, cost, approval, and outcome requirements.
+5. Connect more frontend operating panels directly to live advanced backend endpoints.
+6. Expand provider ablations, evaluation reporting, regression gates, and benchmark provenance.
+7. Harden enterprise governance, marketplace packaging, service-account lifecycle, SSO, and permission boundaries.
+8. Add broker-sandbox workflows, advanced attribution, mobile alerting, and portfolio-level action loops.
 
 ## Patch Notes
+
+### Signal Decision Loop Upgrade (Current Baseline)
+
+This release closes the previously missing handoff between adversarial review and signal state.
+
+What shipped:
+
+- Signal Decision Proposal panel in the review workbench
+- Editable finance action vocabulary: `BUY`, `SELL`, `HOLD`, `HEDGE`, `RISK_ADJUST`, `BLOCK`, `RETIRE`
+- Automatic alpha hypothesis and signal creation for review-derived decisions when no valid signal link exists
+- Stale signal-link retry path that creates a replacement signal before writeback
+- Signal decision writeback to `/signals/{signal_id}/writeback-decision`
+- Execution readiness writeback (`not_executable`, `paper_trade_ready`, `execution_candidate`, `execution_blocked`)
+- Evidence, verifier, review-date, decision-quality, and outcome-writeback fields in the backend contract
+- Signals cockpit rendering for latest action, execution readiness, linked reviews, validation state, and next action
+- Playwright coverage for proposal visibility, stale-link recovery, and sanitized generated signal fields
+- API coverage for decision action and execution readiness persistence
+
+Current constraints:
+
+- Signal memory can persist through PostgreSQL when `DATABASE_URL` is configured; otherwise it uses the local lifecycle snapshot artifact.
+- Advanced execution remains sandboxed and gated; Signal Decision Proposal records state and does not execute trades.
+- Production deploy automation still depends on Render hook secrets being populated in GitHub.
 
 ### Index84 Upgrade (Current Baseline)
 

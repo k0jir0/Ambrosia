@@ -112,6 +112,82 @@ test("soft-policy advisories do not lock watch and reject decisions", async ({ p
   await expect(page.getByRole("button", { name: "Write HOLD to Signal" })).toBeEnabled();
 });
 
+test("signal proposal recreates stale linked signal before writeback", async ({ page }) => {
+  let staleLinkAttempted = false;
+  let replacementSignalCreated = false;
+  let writebackDecisionAction = "";
+
+  await page.unroute(LOCAL_API_ROUTE);
+  await page.route(LOCAL_API_ROUTE, async (route) => {
+    const request = route.request();
+    const url = request.url();
+
+    if (url.endsWith("/signals/stale-signal/link-review")) {
+      staleLinkAttempted = true;
+      await route.fulfill({ status: 404, contentType: "application/json", body: JSON.stringify({ detail: "signal not found" }) });
+      return;
+    }
+    if (url.endsWith("/alpha/hypotheses") && request.method() === "POST") {
+      await route.fulfill({ status: 201, contentType: "application/json", body: JSON.stringify({ hypothesisId: "alpha-replacement" }) });
+      return;
+    }
+    if (url.endsWith("/signals") && request.method() === "POST") {
+      replacementSignalCreated = true;
+      await route.fulfill({ status: 201, contentType: "application/json", body: JSON.stringify({ signalId: "signal-replacement", activeVersion: 1, version: 1 }) });
+      return;
+    }
+    if (url.endsWith("/alpha/hypotheses/alpha-replacement/link-signal")) {
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ hypothesisId: "alpha-replacement", signalId: "signal-replacement", signalVersion: 1 }) });
+      return;
+    }
+    if (url.endsWith("/signals/signal-replacement/link-review")) {
+      await route.fulfill({ status: 201, contentType: "application/json", body: JSON.stringify({ signalId: "signal-replacement", reviewId: "atr-003" }) });
+      return;
+    }
+    if (url.endsWith("/signals/signal-replacement/writeback-decision")) {
+      const payload = request.postDataJSON() as { decisionAction?: string };
+      writebackDecisionAction = payload.decisionAction ?? "";
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ signalId: "signal-replacement", reviewId: "atr-003", latestDecisionAction: payload.decisionAction, executionReadiness: "execution_blocked" })
+      });
+      return;
+    }
+    if (url.endsWith("/signals/signal-replacement/alpha-decay") || url.endsWith("/signals/stale-signal/alpha-decay")) {
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ decayDetected: false, recommendedAction: "maintain" }) });
+      return;
+    }
+    await route.abort();
+  });
+
+  await page.addInitScript(() => {
+    window.localStorage.setItem(
+      "ambrosia.review-alpha-links.v1",
+      JSON.stringify({
+        "atr-003": {
+          source: "alpha",
+          objectType: "signal",
+          signalId: "stale-signal",
+          signalVersion: 1,
+          title: "Stale QA signal",
+          signalFamily: "macro",
+          ticker: "TLT",
+          createdAt: "2026-07-06T00:00:00.000Z"
+        }
+      })
+    );
+  });
+
+  await page.goto("/review/atr-003");
+  await page.getByRole("button", { name: "Watch" }).click();
+  await page.getByRole("button", { name: "Write HOLD to Signal" }).click();
+  await expect(page.getByText("Signal updated: HOLD / execution_blocked.")).toBeVisible();
+  expect(staleLinkAttempted).toBe(true);
+  expect(replacementSignalCreated).toBe(true);
+  expect(writebackDecisionAction).toBe("HOLD");
+});
+
 test("sidebar navigation reaches core routes", async ({ page }) => {
   test.slow();
   await page.goto("/");

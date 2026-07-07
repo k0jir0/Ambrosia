@@ -357,31 +357,18 @@ export function Workbench({ initialReviewId }: { initialReviewId?: string } = {}
     setActiveAction("Write signal decision");
     setActionFeedback({ tone: "neutral", message: activeAlphaLink?.signalId ? `Writing ${action} to linked signal ${activeAlphaLink.signalId}...` : `Creating a linked signal, then writing ${action}...` });
     try {
-      const signalLink = activeAlphaLink?.signalId ? activeAlphaLink : await createSignalLinkForReview(activeReview);
-      const signalId = signalLink.signalId;
-      if (!signalId) {
-        throw new Error("Signal creation did not return a signal id.");
+      let signalLink = activeAlphaLink?.signalId ? activeAlphaLink : await createSignalLinkForReview(activeReview);
+      let signalId: string;
+      try {
+        signalId = await writeSignalDecisionToLink(signalLink, action, readiness, decisionRationale);
+      } catch (error) {
+        if (!activeAlphaLink?.signalId || signalLink.signalId !== activeAlphaLink.signalId) {
+          throw error;
+        }
+        appendAuditEvent("signal.decision.writeback.retry", `Linked signal ${activeAlphaLink.signalId} was unavailable; creating a fresh signal before retrying.`);
+        signalLink = await createSignalLinkForReview(activeReview);
+        signalId = await writeSignalDecisionToLink(signalLink, action, readiness, decisionRationale);
       }
-
-      await linkSignalReview(signalId, {
-        reviewId,
-        hypothesisId: signalLink.hypothesisId,
-        signalVersion: signalLink.signalVersion
-      });
-      await writebackSignalDecision(signalId, {
-        reviewId,
-        signalVersion: signalLink.signalVersion,
-        decisionState: activeReview.decisionState,
-        decisionAction: action,
-        decisionUse: ["buy", "sell", "hold", "hedge", "risk_adjust"],
-        evidenceLinks: [`review:${reviewId}`],
-        verifierStatus: activeReview.validation.status === "specified" ? "passed" : "blocked",
-        reviewDate: new Date().toISOString().slice(0, 10),
-        rationale: decisionRationale,
-        executionReadiness: readiness,
-        outcomeWritebackRequired: true,
-        decisionQuality: deriveDecisionQuality(activeReview)
-      });
       upsertAlphaWritebackForReview(reviewId, signalLink, {
         latestDecisionState: activeReview.decisionState,
         lastReviewedAt: new Date().toISOString()
@@ -395,6 +382,42 @@ export function Workbench({ initialReviewId }: { initialReviewId?: string } = {}
     } finally {
       setActiveAction(null);
     }
+  }
+
+  async function writeSignalDecisionToLink(
+    signalLink: ReviewAlphaLink,
+    action: SignalDecisionAction,
+    readiness: SignalExecutionReadiness,
+    decisionRationale: string
+  ) {
+    if (!activeReview.decisionState) {
+      throw new Error("Review decision is missing.");
+    }
+    const signalId = signalLink.signalId;
+    if (!signalId) {
+      throw new Error("Signal link does not include a signal id.");
+    }
+    const reviewId = activeReview.id;
+    await linkSignalReview(signalId, {
+      reviewId,
+      hypothesisId: signalLink.hypothesisId,
+      signalVersion: signalLink.signalVersion
+    });
+    await writebackSignalDecision(signalId, {
+      reviewId,
+      signalVersion: signalLink.signalVersion,
+      decisionState: activeReview.decisionState,
+      decisionAction: action,
+      decisionUse: ["buy", "sell", "hold", "hedge", "risk_adjust"],
+      evidenceLinks: [`review:${reviewId}`],
+      verifierStatus: activeReview.validation.status === "specified" ? "passed" : "blocked",
+      reviewDate: new Date().toISOString().slice(0, 10),
+      rationale: decisionRationale,
+      executionReadiness: readiness,
+      outcomeWritebackRequired: true,
+      decisionQuality: deriveDecisionQuality(activeReview)
+    });
+    return signalId;
   }
 
   async function createSignalLinkForReview(review: TradeReview): Promise<ReviewAlphaLink> {

@@ -97,6 +97,9 @@ type AlphaDecaySnapshot = {
   decayDetected: boolean;
   recommendedAction: string;
 };
+type SignalDecisionAction = "BUY" | "SELL" | "HOLD" | "HEDGE" | "RISK_ADJUST" | "BLOCK" | "RETIRE";
+
+type SignalExecutionReadiness = "not_executable" | "paper_trade_ready" | "execution_candidate" | "execution_blocked";
 
 const statusLabels: Record<ReviewStatus, string> = {
   intake: "Intake",
@@ -119,12 +122,22 @@ const decisionLabels: Record<DecisionState, string> = {
   needs_more_data: "Needs more data"
 };
 
-const signalDecisionActions: Record<DecisionState, "BUY" | "HOLD" | "RISK_ADJUST" | "BLOCK"> = {
+const signalDecisionActions: Record<DecisionState, SignalDecisionAction> = {
   pursue: "BUY",
   watch: "HOLD",
   needs_more_data: "RISK_ADJUST",
   reject: "BLOCK"
 };
+
+const signalDecisionActionOptions: Array<{ action: SignalDecisionAction; label: string; summary: string }> = [
+  { action: "BUY", label: "Buy", summary: "Add or initiate long exposure." },
+  { action: "SELL", label: "Sell", summary: "Exit, reduce, or express a short/avoid stance." },
+  { action: "HOLD", label: "Hold", summary: "Maintain posture and monitor." },
+  { action: "HEDGE", label: "Hedge", summary: "Offset a defined exposure without rejecting the thesis." },
+  { action: "RISK_ADJUST", label: "Risk adjust", summary: "Resize, constrain, or request tighter controls." },
+  { action: "BLOCK", label: "Block", summary: "Prevent action until required evidence or gates clear." },
+  { action: "RETIRE", label: "Retire", summary: "Remove a decayed or failed signal from active use." }
+];
 
 export function Workbench({ initialReviewId }: { initialReviewId?: string } = {}) {
   const [reviews, setReviews] = useState<TradeReview[]>(() => mergeReviews(getLocalReviews(), sampleReviews));
@@ -311,7 +324,7 @@ export function Workbench({ initialReviewId }: { initialReviewId?: string } = {}
               reviewId,
               signalVersion: activeAlphaLink.signalVersion,
               decisionState,
-              decisionAction: signalDecisionActions[decisionState],
+              decisionAction: deriveSignalDecisionAction(activeReview, decisionState, activeAlphaDecay),
               decisionUse: ["buy", "sell", "hold", "hedge", "risk_adjust"],
               evidenceLinks: [`review:${reviewId}`],
               verifierStatus: "passed",
@@ -324,6 +337,58 @@ export function Workbench({ initialReviewId }: { initialReviewId?: string } = {}
           }
         })();
       }
+    }
+  }
+
+  async function confirmSignalDecisionProposal(action: SignalDecisionAction, rationale?: string) {
+    if (!activeReview.decisionState) {
+      setActionFeedback({ tone: "warn", message: "Record a review decision before writing a signal action." });
+      return;
+    }
+    if (!activeAlphaLink?.signalId) {
+      setActionFeedback({ tone: "warn", message: "Signal action remains pending because this review is not linked to a server signal." });
+      appendAuditEvent("signal.decision.writeback.blocked", "Signal Decision Proposal could not write back: no linked signal is available.");
+      return;
+    }
+
+    const signalId = activeAlphaLink.signalId;
+    const reviewId = activeReview.id;
+    const readiness = resolveExecutionReadiness(action, activeReview, activePacketData, pursueGateViolations);
+    const decisionRationale = rationale?.trim() || `Signal Decision Proposal accepted: ${action}.`;
+
+    setActiveAction("Write signal decision");
+    setActionFeedback({ tone: "neutral", message: `Writing ${action} to linked signal ${signalId}...` });
+    try {
+      await linkSignalReview(signalId, {
+        reviewId,
+        hypothesisId: activeAlphaLink.hypothesisId,
+        signalVersion: activeAlphaLink.signalVersion
+      });
+      await writebackSignalDecision(signalId, {
+        reviewId,
+        signalVersion: activeAlphaLink.signalVersion,
+        decisionState: activeReview.decisionState,
+        decisionAction: action,
+        decisionUse: ["buy", "sell", "hold", "hedge", "risk_adjust"],
+        evidenceLinks: [`review:${reviewId}`],
+        verifierStatus: activeReview.validation.status === "specified" ? "passed" : "blocked",
+        reviewDate: new Date().toISOString().slice(0, 10),
+        rationale: decisionRationale,
+        executionReadiness: readiness,
+        outcomeWritebackRequired: true,
+        decisionQuality: deriveDecisionQuality(activeReview)
+      });
+      upsertAlphaWritebackForReview(reviewId, activeAlphaLink, {
+        latestDecisionState: activeReview.decisionState,
+        lastReviewedAt: new Date().toISOString()
+      });
+      appendAuditEvent("signal.decision.writeback", `Signal Decision Proposal wrote ${action} to ${signalId}; readiness ${readiness}.`);
+      setActionFeedback({ tone: "good", message: `Signal updated: ${action} / ${readiness}.` });
+    } catch (error) {
+      appendAuditEvent("signal.decision.writeback.failed", `Signal Decision Proposal failed for ${signalId}: ${error instanceof Error ? error.message : "unknown error"}.`);
+      setActionFeedback({ tone: "warn", message: `Signal writeback failed: ${error instanceof Error ? error.message : "unknown error"}` });
+    } finally {
+      setActiveAction(null);
     }
   }
 
@@ -975,6 +1040,15 @@ export function Workbench({ initialReviewId }: { initialReviewId?: string } = {}
           advisoryReasons={softPolicyReasons}
           pursueGateViolations={pursueGateViolations}
         />
+        <SignalDecisionProposalPanel
+          review={activeReview}
+          link={activeAlphaLink}
+          packet={activePacketData}
+          activeAction={activeAction}
+          alphaDecay={activeAlphaDecay}
+          pursueGateViolations={pursueGateViolations}
+          onConfirm={confirmSignalDecisionProposal}
+        />
       </div>
     </main>
   );
@@ -1006,6 +1080,164 @@ function TopBar({ review }: { review: TradeReview }) {
     </Panel>
   );
 }
+
+  function SignalDecisionProposalPanel({
+    review,
+    link,
+    packet,
+    activeAction,
+    alphaDecay,
+    pursueGateViolations,
+    onConfirm
+  }: {
+    review: TradeReview;
+    link: ReviewAlphaLink | null;
+    packet: DecisionPacket | null;
+    activeAction: string | null;
+    alphaDecay: AlphaDecaySnapshot | null;
+    pursueGateViolations: string[];
+    onConfirm: (action: SignalDecisionAction, rationale?: string) => void;
+  }) {
+    const proposedAction = review.decisionState ? deriveSignalDecisionAction(review, review.decisionState, alphaDecay) : null;
+    const [selectedAction, setSelectedAction] = useState<SignalDecisionAction>(proposedAction ?? "HOLD");
+    const [rationale, setRationale] = useState("");
+    const readiness = resolveExecutionReadiness(selectedAction, review, packet, pursueGateViolations);
+    const blockers = buildSignalDecisionBlockers(review, link, packet, pursueGateViolations);
+    const signalId = link?.signalId ?? null;
+    const canWrite = Boolean(review.decisionState && signalId && !activeAction);
+
+    useEffect(() => {
+      setSelectedAction(proposedAction ?? "HOLD");
+      setRationale("");
+    }, [proposedAction, review.id]);
+
+    return (
+      <Panel className="border border-teal/30 bg-paper p-4 shadow-panel">
+        <div className="grid gap-4 lg:grid-cols-[minmax(240px,0.8fr)_minmax(360px,1.2fr)_minmax(260px,0.8fr)]">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wide text-teal">Signal Decision Proposal</p>
+            <h2 className="mt-1 text-base font-semibold text-ink">Surface review result as a signal action</h2>
+            <p className="mt-2 text-sm text-slate-400">
+              Confirm the finance-native action that should be written to the linked signal. This updates signal memory; it does not execute a trade.
+            </p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <Badge tone={review.decisionState ? "good" : "warn"}>{review.decisionState ? `Review: ${decisionLabels[review.decisionState]}` : "Review decision pending"}</Badge>
+              <Badge tone={signalId ? "info" : "warn"}>{signalId ? `Signal: ${signalId}` : "No linked signal"}</Badge>
+              <Badge tone={readiness === "paper_trade_ready" || readiness === "execution_candidate" ? "good" : readiness === "execution_blocked" ? "warn" : "neutral"}>{readiness}</Badge>
+            </div>
+            {link?.signalVersion ? <p className="mt-2 text-xs text-slate-500">Version v{link.signalVersion}</p> : null}
+          </div>
+
+          <div className="space-y-3">
+            <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
+              {signalDecisionActionOptions.map((option) => (
+                <button
+                  type="button"
+                  key={option.action}
+                  onClick={() => setSelectedAction(option.action)}
+                  disabled={Boolean(activeAction) || !review.decisionState}
+                  className={cn(
+                    "focus-ring rounded-md border px-2 py-2 text-left text-xs transition disabled:cursor-not-allowed disabled:opacity-50",
+                    selectedAction === option.action ? "border-teal bg-teal/10 text-teal" : "border-line bg-fog/70 text-slate-300 hover:border-teal/50"
+                  )}
+                  title={option.summary}
+                >
+                  <span className="block font-semibold">{option.label}</span>
+                  <span className="mt-1 block text-[11px] text-slate-500">{option.action}</span>
+                </button>
+              ))}
+            </div>
+            <input
+              value={rationale}
+              onChange={(event) => setRationale(event.target.value)}
+              placeholder="Optional writeback rationale"
+              disabled={Boolean(activeAction) || !review.decisionState}
+              className="focus-ring w-full rounded-md border border-line bg-fog/70 px-3 py-2 text-xs text-slate-200 disabled:cursor-not-allowed disabled:opacity-50"
+            />
+            <div className="rounded-md border border-line bg-fog/60 p-3 text-xs text-slate-300">
+              <p className="font-semibold text-slate-200">Next required step</p>
+              <p className="mt-1">{describeSignalDecisionNextStep(readiness, blockers)}</p>
+            </div>
+          </div>
+
+          <div className="space-y-3">
+            <div className="rounded-md border border-line bg-fog/60 p-3 text-xs">
+              <p className="font-semibold text-slate-200">Writeback readiness</p>
+              {blockers.length > 0 ? (
+                <ul className="mt-2 space-y-1 text-amber">
+                  {blockers.map((blocker) => (
+                    <li key={blocker}>{blocker}</li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="mt-2 text-teal">Linked signal and review decision are ready for writeback.</p>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={() => onConfirm(selectedAction, rationale)}
+              disabled={!canWrite}
+              className="focus-ring w-full rounded-md bg-teal px-3 py-2 text-sm font-semibold text-fog transition hover:bg-teal/90 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {activeAction === "Write signal decision" ? "Writing signal decision..." : `Write ${selectedAction} to Signal`}
+            </button>
+            {signalId ? (
+              <Link href="/signals" className="focus-ring inline-flex w-full items-center justify-center gap-1 rounded-md border border-line bg-fog/70 px-3 py-2 text-xs font-semibold text-teal hover:border-teal/60">
+                Open Signals cockpit <ArrowRight className="h-3.5 w-3.5" />
+              </Link>
+            ) : null}
+          </div>
+        </div>
+      </Panel>
+    );
+  }
+  function deriveSignalDecisionAction(review: TradeReview, decisionState: DecisionState, alphaDecay: AlphaDecaySnapshot | null): SignalDecisionAction {
+    if (alphaDecay?.decayDetected && /retire|decay|decommission/i.test(alphaDecay.recommendedAction)) return "RETIRE";
+    if (decisionState !== "pursue") return signalDecisionActions[decisionState];
+
+    const decisionText = `${review.title} ${review.thesis} ${review.intendedExpression}`.toLowerCase();
+    if (/hedge|protect|offset/.test(decisionText)) return "HEDGE";
+    if (/sell|short|exit|reduce|avoid|underweight/.test(decisionText)) return "SELL";
+    if (/risk|size|trim|rebalance|constrain/.test(decisionText)) return "RISK_ADJUST";
+    return "BUY";
+  }
+
+  function resolveExecutionReadiness(
+    action: SignalDecisionAction,
+    review: TradeReview,
+    packet: DecisionPacket | null,
+    pursueGateViolations: string[]
+  ): SignalExecutionReadiness {
+    if (["BLOCK", "RETIRE"].includes(action)) return "not_executable";
+    if (review.validation.status !== "specified" || pursueGateViolations.length > 0) return "execution_blocked";
+    if (!packet?.riskMonitor || packet.riskMonitor.status === "alert") return "execution_blocked";
+    return "paper_trade_ready";
+  }
+
+  function buildSignalDecisionBlockers(review: TradeReview, link: ReviewAlphaLink | null, packet: DecisionPacket | null, pursueGateViolations: string[]) {
+    const blockers: string[] = [];
+    if (!review.decisionState) blockers.push("Record a review decision first.");
+    if (!link?.signalId) blockers.push("No linked server signal is available for writeback.");
+    if (link?.signalId && !link.signalVersion) blockers.push("Signal version is missing.");
+    if (review.validation.status !== "specified") blockers.push("Validation protocol is not specified.");
+    if (!packet?.riskMonitor) blockers.push("Risk evaluation has not been recorded for execution readiness.");
+    if (packet?.riskMonitor?.status === "alert") blockers.push("Risk monitor is in alert state.");
+    return [...blockers, ...pursueGateViolations.filter((violation) => !blockers.includes(violation))];
+  }
+
+  function describeSignalDecisionNextStep(readiness: SignalExecutionReadiness, blockers: string[]) {
+    if (blockers.length > 0) return blockers[0];
+    if (readiness === "paper_trade_ready") return "Send to paper-trade review when the user wants execution evidence.";
+    if (readiness === "execution_candidate") return "Route to execution intelligence for approval and sizing.";
+    if (readiness === "execution_blocked") return "Resolve validation, risk, liquidity, or approval blockers before execution.";
+    return "Store the decision in signal history; no execution path should open.";
+  }
+
+  function deriveDecisionQuality(review: TradeReview) {
+    if (review.confidence >= 80 && review.validation.status === "specified") return "D4";
+    if (review.confidence >= 60) return "D3";
+    return "D2";
+  }
 
 function LinkedAlphaPanel({ link }: { link: ReviewAlphaLink }) {
   const objectId = link.objectType === "hypothesis" ? link.hypothesisId : link.signalId;

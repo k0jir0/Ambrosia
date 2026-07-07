@@ -56,6 +56,8 @@ test("review route uses focused decision workbench", async ({ page }) => {
   await expect(page.getByText("Live workflow feed")).toBeVisible();
   await expect(page.getByText("TLT market dock")).toBeVisible();
   await expect(page.getByText("Decision controls")).toBeVisible();
+  await expect(page.getByText("Signal Decision Proposal")).toBeVisible();
+  await expect(page.getByText("No linked signal")).toBeVisible();
   await expect(page.locator("section").filter({ hasText: "Decision controls" })).toHaveCSS("position", "static");
   await expect(page.getByText("Core Actions")).toHaveCount(0);
   await expect(page.getByText("Run a thesis through Ambrosia")).toHaveCount(0);
@@ -107,6 +109,7 @@ test("soft-policy advisories do not lock watch and reject decisions", async ({ p
   await expect(page.getByRole("button", { name: "Reject" })).toBeEnabled();
   await page.getByRole("button", { name: "Watch" }).click();
   await expect(page.getByText("Human decision: Watch.").first()).toBeVisible();
+  await expect(page.getByRole("button", { name: "Write HOLD to Signal" })).toBeEnabled();
 });
 
 test("sidebar navigation reaches core routes", async ({ page }) => {

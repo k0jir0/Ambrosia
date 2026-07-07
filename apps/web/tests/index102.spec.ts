@@ -322,6 +322,126 @@ test("governance team management edits and removes members", async ({ page }) =>
   await expect(page.getByText("Reviewer removed from the team.")).toBeVisible();
 });
 
+test("signals cockpit exposes stack links, risk posture, and next action", async ({ page }) => {
+  await page.unroute(LOCAL_API_ROUTE);
+
+  await page.route(LOCAL_API_ROUTE, async (route) => {
+    const request = route.request();
+    const url = new URL(request.url());
+
+    if (request.method() === "GET" && url.pathname === "/signals") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify([
+          {
+            signalId: "signal-index106-jpm",
+            name: "JPM Momentum Up Signal",
+            universe: ["JPM"],
+            horizon: "20d",
+            formula: "close / close_20d - 1 > 0 and close > sma_50",
+            costModel: "10 bps round-trip",
+            benchmark: "XLF",
+            validationGates: ["point_in_time", "costs", "walk_forward"],
+            activeVersion: 1,
+            status: "validation_passed",
+            linkedHypothesisIds: ["alpha-jpm-momentum"],
+            linkedReviewIds: ["review-jpm-001"],
+            linkedReviewCount: 1,
+            latestDecisionState: "needs_more_data",
+            latestOutcomeQuality: "decision_unset",
+            outcomeCount: 0,
+            overrideCount: 0,
+            scannerRunId: "scanner-run-index106",
+            sourceTicker: "JPM",
+            sourceSignal: "momentum_up",
+            updatedAt: "2026-07-06T18:00:00Z",
+          },
+        ]),
+      });
+      return;
+    }
+
+    if (request.method() === "GET" && url.pathname === "/signals/program-metrics") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ totalSignals: 1, validatedSignals: 1, validatedSignalsPct: 100, promotedSignals: 0, linkedSignals: 1, linkedSignalsPct: 100, recordedOutcomes: 0 }),
+      });
+      return;
+    }
+
+    if (request.method() === "GET" && url.pathname === "/signals/quality-scorecard/weekly") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ gates: { planQuality: { status: "pass", passed: 1, total: 1 }, decisionQuality: { status: "fail", passed: 0, total: 1 } } }),
+      });
+      return;
+    }
+
+    if (request.method() === "GET" && url.pathname === "/signals/signal-index106-jpm/validation-runs") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify([
+          {
+            status: "passed",
+            signalVersion: 1,
+            runType: "walk_forward",
+            includesCosts: true,
+            includesSlippage: true,
+            includesLiquidity: true,
+            pointInTimeGuaranteed: true,
+            artifactRefs: ["artifacts/signals/signal-index106-jpm/validation/1"],
+            metrics: { sharpeRatio: 1.21, maxDrawdown: -0.082, hitRate: 0.57 },
+          },
+        ]),
+      });
+      return;
+    }
+
+    if (request.method() === "GET" && url.pathname === "/signals/signal-index106-jpm/decision-links") {
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([{ reviewId: "review-jpm-001", reviewDecisionState: "needs_more_data" }]) });
+      return;
+    }
+
+    if (request.method() === "GET" && url.pathname === "/signals/signal-index106-jpm/policy-events") {
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([{ eventType: "validation.completed", toStatus: "validation_passed" }]) });
+      return;
+    }
+
+    if (request.method() === "GET" && url.pathname === "/signals/signal-index106-jpm/versions") {
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([{ version: 1, formula: "close / close_20d - 1 > 0" }]) });
+      return;
+    }
+
+    await route.abort();
+  });
+
+  await page.goto("/signals");
+
+  await expect(page.getByRole("heading", { name: "Signal cockpit" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Decision triage" })).toBeVisible();
+  await expect(page.getByText("Signal relationship map")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "JPM Momentum Up Signal" })).toBeVisible();
+  await expect(page.getByText("Define risk budget").first()).toBeVisible();
+  await expect(page.getByText("risk_blocked").first()).toBeVisible();
+  await expect(page.getByText("scanner-run-index106").first()).toBeVisible();
+  await expect(page.getByText("alpha-jpm-momentum").first()).toBeVisible();
+  await expect(page.getByText("review-jpm-001").first()).toBeVisible();
+  await expect(page.getByText("close / close_20d - 1 > 0 and close > sma_50")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "JPM Momentum Up Signal" })).toBeVisible();
+  for (const tab of ["overview", "formula", "evidence", "validation", "trades", "reviews", "outcomes", "risk", "policy", "versions"]) {
+    await expect(page.locator(`[data-detail-tab="${tab}"]`)).toBeVisible();
+  }
+  await expect(page.locator('[data-detail-tab="overview"]')).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByText("passed · walk_forward")).toBeVisible();
+  await expect(page.getByText("validation.completed -> validation_passed")).toBeVisible();
+  await expect(page.getByText("v1 · close / close_20d - 1 > 0")).toBeVisible();
+  await expect(page.getByText("Every visible signal", { exact: false })).toHaveCount(0);
+});
+
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }

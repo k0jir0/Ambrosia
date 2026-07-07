@@ -421,17 +421,22 @@ export function Workbench({ initialReviewId }: { initialReviewId?: string } = {}
   }
 
   async function createSignalLinkForReview(review: TradeReview): Promise<ReviewAlphaLink> {
-    const ticker = review.ticker.toUpperCase();
-    const signalFamily = inferSignalFamily(review.thesis);
+    const ticker = safeMinimumText(review.ticker.toUpperCase(), "UNKNOWN", 1);
+    const thesis = safeMinimumText(review.thesis, `${ticker} review-derived signal thesis`, 8);
+    const horizon = safeMinimumText(review.timeHorizon, "20d", 1);
+    const formula = safeMinimumText(review.intendedExpression, `review_expression:${ticker}`, 3);
+    const disconfirmingTest = safeMinimumText(review.disconfirmingTest, "Review requires a disconfirming test before promotion.", 3);
+    const nullHypothesis = safeMinimumText(review.validation.nullHypothesis, "No out-of-sample decision value after costs.", 3);
+    const signalFamily = safeMinimumText(inferSignalFamily(thesis), "review-derived", 2);
     const title = `${ticker} Review-Derived Thesis`;
     const hypothesis = await createAlphaHypothesis({
       title,
       signalFamily,
       universe: [ticker],
-      horizon: review.timeHorizon,
-      thesis: review.thesis,
+      horizon,
+      thesis,
       planQuality: "P2",
-      disconfirmingTests: [review.disconfirmingTest, review.validation.nullHypothesis],
+      disconfirmingTests: [disconfirmingTest, nullHypothesis],
       costModel: "10 bps round-trip",
       owner: "research"
     });
@@ -440,8 +445,8 @@ export function Workbench({ initialReviewId }: { initialReviewId?: string } = {}
     const signal = await createSignal({
       name: `${ticker} Review Signal`,
       universe: [ticker],
-      horizon: review.timeHorizon,
-      formula: review.intendedExpression || `review_expression:${ticker}`,
+      horizon,
+      formula,
       costModel: "10 bps round-trip",
       benchmark: "SPY",
       validationGates: ["point_in_time", "costs", "walk_forward"]
@@ -462,7 +467,7 @@ export function Workbench({ initialReviewId }: { initialReviewId?: string } = {}
       signalVersion,
       title,
       signalFamily,
-      formula: review.intendedExpression,
+      formula,
       ticker,
       createdAt: new Date().toISOString()
     };
@@ -1335,6 +1340,11 @@ function TopBar({ review }: { review: TradeReview }) {
     if (typeof activeVersion === "number" && activeVersion >= 1) return Math.floor(activeVersion);
     if (typeof fallbackVersion === "number" && fallbackVersion >= 1) return Math.floor(fallbackVersion);
     return 1;
+  }
+
+  function safeMinimumText(value: string | null | undefined, fallback: string, minLength: number): string {
+    const trimmed = (value ?? "").trim();
+    return trimmed.length >= minLength ? trimmed : fallback;
   }
 
 function LinkedAlphaPanel({ link }: { link: ReviewAlphaLink }) {

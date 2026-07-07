@@ -188,6 +188,93 @@ test("signal proposal recreates stale linked signal before writeback", async ({ 
   expect(writebackDecisionAction).toBe("HOLD");
 });
 
+test("signal proposal sanitizes short generated signal fields", async ({ page }) => {
+  let createdSignalFormula = "";
+
+  await page.unroute(LOCAL_API_ROUTE);
+  await page.route(LOCAL_API_ROUTE, async (route) => {
+    const request = route.request();
+    const url = request.url();
+
+    if (url.endsWith("/alpha/hypotheses") && request.method() === "POST") {
+      await route.fulfill({ status: 201, contentType: "application/json", body: JSON.stringify({ hypothesisId: "alpha-sanitized" }) });
+      return;
+    }
+    if (url.endsWith("/signals") && request.method() === "POST") {
+      const payload = request.postDataJSON() as { formula?: string };
+      createdSignalFormula = payload.formula ?? "";
+      await route.fulfill({ status: 201, contentType: "application/json", body: JSON.stringify({ signalId: "signal-sanitized", activeVersion: 1, version: 1 }) });
+      return;
+    }
+    if (url.endsWith("/alpha/hypotheses/alpha-sanitized/link-signal")) {
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ hypothesisId: "alpha-sanitized", signalId: "signal-sanitized", signalVersion: 1 }) });
+      return;
+    }
+    if (url.endsWith("/signals/signal-sanitized/link-review")) {
+      await route.fulfill({ status: 201, contentType: "application/json", body: JSON.stringify({ signalId: "signal-sanitized", reviewId: "atr-short-fields" }) });
+      return;
+    }
+    if (url.endsWith("/signals/signal-sanitized/writeback-decision")) {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ signalId: "signal-sanitized", reviewId: "atr-short-fields", latestDecisionAction: "HOLD", executionReadiness: "execution_blocked" })
+      });
+      return;
+    }
+    if (url.endsWith("/signals/signal-sanitized/alpha-decay")) {
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ decayDetected: false, recommendedAction: "maintain" }) });
+      return;
+    }
+    await route.abort();
+  });
+
+  await page.addInitScript(() => {
+    window.localStorage.setItem(
+      "ambrosia.reviews.v1",
+      JSON.stringify([
+        {
+          id: "atr-short-fields",
+          schemaVersion: "review.v1",
+          workflowVersion: "adversarial-review.v1",
+          title: "Short field review",
+          thesis: "Short fields should still create a valid signal.",
+          ticker: "TS",
+          assetClass: "Equity",
+          timeHorizon: " ",
+          intendedExpression: " ",
+          status: "synthesis",
+          decisionState: "watch",
+          confidence: 61,
+          trialCountImpact: 1,
+          followUpDate: "2026-07-14",
+          createdAt: "2026-07-06T00:00:00.000Z",
+          claims: [],
+          strongestCritique: "Costs may dominate the signal.",
+          disconfirmingTest: " ",
+          historicalAnalogue: { title: "n/a", similarity: "n/a", differences: "n/a", resolution: "n/a" },
+          validation: {
+            status: "refused",
+            hypothesis: "n/a",
+            nullHypothesis: " ",
+            dataRequirements: [],
+            protocol: "n/a",
+            refusalReason: "fixture"
+          },
+          tradeability: [],
+          sources: [],
+          audit: []
+        }
+      ])
+    );
+  });
+
+  await page.goto("/review/atr-short-fields");
+  await page.getByRole("button", { name: "Create Signal + Write HOLD" }).click();
+  await expect(page.getByText("Signal updated: HOLD / execution_blocked.")).toBeVisible();
+  expect(createdSignalFormula).toBe("review_expression:TS");
+});
+
 test("sidebar navigation reaches core routes", async ({ page }) => {
   test.slow();
   await page.goto("/");

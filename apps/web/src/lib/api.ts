@@ -44,7 +44,22 @@ async function readJsonResponse<T>(response: Response): Promise<T> {
     if (isApiUnavailableStatus(response.status)) {
       throw new ApiUnavailableError();
     }
-    throw new Error(`API request failed: ${response.status}`);
+    let detail = "";
+    if (contentType.includes("application/json")) {
+      try {
+        const payload = await response.json() as { detail?: unknown };
+        detail = formatApiErrorDetail(payload.detail);
+      } catch {
+        detail = "";
+      }
+    } else {
+      try {
+        detail = (await response.text()).trim();
+      } catch {
+        detail = "";
+      }
+    }
+    throw new Error(detail ? `API request failed: ${response.status} - ${detail}` : `API request failed: ${response.status}`);
   }
 
   if (!contentType.includes("application/json")) {
@@ -52,6 +67,26 @@ async function readJsonResponse<T>(response: Response): Promise<T> {
   }
 
   return response.json() as Promise<T>;
+}
+
+function formatApiErrorDetail(detail: unknown): string {
+  if (!detail) return "";
+  if (typeof detail === "string") return detail;
+  if (Array.isArray(detail)) {
+    return detail
+      .map((item) => {
+        if (!item || typeof item !== "object") return String(item);
+        const record = item as { loc?: unknown[]; msg?: string; type?: string };
+        const location = Array.isArray(record.loc) ? record.loc.join(".") : "request";
+        return `${location}: ${record.msg ?? record.type ?? "invalid value"}`;
+      })
+      .join("; ");
+  }
+  try {
+    return JSON.stringify(detail);
+  } catch {
+    return String(detail);
+  }
 }
 
 export function getApiBaseUrl(): string | null {

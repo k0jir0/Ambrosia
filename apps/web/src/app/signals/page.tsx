@@ -799,6 +799,18 @@ function hasValue(value: unknown): boolean {
   return true;
 }
 
+function formatBoolean(value: unknown): string {
+  if (typeof value === "boolean") return value ? "yes" : "no";
+  return "n/a";
+}
+
+function formatUnknown(value: unknown): string {
+  if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  if (typeof value === "string" && value.trim()) return value;
+  if (typeof value === "boolean") return value ? "yes" : "no";
+  return "n/a";
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }

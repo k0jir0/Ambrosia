@@ -21,12 +21,12 @@ jobs:
       - name: Run synthetic monitor probes (retry)
         continue-on-error: true
         env:
-          AMBROSIA_API_BASE_URL: ${{ vars.AMBROSIA_SYNTHETIC_API_BASE_URL }}
+          AMBROSIA_API_BASE_URL: ${{ vars.AMBROSIA_SYNTHETIC_API_BASE_URL || 'https://ambrosia-api-69t6.onrender.com' }}
         run: |
           for attempt in 1 2 3; do
             echo "Synthetic monitor attempt ${attempt}/3"
             if python scripts/synthetic-monitor.py \
-              --base-url "${AMBROSIA_API_BASE_URL:-https://ambrosia-api.onrender.com}" \
+              --base-url "$AMBROSIA_API_BASE_URL" \
               --output-json artifacts/synthetic-monitor.json \
               --output-md artifacts/synthetic-monitor.md; then
               echo "Synthetic monitor probe run succeeded"

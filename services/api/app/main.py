@@ -91,6 +91,7 @@ from .phase_d_governance_ui import router as phase_d_router
 from .phase_e_execution_loop import router as phase_e_router
 from .phase_e_market_integration import router as market_integration_router
 from .index84_platform import INDEX97_SIGNAL_SEED, router as index84_platform_router
+from .mobile_api import router as mobile_router
 
 _executor = ThreadPoolExecutor(max_workers=4)
 ROADMAP_LEDGER_PATH = Path(__file__).resolve().parents[3] / "docs" / "roadmap" / "pdo-ledger.seed.json"
@@ -140,6 +141,7 @@ app.include_router(execution_router)
 app.include_router(phase_e_router)
 app.include_router(market_integration_router)
 app.include_router(index84_platform_router)
+app.include_router(mobile_router)
 
 # Include INDEX61 Completion Status & RBAC
 app.include_router(completion_router)

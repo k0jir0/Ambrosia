@@ -4,7 +4,8 @@
   "version": "0.1.0",
   "description": "Ambrosia Trade Review MVP monorepo",
   "workspaces": [
-    "apps/web"
+    "apps/*",
+    "packages/*"
   ],
   "scripts": {
     "build": "corepack prepare pnpm@9.12.0 --activate && pnpm install --frozen-lockfile --force && pnpm build:web",
@@ -17,6 +18,16 @@
     "local:status": "powershell -ExecutionPolicy Bypass -File scripts/local-stack.ps1 status",
     "local:logs": "powershell -ExecutionPolicy Bypass -File scripts/local-stack.ps1 logs",
     "dev:web": "pnpm --filter @ambrosia/web dev",
+    "dev:mobile": "pnpm --filter @ambrosia/mobile start",
+    "mobile:android": "pnpm --filter @ambrosia/mobile android",
+    "mobile:ios": "pnpm --filter @ambrosia/mobile ios",
+    "mobile:web": "pnpm --filter @ambrosia/mobile web",
+    "typecheck:mobile": "pnpm --filter @ambrosia/mobile typecheck",
+    "test:mobile": "pnpm --filter @ambrosia/mobile test",
+    "mobile:types:generate": "python scripts/generate-mobile-contract-types.py",
+    "mobile:contract:write": "python scripts/verify-mobile-contracts.py --write",
+    "mobile:contract:check": "python scripts/verify-mobile-contracts.py --check",
+    "mobile:deployment:check": "python scripts/verify-mobile-deployment-readiness.py",
     "local:web:serve": "powershell -ExecutionPolicy Bypass -File scripts/local-web.ps1 serve",
     "local:web:start": "powershell -ExecutionPolicy Bypass -File scripts/local-web.ps1 start",
     "local:web:stop": "powershell -ExecutionPolicy Bypass -File scripts/local-web.ps1 stop",

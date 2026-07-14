@@ -77,6 +77,45 @@ jobs:
         run: pnpm build:web
 
   # -------------------------------------------------------------------------
+  # Gate 2a: Mobile contract + Expo config
+  # Ensures the React Native surface stays aligned with FastAPI routes.
+  # -------------------------------------------------------------------------
+  mobile-contract:
+    name: Mobile contract & config
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Typecheck mobile
+        run: pnpm typecheck:mobile
+
+      - name: Test mobile
+        run: pnpm test:mobile
+
+      - name: Validate Expo public config
+        run: pnpm --filter @ambrosia/mobile exec expo config --type public
+
+      - name: Generate mobile contract types
+        run: pnpm mobile:types:generate
+
+      - name: Verify mobile API contract
+        run: python scripts/verify-mobile-contracts.py --check
+
+      - name: Verify mobile deployment readiness
+        run: pnpm mobile:deployment:check
+
+  # -------------------------------------------------------------------------
   # Gate 3: Stack contract tests
   # Verifies that the API surface matches the contract the web layer expects.
   # -------------------------------------------------------------------------

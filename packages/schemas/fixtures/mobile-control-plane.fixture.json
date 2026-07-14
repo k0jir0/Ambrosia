@@ -1,0 +1,201 @@
+{
+  "schemaVersion": "mobile-control-plane.v1",
+  "governance": {
+    "backendSystemOfRecord": true,
+    "humanDecisionAuthority": true,
+    "llmInLiveOrderLoop": false,
+    "finalDecisionsRequireServerConfirmation": true
+  },
+  "routes": [
+    {
+      "method": "GET",
+      "path": "/mobile/today",
+      "mobileModule": "Today",
+      "clientFunction": "loadMobileDataset",
+      "sourceOfTruth": "fastapi",
+      "purpose": "Load canonical mobile dashboard summary and priority queue.",
+      "mutating": false,
+      "requiresServerConfirmation": false
+    },
+    {
+      "method": "GET",
+      "path": "/reviews",
+      "mobileModule": "Reviews",
+      "clientFunction": "loadMobileDataset",
+      "sourceOfTruth": "fastapi",
+      "purpose": "Load full review artifacts for list, history, and local fallback detail.",
+      "mutating": false,
+      "requiresServerConfirmation": false
+    },
+    {
+      "method": "POST",
+      "path": "/reviews",
+      "mobileModule": "Reviews",
+      "clientFunction": "createReview",
+      "sourceOfTruth": "fastapi",
+      "purpose": "Create a canonical adversarial review from mobile intake.",
+      "mutating": true,
+      "requiresServerConfirmation": true
+    },
+    {
+      "method": "GET",
+      "path": "/mobile/reviews/{review_id}/summary",
+      "mobileModule": "Reviews",
+      "clientFunction": "getReviewSummary",
+      "sourceOfTruth": "fastapi",
+      "purpose": "Load mobile workbench review detail with hard blocks, evidence, risk, provenance, and decision affordances.",
+      "mutating": false,
+      "requiresServerConfirmation": false
+    },
+    {
+      "method": "PATCH",
+      "path": "/reviews/{review_id}/decision",
+      "mobileModule": "Reviews",
+      "clientFunction": "recordReviewDecision",
+      "sourceOfTruth": "fastapi",
+      "purpose": "Capture a human decision using canonical review states.",
+      "mutating": true,
+      "requiresServerConfirmation": true
+    },
+    {
+      "method": "POST",
+      "path": "/reviews/{review_id}/outcome",
+      "mobileModule": "Reviews",
+      "clientFunction": "recordReviewOutcome",
+      "sourceOfTruth": "fastapi",
+      "purpose": "Record review outcome memory on the backend system of record.",
+      "mutating": true,
+      "requiresServerConfirmation": true
+    },
+    {
+      "method": "POST",
+      "path": "/scanner/run",
+      "mobileModule": "Scanner",
+      "clientFunction": "loadMobileDataset",
+      "sourceOfTruth": "fastapi",
+      "purpose": "Fetch scanner candidates for mobile triage.",
+      "mutating": true,
+      "requiresServerConfirmation": true
+    },
+    {
+      "method": "POST",
+      "path": "/scanner/candidates/promote-alpha",
+      "mobileModule": "Scanner",
+      "clientFunction": "promoteScannerCandidate",
+      "sourceOfTruth": "fastapi",
+      "purpose": "Promote a scanner candidate into alpha hypothesis and signal records.",
+      "mutating": true,
+      "requiresServerConfirmation": true
+    },
+    {
+      "method": "GET",
+      "path": "/signals",
+      "mobileModule": "Signals",
+      "clientFunction": "loadMobileDataset",
+      "sourceOfTruth": "fastapi",
+      "purpose": "Load signal inventory for mobile signal cockpit.",
+      "mutating": false,
+      "requiresServerConfirmation": false
+    },
+    {
+      "method": "GET",
+      "path": "/mobile/signals/{signal_id}/decision-readiness",
+      "mobileModule": "Signals",
+      "clientFunction": "getSignalDecisionReadiness",
+      "sourceOfTruth": "fastapi",
+      "purpose": "Load mobile signal readiness, validation, policy, decision, and outcome state.",
+      "mutating": false,
+      "requiresServerConfirmation": false
+    },
+    {
+      "method": "POST",
+      "path": "/signals/{signal_id}/validate",
+      "mobileModule": "Signals",
+      "clientFunction": "validateSignal",
+      "sourceOfTruth": "fastapi",
+      "purpose": "Run the canonical signal validation path from mobile.",
+      "mutating": true,
+      "requiresServerConfirmation": true
+    },
+    {
+      "method": "POST",
+      "path": "/signals/{signal_id}/promote",
+      "mobileModule": "Signals",
+      "clientFunction": "promoteSignal",
+      "sourceOfTruth": "fastapi",
+      "purpose": "Request policy promotion for a validated signal.",
+      "mutating": true,
+      "requiresServerConfirmation": true
+    },
+    {
+      "method": "POST",
+      "path": "/signals/{signal_id}/constrain",
+      "mobileModule": "Signals",
+      "clientFunction": "constrainSignal",
+      "sourceOfTruth": "fastapi",
+      "purpose": "Apply a policy constraint to a signal from mobile.",
+      "mutating": true,
+      "requiresServerConfirmation": true
+    },
+    {
+      "method": "POST",
+      "path": "/signals/{signal_id}/retire",
+      "mobileModule": "Signals",
+      "clientFunction": "retireSignal",
+      "sourceOfTruth": "fastapi",
+      "purpose": "Retire a signal through the canonical policy transition.",
+      "mutating": true,
+      "requiresServerConfirmation": true
+    },
+    {
+      "method": "POST",
+      "path": "/signals/{signal_id}/link-review",
+      "mobileModule": "Signals",
+      "clientFunction": "linkSignalReview",
+      "sourceOfTruth": "fastapi",
+      "purpose": "Link a canonical review to a signal before decision writeback.",
+      "mutating": true,
+      "requiresServerConfirmation": true
+    },
+    {
+      "method": "POST",
+      "path": "/signals/{signal_id}/writeback-decision",
+      "mobileModule": "Signals",
+      "clientFunction": "writebackSignalDecision",
+      "sourceOfTruth": "fastapi",
+      "purpose": "Write back a review decision into the signal decision memory.",
+      "mutating": true,
+      "requiresServerConfirmation": true
+    },
+    {
+      "method": "POST",
+      "path": "/signals/{signal_id}/writeback-outcome",
+      "mobileModule": "Signals",
+      "clientFunction": "writebackSignalOutcome",
+      "sourceOfTruth": "fastapi",
+      "purpose": "Write back a signal outcome rollup tied to a reviewed decision.",
+      "mutating": true,
+      "requiresServerConfirmation": true
+    },
+    {
+      "method": "GET",
+      "path": "/alpha/hypotheses",
+      "mobileModule": "Alpha",
+      "clientFunction": "loadMobileDataset",
+      "sourceOfTruth": "fastapi",
+      "purpose": "Load hypothesis-first alpha memory for mobile.",
+      "mutating": false,
+      "requiresServerConfirmation": false
+    },
+    {
+      "method": "GET",
+      "path": "/mobile/enterprise/status",
+      "mobileModule": "Enterprise",
+      "clientFunction": "getEnterpriseStatus",
+      "sourceOfTruth": "fastapi",
+      "purpose": "Load governed enterprise and provider state for mobile.",
+      "mutating": false,
+      "requiresServerConfirmation": false
+    }
+  ]
+}

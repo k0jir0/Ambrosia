@@ -1,5 +1,7 @@
 # Ambrosia
 
+## Project Overview
+
 Ambrosia is an agentic investment decision platform. It turns a signal, alert, watchlist move, market question, or trade thesis into a structured, auditable, risk-aware review before capital is put at risk.
 
 The product is organized around three connected surfaces:
@@ -7,6 +9,24 @@ The product is organized around three connected surfaces:
 - Decisions: agentic review workflows for pre-trade investment decisions.
 - Swarm Private: private specialist-agent collaboration for portfolio, risk, market, and thesis analysis.
 - Enterprise Agentic Swarm Marketplace: governed workflows, admin controls, visibility checks, and deployable enterprise modules.
+
+## Features
+
+Implemented features include:
+
+- Adversarial review workflow for investment theses, alerts, scanner candidates, and watchlist ideas.
+- Human-controlled decision capture with auditable review, packet, outcome, and signal memory.
+- Market Scanner, Alpha Lab, and signal lifecycle workflows for moving from candidate thesis to measurable alpha.
+- Signal Decision Proposal with finance-native actions, signal writeback, execution readiness, and evidence requirements.
+- Signals cockpit with formulas, universes, horizons, benchmarks, validation state, risk posture, review links, and next actions.
+- Next.js frontend surfaces for dashboard, review workbench, intake, discovery, scanner, alpha, signals, history, calibration, team, reports, governance, admin, relay benchmarks, platform, enterprise, execution intelligence, and CLI design.
+- FastAPI backend routes for reviews, packets, market data, scanner runs, sentiment, retrieval, risk, reports, coordinator runs, signals, backtests, paper trades, execution intelligence, enterprise governance, and readiness evidence.
+- Deterministic local fallback behavior when hosted services or market providers are unavailable.
+- Provider abstraction for deterministic local execution, Ollama, hosted models, and hybrid specialist-agent workflows.
+- PostgreSQL-ready persistence scaffolding for packet, audit, memory, signal lifecycle, and feedback data.
+- Rust hot-path service boundary for deterministic pre-trade checks, order validity, notional limits, and kill-switch behavior.
+- Python SDK and Typer CLI for local and hosted operator workflows.
+- Unit, stack, API, E2E, visibility, evaluation, migration, scorecard, and deployment-readiness checks.
 
 ## Current State
 
@@ -101,6 +121,16 @@ Ambrosia is an Agentic Swarm because the workflow is not a static dashboard. Age
 - Playwright, pytest, Ruff, visibility checks, eval scripts, and stack contract tests
 - Render deployment entrypoints through root `index.js` and `render.yaml`
 
+## Technologies Used
+
+- Frontend: Next.js 15.1.0, React 19, TypeScript, Playwright, and pnpm workspaces.
+- Backend: Python 3.12, FastAPI, Pydantic, pytest, Ruff, and uv.
+- Persistence and infrastructure: PostgreSQL-oriented schema patterns, SQLAlchemy-ready migrations, and Render deployment wiring.
+- Execution hot path: Rust service scaffold for deterministic pre-trade gating and kill-switch behavior.
+- CLI and SDK: Python SDK package and Typer-based Ambrosia CLI.
+- AI/provider layer: deterministic local engine, Ollama mode, hosted model mode, and hybrid provider resolution.
+- Quality and validation: unit tests, stack contract tests, API tests, Playwright E2E tests, visibility checks, eval scripts, retrieval benchmarks, provider ablation checks, scorecard checks, and migration checks.
+
 ## Repository Layout
 
 The root is intentionally kept small. Configuration and entrypoint files stay at the top level; operational notes, archives, helper scripts, and logs live in focused subfolders.
@@ -120,7 +150,7 @@ The root is intentionally kept small. Configuration and entrypoint files stay at
 - `tests/` - stack and integration tests
 - `artifacts/` - ignored local logs and generated artifacts
 
-## Local Development
+## Installation Instructions
 
 Requirements:
 
@@ -134,6 +164,8 @@ Install dependencies:
 ```powershell
 pnpm install
 ```
+
+## Usage
 
 Run the full local stack:
 
@@ -149,6 +181,15 @@ Useful local commands:
 - `pnpm local:logs` tails local stack logs from `.local/`
 - `pnpm local:web:serve` runs only the web app
 - `pnpm local:api:serve` runs only the API
+
+Primary user flow:
+
+1. Open the web app and start from review intake, scanner, alpha lab, or signals.
+2. Create or promote a candidate thesis.
+3. Run adversarial review to inspect evidence, critique, validation hygiene, and tradeability.
+4. Capture a human decision such as pursue, watch, reject, or needs more data.
+5. Use Signal Decision Proposal to write the decision back to signal memory when a linked signal exists or is created.
+6. Monitor outcomes, scorecards, signal lifecycle state, execution readiness, and follow-up actions.
 
 ## Verification
 
@@ -221,7 +262,9 @@ Live product:
 
 GitHub production deploy wiring exists, but Render deploy hook secrets must be populated for automated hook-triggered deployment. When the hook variables are empty, the GitHub deploy workflow can pass while skipping the Render trigger steps.
 
-## Roadmap
+## Future Improvements
+
+Areas for potential enhancement and additional features:
 
 1. Continuously verify production and staging API health on Render, including cold-start behavior.
 2. Move remaining advanced sandbox and lifecycle fallback state into durable PostgreSQL-backed storage.

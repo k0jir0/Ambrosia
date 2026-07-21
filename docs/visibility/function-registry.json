@@ -208,6 +208,14 @@
     "auditEvent": "jobs.read"
   },
   {
+    "method": "POST",
+    "path": "/jobs/{job_id}/cancel",
+    "exposure": "advanced",
+    "frontendRoute": "/advanced",
+    "requiredRole": "analyst",
+    "auditEvent": "jobs.cancel.write"
+  },
+  {
     "method": "GET",
     "path": "/market/providers/status",
     "exposure": "advanced",

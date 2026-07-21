@@ -12,6 +12,7 @@ from statistics import stdev
 
 from .models import MarketSnapshot, TechnicalIndicators
 from .market_providers import fetch_polygon_series, resolve_market_provider
+from .resilience import resilient_urlopen
 
 _CACHE_TTL_SECONDS = 60
 _series_cache: dict[str, tuple[MarketSeries, float]] = {}
@@ -99,7 +100,7 @@ def _fetch_yahoo_series(ticker: str) -> MarketSeries:
     url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?range=1y&interval=1d"
     request = urllib.request.Request(url, headers={"User-Agent": "Ambrosia/1.0"})
 
-    with urllib.request.urlopen(request, timeout=3) as response:
+    with resilient_urlopen("yahoo-finance", request, timeout=3, attempts=2) as response:
         payload = json.loads(response.read().decode("utf-8"))
 
     result = payload.get("chart", {}).get("result", [])

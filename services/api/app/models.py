@@ -18,6 +18,7 @@ class JobState(str, Enum):
     running = "running"
     completed = "completed"
     failed = "failed"
+    cancelled = "cancelled"
 
 
 class ReviewStatus(str, Enum):
@@ -535,6 +536,11 @@ class JobRecord(BaseModel):
     startedAt: str | None = None
     completedAt: str | None = None
     inputSummary: str
+    idempotencyKey: str | None = None
+    attempt: int = 0
+    maxAttempts: int = 3
+    timeoutSeconds: int = 300
+    cancelRequested: bool = False
     result: dict | None = None
     error: str | None = None
 

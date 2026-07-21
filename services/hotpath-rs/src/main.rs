@@ -1,7 +1,9 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
 use tracing::{error, info};
@@ -19,8 +21,15 @@ enum Command {
         reference_price: Option<f64>,
         max_slippage_bps: Option<f64>,
         strategy_origin: Option<String>,
+        approval_id: Option<String>,
+        approval_digest: Option<String>,
+        policy_version: Option<String>,
+        nonce: Option<String>,
+        expires_at_epoch: Option<u64>,
     },
-    KillSwitch { enabled: bool },
+    KillSwitch {
+        enabled: bool,
+    },
     Health,
 }
 
@@ -31,6 +40,30 @@ struct Response {
     accepted: bool,
     reason: String,
     order_id: Option<String>,
+}
+
+#[derive(Default)]
+struct SecurityState {
+    require_approval: bool,
+    approvals: HashMap<String, String>,
+    used_nonces: Mutex<HashSet<String>>,
+}
+
+impl SecurityState {
+    fn from_environment() -> Self {
+        let require_approval = std::env::var("HOTPATH_REQUIRE_APPROVAL")
+            .map(|value| matches!(value.to_ascii_lowercase().as_str(), "1" | "true" | "yes"))
+            .unwrap_or(false);
+        let approvals = std::env::var("HOTPATH_APPROVALS_JSON")
+            .ok()
+            .and_then(|raw| serde_json::from_str::<HashMap<String, String>>(&raw).ok())
+            .unwrap_or_default();
+        Self {
+            require_approval,
+            approvals,
+            used_nonces: Mutex::new(HashSet::new()),
+        }
+    }
 }
 
 #[tokio::main(flavor = "multi_thread", worker_threads = 2)]
@@ -47,21 +80,31 @@ async fn main() -> Result<()> {
     let bind_addr = std::env::var("HOTPATH_BIND").unwrap_or_else(|_| "127.0.0.1:9100".to_string());
     let listener = TcpListener::bind(&bind_addr).await?;
     let kill_switch = Arc::new(AtomicBool::new(false));
+    let security = Arc::new(SecurityState::from_environment());
+
+    if security.require_approval && security.approvals.is_empty() {
+        anyhow::bail!("HOTPATH_REQUIRE_APPROVAL=true requires HOTPATH_APPROVALS_JSON");
+    }
 
     info!("hot path listening on {}", bind_addr);
 
     loop {
         let (socket, peer) = listener.accept().await?;
         let kill_switch = Arc::clone(&kill_switch);
+        let security = Arc::clone(&security);
         tokio::spawn(async move {
-            if let Err(err) = handle_connection(socket, kill_switch).await {
+            if let Err(err) = handle_connection(socket, kill_switch, security).await {
                 error!("connection {} failed: {}", peer, err);
             }
         });
     }
 }
 
-async fn handle_connection(socket: TcpStream, kill_switch: Arc<AtomicBool>) -> Result<()> {
+async fn handle_connection(
+    socket: TcpStream,
+    kill_switch: Arc<AtomicBool>,
+    security: Arc<SecurityState>,
+) -> Result<()> {
     let (reader, mut writer) = socket.into_split();
     let mut lines = BufReader::new(reader).lines();
 
@@ -72,7 +115,7 @@ async fn handle_connection(socket: TcpStream, kill_switch: Arc<AtomicBool>) -> R
         }
 
         let response = match serde_json::from_str::<Command>(line) {
-            Ok(command) => handle_command(command, &kill_switch),
+            Ok(command) => handle_command_secured(command, &kill_switch, &security),
             Err(err) => Response {
                 status: "error".to_string(),
                 accepted: false,
@@ -91,6 +134,14 @@ async fn handle_connection(socket: TcpStream, kill_switch: Arc<AtomicBool>) -> R
 }
 
 fn handle_command(command: Command, kill_switch: &Arc<AtomicBool>) -> Response {
+    handle_command_secured(command, kill_switch, &SecurityState::default())
+}
+
+fn handle_command_secured(
+    command: Command,
+    kill_switch: &Arc<AtomicBool>,
+    security: &SecurityState,
+) -> Response {
     match command {
         Command::KillSwitch { enabled } => {
             kill_switch.store(enabled, Ordering::Relaxed);
@@ -125,6 +176,11 @@ fn handle_command(command: Command, kill_switch: &Arc<AtomicBool>) -> Response {
             reference_price,
             max_slippage_bps,
             strategy_origin,
+            approval_id,
+            approval_digest,
+            policy_version,
+            nonce,
+            expires_at_epoch,
         } => {
             if kill_switch.load(Ordering::Relaxed) {
                 return Response {
@@ -142,6 +198,47 @@ fn handle_command(command: Command, kill_switch: &Arc<AtomicBool>) -> Response {
                     reason: "invalid_order_fields".to_string(),
                     order_id: Some(order_id),
                 };
+            }
+
+            if security.require_approval {
+                let now = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .map(|duration| duration.as_secs())
+                    .unwrap_or(u64::MAX);
+                let approval_fields_valid = approval_id.as_deref().is_some_and(|v| !v.is_empty())
+                    && policy_version.as_deref().is_some_and(|v| !v.is_empty())
+                    && nonce.as_deref().is_some_and(|v| v.len() >= 16)
+                    && expires_at_epoch.is_some_and(|expiry| expiry >= now && expiry <= now + 300);
+                if !approval_fields_valid {
+                    return Response {
+                        status: "rejected".to_string(),
+                        accepted: false,
+                        reason: "approval_missing_expired_or_invalid".to_string(),
+                        order_id: Some(order_id),
+                    };
+                }
+                let configured_digest = security.approvals.get(&order_id);
+                let digest_matches = configured_digest
+                    .zip(approval_digest.as_ref())
+                    .is_some_and(|(expected, supplied)| expected == supplied);
+                if !digest_matches {
+                    return Response {
+                        status: "rejected".to_string(),
+                        accepted: false,
+                        reason: "approval_not_bound_to_order".to_string(),
+                        order_id: Some(order_id),
+                    };
+                }
+                let supplied_nonce = nonce.expect("validated nonce");
+                let mut used = security.used_nonces.lock().expect("nonce lock poisoned");
+                if !used.insert(supplied_nonce) {
+                    return Response {
+                        status: "rejected".to_string(),
+                        accepted: false,
+                        reason: "replay_detected".to_string(),
+                        order_id: Some(order_id),
+                    };
+                }
             }
 
             if let Some(origin) = strategy_origin {
@@ -206,9 +303,11 @@ fn handle_command(command: Command, kill_switch: &Arc<AtomicBool>) -> Response {
 
 #[cfg(test)]
 mod tests {
-    use super::{handle_command, Command};
+    use super::{handle_command, handle_command_secured, Command, SecurityState};
+    use std::collections::{HashMap, HashSet};
     use std::sync::atomic::AtomicBool;
-    use std::sync::Arc;
+    use std::sync::{Arc, Mutex};
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
     fn rejects_llm_origin() {
@@ -224,6 +323,11 @@ mod tests {
                 reference_price: None,
                 max_slippage_bps: None,
                 strategy_origin: Some("llm_router".to_string()),
+                approval_id: None,
+                approval_digest: None,
+                policy_version: None,
+                nonce: None,
+                expires_at_epoch: None,
             },
             &kill_switch,
         );
@@ -245,6 +349,11 @@ mod tests {
                 reference_price: Some(100.0),
                 max_slippage_bps: Some(500.0),
                 strategy_origin: Some("rule_engine".to_string()),
+                approval_id: None,
+                approval_digest: None,
+                policy_version: None,
+                nonce: None,
+                expires_at_epoch: None,
             },
             &kill_switch,
         );
@@ -266,10 +375,69 @@ mod tests {
                 reference_price: Some(100.0),
                 max_slippage_bps: Some(50.0),
                 strategy_origin: Some("deterministic_rulebook".to_string()),
+                approval_id: None,
+                approval_digest: None,
+                policy_version: None,
+                nonce: None,
+                expires_at_epoch: None,
             },
             &kill_switch,
         );
         assert!(response.accepted);
         assert_eq!(response.reason, "risk_checks_passed");
+    }
+
+    fn secured_order(nonce: &str, digest: &str) -> Command {
+        let expiry = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_secs()
+            + 60;
+        Command::NewOrder {
+            order_id: "approved-order".to_string(),
+            symbol: "AAPL".to_string(),
+            side: "buy".to_string(),
+            quantity: 1,
+            price: 100.0,
+            max_notional_usd: 200.0,
+            reference_price: Some(100.0),
+            max_slippage_bps: Some(10.0),
+            strategy_origin: Some("deterministic_rulebook".to_string()),
+            approval_id: Some("approval-1".to_string()),
+            approval_digest: Some(digest.to_string()),
+            policy_version: Some("policy-v1".to_string()),
+            nonce: Some(nonce.to_string()),
+            expires_at_epoch: Some(expiry),
+        }
+    }
+
+    #[test]
+    fn secured_mode_binds_approval_and_rejects_replay() {
+        let kill_switch = Arc::new(AtomicBool::new(false));
+        let security = SecurityState {
+            require_approval: true,
+            approvals: HashMap::from([("approved-order".to_string(), "digest-1".to_string())]),
+            used_nonces: Mutex::new(HashSet::new()),
+        };
+        let mismatch = handle_command_secured(
+            secured_order("nonce-at-least-16-a", "wrong"),
+            &kill_switch,
+            &security,
+        );
+        assert_eq!(mismatch.reason, "approval_not_bound_to_order");
+
+        let accepted = handle_command_secured(
+            secured_order("nonce-at-least-16-b", "digest-1"),
+            &kill_switch,
+            &security,
+        );
+        assert!(accepted.accepted);
+
+        let replay = handle_command_secured(
+            secured_order("nonce-at-least-16-b", "digest-1"),
+            &kill_switch,
+            &security,
+        );
+        assert_eq!(replay.reason, "replay_detected");
     }
 }

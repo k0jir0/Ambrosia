@@ -8,6 +8,8 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Literal
 
+from .resilience import resilient_urlopen
+
 
 @dataclass
 class MarketDataProvider:
@@ -73,7 +75,7 @@ def fetch_polygon_series(ticker: str) -> tuple[list[float], list[float]]:
     )
     req = urllib.request.Request(url, headers={"User-Agent": "Ambrosia/1.0"})
 
-    with urllib.request.urlopen(req, timeout=5) as response:
+    with resilient_urlopen("polygon", req, timeout=5, attempts=2) as response:
         payload = json.loads(response.read().decode("utf-8"))
 
     results = payload.get("results") or []

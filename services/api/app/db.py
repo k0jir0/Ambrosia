@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from uuid import NAMESPACE_URL, uuid5
 
 import psycopg
@@ -13,6 +14,8 @@ from .models import (
     AuditEventCreate,
     DecisionPacket,
     DecisionState,
+    JobRecord,
+    JobState,
     ReviewStatus,
     RoadmapDecisionRecord,
     RoadmapOutcomeRecord,
@@ -43,6 +46,188 @@ class PostgresReviewStore:
         with self._connect() as connection:
             with connection.cursor() as cursor:
                 cursor.execute("SELECT 1")
+
+    @staticmethod
+    def _job_from_row(row: dict) -> JobRecord:
+        return JobRecord(
+            id=row["id"],
+            jobType=row["job_type"],
+            state=JobState(row["state"]),
+            queuedAt=row["queued_at"].isoformat(),
+            startedAt=row["started_at"].isoformat() if row.get("started_at") else None,
+            completedAt=row["completed_at"].isoformat() if row.get("completed_at") else None,
+            inputSummary=row["input_summary"],
+            idempotencyKey=row.get("idempotency_key"),
+            attempt=row["attempt"],
+            maxAttempts=row["max_attempts"],
+            timeoutSeconds=row["timeout_seconds"],
+            cancelRequested=row["cancel_requested"],
+            result=row.get("result"),
+            error=row.get("error"),
+        )
+
+    def enqueue_job(self, job: JobRecord) -> JobRecord:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                if job.idempotencyKey:
+                    cursor.execute(
+                        """
+                        INSERT INTO durable_job (
+                          id, job_type, idempotency_key, state, input_summary,
+                          max_attempts, timeout_seconds, queued_at
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                        ON CONFLICT (job_type, idempotency_key)
+                        DO UPDATE SET job_type = EXCLUDED.job_type
+                        RETURNING *
+                        """,
+                        (job.id, job.jobType, job.idempotencyKey, job.state.value,
+                         job.inputSummary, job.maxAttempts, job.timeoutSeconds, job.queuedAt),
+                    )
+                else:
+                    cursor.execute(
+                        """
+                        INSERT INTO durable_job (
+                          id, job_type, state, input_summary, max_attempts,
+                          timeout_seconds, queued_at
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+                        RETURNING *
+                        """,
+                        (job.id, job.jobType, job.state.value, job.inputSummary,
+                         job.maxAttempts, job.timeoutSeconds, job.queuedAt),
+                    )
+                row = cursor.fetchone()
+        return self._job_from_row(row)
+
+    def claim_job(self, job_id: str, worker_id: str, lease_seconds: int = 300) -> JobRecord | None:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    UPDATE durable_job
+                    SET state = 'running', started_at = COALESCE(started_at, now()),
+                        attempt = attempt + 1, lease_owner = %s,
+                        lease_expires_at = now() + (%s * interval '1 second')
+                    WHERE id = %s AND state = 'queued' AND cancel_requested = FALSE
+                      AND attempt < max_attempts
+                    RETURNING *
+                    """,
+                    (worker_id, lease_seconds, job_id),
+                )
+                row = cursor.fetchone()
+        return self._job_from_row(row) if row else None
+
+    def finish_job(self, job_id: str, *, result: dict | None = None,
+                   error: str | None = None) -> JobRecord | None:
+        state = "completed" if error is None else "failed"
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    UPDATE durable_job
+                    SET state = %s, result = %s::jsonb, error = %s,
+                        completed_at = now(), lease_owner = NULL, lease_expires_at = NULL
+                    WHERE id = %s AND state = 'running'
+                    RETURNING *
+                    """,
+                    (state, json.dumps(result) if result is not None else None, error, job_id),
+                )
+                row = cursor.fetchone()
+        return self._job_from_row(row) if row else None
+
+    def get_job(self, job_id: str) -> JobRecord | None:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT * FROM durable_job WHERE id = %s", (job_id,))
+                row = cursor.fetchone()
+        return self._job_from_row(row) if row else None
+
+    def list_jobs(self, job_type: str | None = None) -> list[JobRecord]:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                if job_type:
+                    cursor.execute(
+                        "SELECT * FROM durable_job WHERE job_type = %s ORDER BY queued_at DESC",
+                        (job_type,),
+                    )
+                else:
+                    cursor.execute("SELECT * FROM durable_job ORDER BY queued_at DESC LIMIT 1000")
+                rows = cursor.fetchall()
+        return [self._job_from_row(row) for row in rows]
+
+    def cancel_job(self, job_id: str) -> JobRecord | None:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    UPDATE durable_job SET cancel_requested = TRUE,
+                      state = CASE WHEN state = 'queued' THEN 'cancelled' ELSE state END,
+                      completed_at = CASE WHEN state = 'queued' THEN now() ELSE completed_at END
+                    WHERE id = %s RETURNING *
+                    """,
+                    (job_id,),
+                )
+                row = cursor.fetchone()
+        return self._job_from_row(row) if row else None
+
+    def requeue_expired_jobs(self) -> int:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    UPDATE durable_job SET state = 'queued', lease_owner = NULL,
+                      lease_expires_at = NULL
+                    WHERE state = 'running' AND lease_expires_at < now()
+                      AND attempt < max_attempts AND cancel_requested = FALSE
+                    """
+                )
+                return cursor.rowcount
+
+    def append_security_audit(
+        self,
+        *,
+        request_id: str,
+        actor: str,
+        role: str,
+        action: str,
+        resource: str,
+        status: int,
+    ) -> None:
+        """Append one globally ordered hash-chain event under a DB advisory lock."""
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT pg_advisory_xact_lock(hashtext('ambrosia-security-audit'))")
+                cursor.execute(
+                    "SELECT sequence_id, event_hash FROM security_audit_event "
+                    "ORDER BY sequence_id DESC LIMIT 1"
+                )
+                previous = cursor.fetchone()
+                sequence = int(previous["sequence_id"]) + 1 if previous else 1
+                previous_hash = previous["event_hash"] if previous else "0" * 64
+                timestamp = datetime.now(UTC)
+                payload = {
+                    "sequence": sequence,
+                    "timestamp": timestamp.isoformat(),
+                    "request_id": request_id,
+                    "actor": actor,
+                    "role": role,
+                    "action": action,
+                    "resource": resource,
+                    "status": status,
+                    "previous_hash": previous_hash,
+                }
+                event_hash = hashlib.sha256(
+                    json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+                ).hexdigest()
+                cursor.execute(
+                    """
+                    INSERT INTO security_audit_event (
+                      sequence_id, event_time, request_id, actor_id, actor_role,
+                      action, resource, response_status, previous_hash, event_hash
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    (sequence, timestamp, request_id, actor, role, action, resource,
+                     status, previous_hash, event_hash),
+                )
 
     def save_review(self, review: TradeReview) -> TradeReview:
         payload = review.model_dump(mode="json")

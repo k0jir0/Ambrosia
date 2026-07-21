@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 
 from .models import DecisionPacket, SpecialistAgentOutput
 from .providers import ProviderSelection
+from .resilience import resilient_urlopen
 
 
 def _ts() -> str:
@@ -79,7 +80,7 @@ def _call_openai(prompt: str) -> str:
         },
         method="POST",
     )
-    with urllib.request.urlopen(request, timeout=10) as response:
+    with resilient_urlopen("openai", request, timeout=10, attempts=2) as response:
         raw = json.loads(response.read().decode("utf-8"))
     return raw["choices"][0]["message"]["content"]
 
@@ -94,7 +95,7 @@ def _call_ollama(prompt: str) -> str:
         headers={"Content-Type": "application/json"},
         method="POST",
     )
-    with urllib.request.urlopen(request, timeout=10) as response:
+    with resilient_urlopen("ollama", request, timeout=10, attempts=2) as response:
         raw = json.loads(response.read().decode("utf-8"))
     return raw.get("response", "")
 

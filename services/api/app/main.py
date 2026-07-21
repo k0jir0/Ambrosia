@@ -92,6 +92,12 @@ from .phase_e_execution_loop import router as phase_e_router
 from .phase_e_market_integration import router as market_integration_router
 from .index84_platform import INDEX97_SIGNAL_SEED, router as index84_platform_router
 from .mobile_api import router as mobile_router
+from .operations import (
+    ProductionBoundaryMiddleware,
+    register_audit_sink,
+    register_readiness_check,
+    router as operations_router,
+)
 
 _executor = ThreadPoolExecutor(max_workers=4)
 ROADMAP_LEDGER_PATH = Path(__file__).resolve().parents[3] / "docs" / "roadmap" / "pdo-ledger.seed.json"
@@ -142,6 +148,7 @@ app.include_router(phase_e_router)
 app.include_router(market_integration_router)
 app.include_router(index84_platform_router)
 app.include_router(mobile_router)
+app.include_router(operations_router)
 
 # Include INDEX61 Completion Status & RBAC
 app.include_router(completion_router)
@@ -150,7 +157,22 @@ app.include_router(completion_router)
 RBAC_ENABLED = os.getenv("RBAC_ENABLED", "true").lower() == "true"
 if RBAC_ENABLED:
     app.add_middleware(RBACMiddleware)
-    print("✅ RBAC Middleware ACTIVE - Role-based access control enforced")
+    print("✅ RBAC compatibility middleware active")
+
+# This is the authoritative identity, policy, request-safety, audit, and
+# telemetry boundary. Production identities are accepted only from managed
+# bearer credentials; development header identities are explicitly local-only.
+app.add_middleware(ProductionBoundaryMiddleware)
+
+
+def _persistence_readiness() -> None:
+    status = store.persistence_status()
+    if status["databaseRequired"] and not status["databaseConnected"]:
+        raise RuntimeError("required_database_unavailable")
+
+
+register_readiness_check("persistence", _persistence_readiness)
+register_audit_sink(store.append_security_audit)
 
 
 def _clock() -> str:
@@ -748,17 +770,23 @@ def run_packet_backtest(packet_id: str, body: BacktestRunRequest) -> DecisionPac
 
 
 @app.post("/packets/{packet_id}/backtest/run/async", response_model=JobRecord)
-def run_packet_backtest_async(packet_id: str, body: BacktestRunRequest) -> JobRecord:
+def run_packet_backtest_async(
+    packet_id: str,
+    body: BacktestRunRequest,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> JobRecord:
     if store.get_packet(packet_id) is None:
         raise HTTPException(status_code=404, detail="Packet not found")
 
     job = store.enqueue_job(
         "backtest.run",
         f"packet={packet_id};forceRun={body.forceRun}",
+        idempotency_key,
     )
 
     def _execute() -> None:
-        store.start_job(job.id)
+        if not store.start_job(job.id):
+            return
         try:
             pkt = store.get_packet(packet_id)
             if pkt is None:
@@ -1207,16 +1235,19 @@ def scanner_run(
 def scanner_run_async(
     body: ScannerRunRequest,
     x_ambrosia_role: str | None = Header(default=None, alias="X-Ambrosia-Role"),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
 ) -> JobRecord:
     _require_role(ADVANCED_ROLES, x_ambrosia_role, scope="advanced")
     universe_label = ",".join(body.universe) if body.universe else "default-nyse"
     job = store.enqueue_job(
         "scanner.run",
         f"universe={universe_label[:80]};filter={body.signalFilter};maxCandidates={body.maxCandidates}",
+        idempotency_key,
     )
 
     def _execute() -> None:
-        store.start_job(job.id)
+        if not store.start_job(job.id):
+            return
         try:
             result = run_scanner(body)
             store.complete_job(job.id, result.model_dump(mode="json"))
@@ -1243,6 +1274,18 @@ def get_job_status(
 ) -> JobRecord:
     _require_role(ADVANCED_ROLES, x_ambrosia_role, scope="advanced")
     job = store.get_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return job
+
+
+@app.post("/jobs/{job_id}/cancel", response_model=JobRecord)
+def cancel_job(
+    job_id: str,
+    x_ambrosia_role: str | None = Header(default=None, alias="X-Ambrosia-Role"),
+) -> JobRecord:
+    _require_role(ADVANCED_ROLES, x_ambrosia_role, scope="advanced")
+    job = store.request_job_cancellation(job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found")
     return job
@@ -1386,14 +1429,18 @@ def generate_packet_report(packet_id: str) -> ReportArtifact:
 
 
 @app.post("/packets/{packet_id}/report/async", response_model=JobRecord)
-def generate_packet_report_async(packet_id: str) -> JobRecord:
+def generate_packet_report_async(
+    packet_id: str,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> JobRecord:
     if store.get_packet(packet_id) is None:
         raise HTTPException(status_code=404, detail="Packet not found")
 
-    job = store.enqueue_job("report.generate", f"packet={packet_id}")
+    job = store.enqueue_job("report.generate", f"packet={packet_id}", idempotency_key)
 
     def _execute() -> None:
-        store.start_job(job.id)
+        if not store.start_job(job.id):
+            return
         try:
             pkt = store.get_packet(packet_id)
             if pkt is None:

@@ -36,7 +36,7 @@ services:
     plan: free
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT --timeout-graceful-shutdown 30 --timeout-keep-alive 30
-    healthCheckPath: /health
+    healthCheckPath: /ready
     envVars:
       - key: PYTHON_VERSION
         value: 3.12.10
@@ -46,6 +46,22 @@ services:
         value: warning
       - key: REQUIRE_DATABASE
         value: "true"
+      - key: RBAC_ENABLED
+        value: "true"
+      - key: ALLOW_INSECURE_DEV_IDENTITY
+        value: "false"
+      - key: AMBROSIA_API_KEYS_JSON
+        sync: false
+      - key: AMBROSIA_JWT_HS256_SECRET
+        sync: false
+      - key: AMBROSIA_JWT_ISSUER
+        value: ambrosia
+      - key: AMBROSIA_JWT_AUDIENCE
+        value: ambrosia-api
+      - key: MAX_REQUEST_BYTES
+        value: "1048576"
+      - key: RATE_LIMIT_PER_MINUTE
+        value: "300"
       - key: ALLOWED_ORIGIN_REGEX
         value: https://(ambrosia-web-c3ax|ambrosia-5aec)\.onrender\.com
 
@@ -79,7 +95,7 @@ services:
     plan: free
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT --timeout-graceful-shutdown 30 --timeout-keep-alive 30
-    healthCheckPath: /health
+    healthCheckPath: /ready
     envVars:
       - key: PYTHON_VERSION
         value: 3.12.10
@@ -89,6 +105,22 @@ services:
         value: info
       - key: REQUIRE_DATABASE
         value: "true"
+      - key: RBAC_ENABLED
+        value: "true"
+      - key: ALLOW_INSECURE_DEV_IDENTITY
+        value: "false"
+      - key: AMBROSIA_API_KEYS_JSON
+        sync: false
+      - key: AMBROSIA_JWT_HS256_SECRET
+        sync: false
+      - key: AMBROSIA_JWT_ISSUER
+        value: ambrosia-staging
+      - key: AMBROSIA_JWT_AUDIENCE
+        value: ambrosia-api
+      - key: MAX_REQUEST_BYTES
+        value: "1048576"
+      - key: RATE_LIMIT_PER_MINUTE
+        value: "600"
       - key: ALLOWED_ORIGIN_REGEX
         value: https://ambrosia-web-staging\.onrender\.com
 

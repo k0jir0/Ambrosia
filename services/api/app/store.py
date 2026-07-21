@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import logging
 import os
+import socket
+import threading
 from datetime import datetime
 from uuid import uuid4
 
@@ -58,6 +60,8 @@ class ReviewStore:
         self._packets: dict[str, DecisionPacket] = {}
         self._alerts: list[AlertQueueRecord] = []
         self._jobs: dict[str, JobRecord] = {}
+        self._job_idempotency: dict[tuple[str, str], str] = {}
+        self._job_lock = threading.RLock()
         self._workspaces: dict[str, WorkspaceRecord] = {}
         self._packet_comments: dict[str, list[PacketComment]] = {}
         self._packet_approvals: dict[str, PacketApproval] = {}
@@ -96,6 +100,7 @@ class ReviewStore:
                 self._review_db = review_db
                 self._packet_db = packet_db
                 self._db_enabled = True
+                review_db.requeue_expired_jobs()
                 try:
                     existing_feedback = review_db.list_feedback_records(limit=5000)
                     self._feedback_records = {record.id: record for record in existing_feedback}
@@ -126,6 +131,16 @@ class ReviewStore:
             "databaseConnected": self._db_enabled,
             "lastError": self._db_error,
         }
+
+    def append_security_audit(self, **event: object) -> None:
+        if self._db_enabled and self._review_db is not None:
+            try:
+                self._review_db.append_security_audit(**event)
+                return
+            except Exception as exc:  # pragma: no cover - environment dependent
+                self._disable_db(exc)
+        if self._db_required:
+            raise RuntimeError("durable security audit requires PostgreSQL")
 
     def sync_roadmap_plans(self, plans: list[RoadmapPlanRecord]) -> list[RoadmapPlanRecord]:
         if self._db_enabled and self._review_db is not None:
@@ -526,54 +541,148 @@ class ReviewStore:
     # Job queue
     # ------------------------------------------------------------------
 
-    def enqueue_job(self, job_type: str, input_summary: str) -> JobRecord:
-        job = JobRecord(
-            id=f"job-{uuid4().hex[:10]}",
-            jobType=job_type,
-            state=JobState.queued,
-            queuedAt=datetime.now().isoformat(),
-            inputSummary=input_summary,
-        )
-        self._jobs[job.id] = job
-        return job
+    def enqueue_job(
+        self,
+        job_type: str,
+        input_summary: str,
+        idempotency_key: str | None = None,
+        *,
+        max_attempts: int = 3,
+        timeout_seconds: int = 300,
+    ) -> JobRecord:
+        with self._job_lock:
+            if idempotency_key:
+                existing_id = self._job_idempotency.get((job_type, idempotency_key))
+                if existing_id and existing_id in self._jobs:
+                    return self._jobs[existing_id]
+            job = JobRecord(
+                id=f"job-{uuid4().hex[:10]}",
+                jobType=job_type,
+                state=JobState.queued,
+                queuedAt=datetime.now().isoformat(),
+                inputSummary=input_summary,
+                idempotencyKey=idempotency_key,
+                maxAttempts=max(1, min(max_attempts, 10)),
+                timeoutSeconds=max(1, min(timeout_seconds, 3600)),
+            )
+            if self._db_enabled and self._review_db is not None:
+                try:
+                    job = self._review_db.enqueue_job(job)
+                except Exception as exc:  # pragma: no cover - environment dependent
+                    self._disable_db(exc)
+            self._jobs[job.id] = job
+            if idempotency_key:
+                self._job_idempotency[(job_type, idempotency_key)] = job.id
+            return job
 
     def get_job(self, job_id: str) -> JobRecord | None:
-        return self._jobs.get(job_id)
+        with self._job_lock:
+            if self._db_enabled and self._review_db is not None:
+                try:
+                    job = self._review_db.get_job(job_id)
+                    if job is not None:
+                        self._jobs[job.id] = job
+                    return job
+                except Exception as exc:  # pragma: no cover - environment dependent
+                    self._disable_db(exc)
+            return self._jobs.get(job_id)
 
     def list_jobs(self, job_type: str | None = None) -> list[JobRecord]:
-        jobs = list(self._jobs.values())
+        with self._job_lock:
+            if self._db_enabled and self._review_db is not None:
+                try:
+                    jobs = self._review_db.list_jobs(job_type)
+                    self._jobs.update({job.id: job for job in jobs})
+                    return jobs
+                except Exception as exc:  # pragma: no cover - environment dependent
+                    self._disable_db(exc)
+            jobs = list(self._jobs.values())
         if job_type:
             jobs = [j for j in jobs if j.jobType == job_type]
         return sorted(jobs, key=lambda j: j.queuedAt, reverse=True)
 
-    def start_job(self, job_id: str) -> None:
-        job = self._jobs.get(job_id)
-        if job is not None:
-            self._jobs[job_id] = job.model_copy(
-                update={"state": JobState.running, "startedAt": datetime.now().isoformat()}
-            )
+    def start_job(self, job_id: str) -> bool:
+        with self._job_lock:
+            job = self._jobs.get(job_id)
+            if self._db_enabled and self._review_db is not None:
+                try:
+                    claimed = self._review_db.claim_job(
+                        job_id,
+                        f"{socket.gethostname()}:{os.getpid()}",
+                        job.timeoutSeconds if job is not None else 300,
+                    )
+                    if claimed is None:
+                        return False
+                    self._jobs[job_id] = claimed
+                    return True
+                except Exception as exc:  # pragma: no cover - environment dependent
+                    self._disable_db(exc)
+            if job is not None and job.state == JobState.queued and not job.cancelRequested:
+                self._jobs[job_id] = job.model_copy(
+                    update={"state": JobState.running, "startedAt": datetime.now().isoformat(),
+                            "attempt": job.attempt + 1}
+                )
+                return True
+            return False
 
     def complete_job(self, job_id: str, result: dict) -> None:
-        job = self._jobs.get(job_id)
-        if job is not None:
-            self._jobs[job_id] = job.model_copy(
-                update={
-                    "state": JobState.completed,
-                    "completedAt": datetime.now().isoformat(),
-                    "result": result,
-                }
-            )
+        with self._job_lock:
+            job = self._jobs.get(job_id)
+            if job is not None:
+                if self._db_enabled and self._review_db is not None:
+                    try:
+                        saved = self._review_db.finish_job(job_id, result=result)
+                        if saved is not None:
+                            self._jobs[job_id] = saved
+                            return
+                    except Exception as exc:  # pragma: no cover - environment dependent
+                        self._disable_db(exc)
+                self._jobs[job_id] = job.model_copy(
+                    update={
+                        "state": JobState.completed,
+                        "completedAt": datetime.now().isoformat(),
+                        "result": result,
+                    }
+                )
 
     def fail_job(self, job_id: str, error: str) -> None:
-        job = self._jobs.get(job_id)
-        if job is not None:
-            self._jobs[job_id] = job.model_copy(
-                update={
-                    "state": JobState.failed,
-                    "completedAt": datetime.now().isoformat(),
-                    "error": error,
-                }
-            )
+        with self._job_lock:
+            job = self._jobs.get(job_id)
+            if job is not None:
+                if self._db_enabled and self._review_db is not None:
+                    try:
+                        saved = self._review_db.finish_job(job_id, error=error)
+                        if saved is not None:
+                            self._jobs[job_id] = saved
+                            return
+                    except Exception as exc:  # pragma: no cover - environment dependent
+                        self._disable_db(exc)
+                self._jobs[job_id] = job.model_copy(
+                    update={
+                        "state": JobState.failed,
+                        "completedAt": datetime.now().isoformat(),
+                        "error": error,
+                    }
+                )
+
+    def request_job_cancellation(self, job_id: str) -> JobRecord | None:
+        with self._job_lock:
+            job = self._jobs.get(job_id)
+            if self._db_enabled and self._review_db is not None:
+                try:
+                    cancelled = self._review_db.cancel_job(job_id)
+                    if cancelled is not None:
+                        self._jobs[job_id] = cancelled
+                    return cancelled
+                except Exception as exc:  # pragma: no cover - environment dependent
+                    self._disable_db(exc)
+            if job is None:
+                return None
+            updates: dict[str, object] = {"cancelRequested": True}
+            if job.state == JobState.queued:
+                updates.update({"state": JobState.cancelled, "completedAt": datetime.now().isoformat()})
+            self._jobs[job_id] = job.model_copy(update=updates)
+            return self._jobs[job_id]
 
     # ------------------------------------------------------------------
     # Phase 4: Collaboration — workspaces

@@ -65,6 +65,8 @@
     "release:readiness:check": "python scripts/verify-release-readiness.py",
     "production:evidence:check": "python scripts/verify-production-evidence.py",
     "docs:consistency:check": "python scripts/verify-docs-consistency.py",
+    "index119:readiness:check": "python scripts/verify-index119-readiness.py",
+    "index119:load:test": "python scripts/load-test-api.py",
     "hotpath:design:check": "python scripts/verify-hotpath-design.py",
     "hotpath:phase7:check": "python scripts/verify-hotpath-phase7.py",
     "signals:index97:seed": "python scripts/seed-index97-signals.py",

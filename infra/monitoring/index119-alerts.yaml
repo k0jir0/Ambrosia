@@ -1,0 +1,23 @@
+groups:
+  - name: ambrosia-api
+    rules:
+      - alert: AmbrosiaApiHighErrorRate
+        expr: sum(rate(ambrosia_http_requests_total{status="5xx"}[5m])) / clamp_min(sum(rate(ambrosia_http_requests_total[5m])), 0.001) > 0.05
+        for: 10m
+        labels: {severity: page}
+        annotations: {runbook: "docs/operations/INCIDENT_RUNBOOK.md"}
+      - alert: AmbrosiaAuthenticationFailures
+        expr: increase(ambrosia_domain_events_total{name="authentication_failure"}[10m]) > 20
+        for: 5m
+        labels: {severity: ticket}
+        annotations: {runbook: "docs/operations/INCIDENT_RUNBOOK.md"}
+      - alert: AmbrosiaProviderCircuitOpen
+        expr: increase(ambrosia_domain_events_total{name="provider_circuit",label=~".*:open"}[10m]) > 0
+        for: 1m
+        labels: {severity: ticket}
+        annotations: {runbook: "docs/operations/INCIDENT_RUNBOOK.md"}
+      - alert: AmbrosiaRateLimitSurge
+        expr: increase(ambrosia_domain_events_total{name="request_rejected",label="rate_limit"}[5m]) > 50
+        for: 5m
+        labels: {severity: ticket}
+        annotations: {runbook: "docs/operations/INCIDENT_RUNBOOK.md"}

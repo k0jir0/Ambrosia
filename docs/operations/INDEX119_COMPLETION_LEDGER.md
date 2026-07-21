@@ -37,8 +37,8 @@ evidence that can only be produced in a deployed environment.
 
 ## Local evidence
 
-- FastAPI: 210 passed, 2 PostgreSQL integration tests skipped because no local
-  database service was available.
+- FastAPI with PostgreSQL enabled: 212 passed, including durable job and global
+  audit-chain integration tests.
 - Repository unit tests: 85 passed.
 - Index119 API/security tests: 10 passed.
 - Web lint and optimized production build: passed.
@@ -47,6 +47,14 @@ evidence that can only be produced in a deployed environment.
 - Capacity probe: 200 requests, concurrency 20, zero errors, 63.94 ms p95 on the
   local development machine. This is development evidence, not a production
   capacity guarantee.
+- Linux-container Rust validation: 4 passed, including deterministic guardrails,
+  approval mismatch, and nonce replay rejection.
+- PostgreSQL recovery drill: a custom-format backup was restored into an
+  isolated database and the durable_job, security_audit_event, and
+  execution_replay_guard tables were verified before cleanup.
+- GitHub PR #1 was created, but hosted Actions jobs were prevented from starting
+  by the account billing/spending-limit state. Local Docker verification covers
+  the PostgreSQL and Linux Rust jobs until hosted runners are re-enabled.
 
 ## External acceptance gates
 
@@ -54,8 +62,10 @@ These cannot be truthfully marked complete by source-code changes:
 
 1. Provision the managed PostgreSQL, secrets, identity issuer, monitoring store,
    alert destinations, TLS/domain, and backup service in the target account.
-2. Apply migration v0006 and pass the PostgreSQL integration CI job.
-3. Pass the Rust CI job or install MSVC Build Tools and the Windows SDK locally.
+2. Apply migration v0006 to the managed staging/production database; local
+   PostgreSQL integration and restore drills already pass.
+3. Re-run the PostgreSQL and Rust hosted CI jobs after GitHub Actions billing is
+   restored; equivalent local Linux-container checks already pass.
 4. Assign named service, security, database, investment-control, and incident
    owners.
 5. Conduct an independent penetration test and resolve accepted findings.

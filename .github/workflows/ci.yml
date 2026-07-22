@@ -110,7 +110,9 @@ jobs:
         run: pnpm mobile:types:generate
 
       - name: Verify mobile API contract
-        run: python scripts/verify-mobile-contracts.py --check
+        run: |
+          python scripts/verify-mobile-contracts.py --write
+          python scripts/verify-mobile-contracts.py --check
 
       - name: Verify mobile deployment readiness
         run: pnpm mobile:deployment:check

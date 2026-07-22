@@ -105,11 +105,11 @@ DB_SCHEMA_VERSION_PATH = Path(__file__).resolve().parents[3] / "infra" / "db" / 
 
 app = FastAPI(title="Ambrosia Trade Review API", version="0.1.0")
 
-TEAM_READ_ROLES = {"viewer", "analyst", "reviewer", "owner", "admin"}
-TEAM_WRITE_ROLES = {"analyst", "reviewer", "owner", "admin"}
-TEAM_APPROVAL_ROLES = {"reviewer", "owner", "admin"}
-ADVANCED_ROLES = {"analyst", "reviewer", "owner", "admin"}
-ADMIN_ROLES = {"owner", "admin"}
+TEAM_READ_ROLES = {"viewer", "analyst", "reviewer", "owner", "admin", "service"}
+TEAM_WRITE_ROLES = {"analyst", "reviewer", "owner", "admin", "service"}
+TEAM_APPROVAL_ROLES = {"reviewer", "owner", "admin", "service"}
+ADVANCED_ROLES = {"analyst", "reviewer", "owner", "admin", "service"}
+ADMIN_ROLES = {"owner", "admin", "service"}
 
 default_origins = ["http://localhost:3000", "http://127.0.0.1:3000"]
 configured_origins = [

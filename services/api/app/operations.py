@@ -422,6 +422,18 @@ class ProductionBoundaryMiddleware:
                 await self._json(send, 403, {"detail": "Insufficient role for operation"}, request_id)
                 return
 
+            # Several legacy FastAPI handlers still accept X-Ambrosia-Role.
+            # Replace any client value with the role from the authenticated
+            # principal so those handlers cannot trust or be confused by a
+            # spoofable header while they are migrated to request.state.
+            if principal.auth_method != "development-header":
+                scope["headers"] = [
+                    (name, value)
+                    for name, value in scope.get("headers", [])
+                    if name.lower() != b"x-ambrosia-role"
+                ]
+                scope["headers"].append((b"x-ambrosia-role", principal.role.encode("ascii")))
+
         identity = principal.subject if principal else (scope.get("client") or ("unknown",))[0]
         rate = int(os.getenv("RATE_LIMIT_PER_MINUTE", "300"))
         enforce_rate_limit = _is_production() or _truthy("ENABLE_RATE_LIMITING")

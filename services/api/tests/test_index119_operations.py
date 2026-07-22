@@ -67,6 +67,27 @@ def test_production_identity_and_route_policy(monkeypatch) -> None:
     assert allowed.headers["strict-transport-security"].startswith("max-age=")
 
 
+def test_authenticated_role_replaces_spoofable_legacy_header(monkeypatch) -> None:
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setenv("RBAC_ENABLED", "true")
+    monkeypatch.setenv(
+        "AMBROSIA_API_KEYS_JSON",
+        json.dumps({
+            "service-token-at-least-16": {
+                "subject": "smoke-service", "role": "service", "team": "platform"
+            },
+        }),
+    )
+    response = client.get(
+        "/providers/status",
+        headers={
+            "Authorization": "Bearer service-token-at-least-16",
+            "X-Ambrosia-Role": "viewer",
+        },
+    )
+    assert response.status_code == 200
+
+
 def test_readiness_requires_production_identity(monkeypatch) -> None:
     monkeypatch.setenv("ENVIRONMENT", "production")
     monkeypatch.delenv("AMBROSIA_API_KEYS_JSON", raising=False)

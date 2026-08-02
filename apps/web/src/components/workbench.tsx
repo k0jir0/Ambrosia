@@ -9,6 +9,7 @@ import {
   createSignal,
   derivePacketConfidence,
   evaluatePacketRisk,
+  selectiveIntegratePacket,
   generateReport as generatePacketReport,
   getApiBaseUrl,
   getMarketSnapshot,
@@ -551,6 +552,10 @@ export function Workbench({ initialReviewId }: { initialReviewId?: string } = {}
       tradeability: review.tradeability,
       sources: review.sources,
       audit: review.audit,
+      provenance: null,
+      disconfirmationResult: null,
+      riskGateResult: null,
+      memoryRecords: null,
       marketSnapshot: null,
       technicals: null,
       sentiment: null,
@@ -697,6 +702,24 @@ export function Workbench({ initialReviewId }: { initialReviewId?: string } = {}
       return "ok";
     } catch {
       appendAuditEvent("confidence.derive.fallback", "Technicals inspection endpoint unavailable; keeping deterministic local view.");
+      return "fallback";
+    }
+  }
+
+  async function runSelectiveIntegration(): Promise<ActionResult> {
+    if (!activeReview) {
+      appendAuditEvent("selective.integration.skipped", "Selective integration skipped because no active review is selected.");
+      return "skipped";
+    }
+
+    try {
+      const { reviewId, packetId } = await ensurePacketForReview(activeReview);
+      const packet = await selectiveIntegratePacket(packetId);
+      syncReviewFromPacket(reviewId, packet);
+      appendAuditEvent("selective.integration", `Selective integration completed for ${activeReview.ticker}: ${packet.disconfirmationResult?.status ?? "pending"}.`);
+      return "ok";
+    } catch {
+      appendAuditEvent("selective.integration.fallback", "Selective integration endpoint unavailable; local workflow remains active.");
       return "fallback";
     }
   }
@@ -1103,6 +1126,7 @@ export function Workbench({ initialReviewId }: { initialReviewId?: string } = {}
             onRunAgents={() => runAction("Run analysis", runAgentSwarm)}
             onPrepareBacktest={() => runAction("Prepare backtest", prepareBacktest)}
             onDeriveConfidence={() => runAction("Derive confidence", deriveConfidenceFromMarket)}
+            onRunSelectiveIntegration={() => runAction("Selective integration", runSelectiveIntegration)}
           />
           <MarketAndRiskPanel
             review={activeReview}
@@ -1793,7 +1817,8 @@ function AnalysisFeed({
   activeAction,
   onRunAgents,
   onPrepareBacktest,
-  onDeriveConfidence
+  onDeriveConfidence,
+  onRunSelectiveIntegration
 }: {
   review: TradeReview;
   packet: DecisionPacket | null;
@@ -1801,6 +1826,7 @@ function AnalysisFeed({
   onRunAgents: () => void;
   onPrepareBacktest: () => void;
   onDeriveConfidence: () => void;
+  onRunSelectiveIntegration: () => void;
 }) {
   const stages = buildWorkflowStages(review, packet);
 
@@ -1813,6 +1839,7 @@ function AnalysisFeed({
             <ActionButton label="Run analysis" icon={<Activity className="h-4 w-4" />} activeAction={activeAction} onClick={onRunAgents} />
             <ActionButton label="Prepare backtest" icon={<Beaker className="h-4 w-4" />} activeAction={activeAction} onClick={onPrepareBacktest} />
             <ActionButton label="Derive confidence" icon={<SlidersHorizontal className="h-4 w-4" />} activeAction={activeAction} onClick={onDeriveConfidence} />
+            <ActionButton label="Integrate" icon={<ShieldCheck className="h-4 w-4" />} activeAction={activeAction} onClick={onRunSelectiveIntegration} />
           </div>
         </div>
         <ProviderProvenancePanel packet={packet} />
@@ -2080,6 +2107,10 @@ function ProviderProvenancePanel({ packet }: { packet: DecisionPacket | null }) 
   const provider = packet?.providerInfo;
   const agentOutputs = packet?.agentOutputs ? Object.values(packet.agentOutputs).filter(Boolean) : [];
   const roleCount = agentOutputs.length;
+  const provenance = packet?.provenance ?? [];
+  const disconfirmation = packet?.disconfirmationResult;
+  const riskGate = packet?.riskGateResult;
+  const memoryRecords = packet?.memoryRecords ?? [];
 
   return (
     <div className="mt-4 rounded-md border border-line bg-fog/60 p-3 text-xs">
@@ -2104,6 +2135,14 @@ function ProviderProvenancePanel({ packet }: { packet: DecisionPacket | null }) 
           <ProofMetric label="Coordinator" value={packet?.coordinatorVersion ?? "coordinator.v1"} />
         </div>
       ) : null}
+      <div className="mt-3 grid gap-2 md:grid-cols-2">
+        <ProofMetric label="Provenance sources" value={provenance.length ? provenance.map((item) => item.source).join(", ") : "No provenance attached yet"} />
+        <ProofMetric label="Disconfirmation" value={disconfirmation ? `${disconfirmation.status} (${disconfirmation.requiresHumanReview ? "needs review" : "auto-pass"})` : "Pending"} />
+      </div>
+      <div className="mt-2 grid gap-2 md:grid-cols-2">
+        <ProofMetric label="Risk gate" value={riskGate ? `${riskGate.status} ${riskGate.reasons.length ? `- ${riskGate.reasons.join(", ")}` : ""}`.trim() : "Pending"} />
+        <ProofMetric label="Memory records" value={memoryRecords.length ? `${memoryRecords.length} record(s) stored` : "No memory records yet"} />
+      </div>
     </div>
   );
 }

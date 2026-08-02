@@ -297,6 +297,19 @@ export async function derivePacketConfidence(packetId: string, body: ConfidenceD
   return postPacketAction(packetId, "/confidence/derive", body);
 }
 
+export async function selectiveIntegratePacket(packetId: string): Promise<DecisionPacket> {
+  const apiBaseUrl = getApiBaseUrl();
+  if (!apiBaseUrl) {
+    throw new ApiUnavailableError();
+  }
+
+  const response = await fetchWithTimeout(`${apiBaseUrl}/packets/${encodeURIComponent(packetId)}/selective-integrate`, {
+    method: "POST",
+  });
+
+  return readJsonResponse<DecisionPacket>(response);
+}
+
 export async function retrievePacketContext(packetId: string, query: string, topK = 5): Promise<RetrievalResponse> {
   const apiBaseUrl = getApiBaseUrl();
   if (!apiBaseUrl) {

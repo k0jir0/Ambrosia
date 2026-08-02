@@ -72,6 +72,16 @@ from .retrieval_quality import (
 from .review_engine import detects_prompt_injection, generate_review
 from .scanner import run_scanner
 from .sentiment import build_sentiment
+from .selective_integration import (
+    DecisionMemoryRecord,
+    DisconfirmationOutcome,
+    ProvenanceMetadata,
+    RiskGateOutcome,
+    attach_provenance,
+    create_decision_memory_record,
+    evaluate_risk_gate,
+    run_disconfirmation,
+)
 from .store import store
 from .visibility_registry import (
     load_admin_boundary_rules,
@@ -105,11 +115,11 @@ DB_SCHEMA_VERSION_PATH = Path(__file__).resolve().parents[3] / "infra" / "db" / 
 
 app = FastAPI(title="Ambrosia Trade Review API", version="0.1.0")
 
-TEAM_READ_ROLES = {"viewer", "analyst", "reviewer", "owner", "admin"}
-TEAM_WRITE_ROLES = {"analyst", "reviewer", "owner", "admin"}
-TEAM_APPROVAL_ROLES = {"reviewer", "owner", "admin"}
-ADVANCED_ROLES = {"analyst", "reviewer", "owner", "admin"}
-ADMIN_ROLES = {"owner", "admin"}
+TEAM_READ_ROLES = {"viewer", "analyst", "reviewer", "owner", "admin", "service"}
+TEAM_WRITE_ROLES = {"analyst", "reviewer", "owner", "admin", "service"}
+TEAM_APPROVAL_ROLES = {"reviewer", "owner", "admin", "service"}
+ADVANCED_ROLES = {"analyst", "reviewer", "owner", "admin", "service"}
+ADMIN_ROLES = {"owner", "admin", "service"}
 
 default_origins = ["http://localhost:3000", "http://127.0.0.1:3000"]
 configured_origins = [
@@ -515,6 +525,47 @@ def record_outcome(review_id: str, update: OutcomeUpdate) -> TradeReview:
 @app.post("/packets", response_model=DecisionPacket)
 def create_packet(packet: DecisionPacket) -> DecisionPacket:
     return store.save_packet(packet)
+
+
+@app.post("/packets/{packet_id}/selective-integrate", response_model=DecisionPacket)
+def selective_integrate_packet(packet_id: str) -> DecisionPacket:
+    packet = store.get_packet(packet_id)
+    if packet is None:
+        raise HTTPException(status_code=404, detail="Packet not found")
+
+    provenance = [
+        ProvenanceMetadata(
+            source="packet-input",
+            sourceType="review",
+            timestamp=datetime.utcnow().replace(microsecond=0).isoformat() + "Z",
+            freshnessSeconds=60,
+            dataMode="live",
+            confidence="verified",
+            notes="Selective integration provenance recorded",
+        )
+    ]
+    updated_packet = attach_provenance(packet, provenance)
+    disconfirmation = run_disconfirmation(updated_packet)
+    risk_gate = evaluate_risk_gate(updated_packet)
+    memory = create_decision_memory_record(updated_packet, outcome="reviewed", notes="Selective integration executed", score=updated_packet.confidence)
+    updated_packet = updated_packet.model_copy(
+        update={
+            "disconfirmationResult": disconfirmation.model_dump(mode="json"),
+            "riskGateResult": risk_gate.model_dump(mode="json"),
+            "memoryRecords": [memory.model_dump(mode="json")],
+            "audit": [
+                *updated_packet.audit,
+                AuditEvent(
+                    id=f"packet-audit-{len(updated_packet.audit) + 1}",
+                    timestamp=_clock(),
+                    eventType="selective.integration.applied",
+                    detail="Selective integration workflow executed for packet",
+                ),
+            ],
+        }
+    )
+    store.append_packet_memory(packet_id, memory)
+    return store.save_packet(updated_packet)
 
 
 @app.get("/packets", response_model=list[DecisionPacket])

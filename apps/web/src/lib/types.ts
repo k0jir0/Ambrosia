@@ -233,6 +233,35 @@ export interface SpecialistAgentOutput {
 }
 
 export interface DecisionPacket extends TradeReview {
+  // Selective integration fields
+  provenance: Array<{
+    source: string;
+    sourceType: string;
+    timestamp: string;
+    freshnessSeconds?: number | null;
+    dataMode?: string;
+    confidence?: string;
+    notes?: string | null;
+  }> | null;
+  disconfirmationResult: {
+    status: string;
+    requiresHumanReview: boolean;
+    summary: string;
+    reasons: string[];
+  } | null;
+  riskGateResult: {
+    status: string;
+    reasons: string[];
+  } | null;
+  memoryRecords: Array<{
+    memoryId: string;
+    packetId: string;
+    outcome: string;
+    notes?: string | null;
+    score?: number | null;
+    createdAt: string;
+  }> | null;
+
   // New quant workflow agent fields
   marketSnapshot: MarketSnapshot | null;
   technicals: TechnicalIndicators | null;

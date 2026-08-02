@@ -34,6 +34,7 @@ from .models import (
     WorkflowTemplateCreate,
     WorkflowTemplateStatus,
 )
+from .selective_integration import DecisionMemoryRecord
 from .db import PacketQuery, PostgresPacketStore, PostgresReviewStore
 from .feedback import (
     FeedbackRecord,
@@ -86,6 +87,7 @@ class ReviewStore:
         self._feedback_records: dict[str, FeedbackRecord] = {}
         self._cohort_calibrations: dict[tuple[str, str, str], CohortCalibration] = {}
         self._calibration_alerts: list[CalibrationAlert] = []
+        self._packet_memories: dict[str, list[DecisionMemoryRecord]] = {}
 
         database_url = os.getenv("DATABASE_URL")
         if self._db_required and not database_url:
@@ -265,6 +267,14 @@ class ReviewStore:
                 self._disable_db(exc)
         self._reviews[review.id] = review
         return review
+
+    def append_packet_memory(self, packet_id: str, memory: DecisionMemoryRecord) -> DecisionMemoryRecord:
+        memories = self._packet_memories.setdefault(packet_id, [])
+        memories.append(memory)
+        return memory
+
+    def get_packet_memory(self, packet_id: str) -> list[DecisionMemoryRecord]:
+        return list(self._packet_memories.get(packet_id, []))
 
     def record_decision(self, review_id: str, decision_state: DecisionState) -> TradeReview | None:
         if self._db_enabled and self._review_db is not None:

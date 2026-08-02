@@ -219,6 +219,37 @@ class SpecialistAgentOutput(BaseModel):
     fallbackUsed: bool
 
 
+class ProvenanceMetadata(BaseModel):
+    source: str
+    sourceType: str
+    timestamp: str
+    freshnessSeconds: int | None = None
+    dataMode: str = "fallback"
+    confidence: str = "verified"
+    notes: str | None = None
+
+
+class DisconfirmationOutcome(BaseModel):
+    status: str = Field(default="pass")
+    requiresHumanReview: bool = False
+    summary: str = ""
+    reasons: list[str] = Field(default_factory=list)
+
+
+class RiskGateOutcome(BaseModel):
+    status: str = Field(default="pass")
+    reasons: list[str] = Field(default_factory=list)
+
+
+class DecisionMemoryRecord(BaseModel):
+    memoryId: str
+    packetId: str
+    outcome: str
+    notes: str | None = None
+    score: int | None = None
+    createdAt: str
+
+
 class DecisionPacket(BaseModel):
     id: str
     schemaVersion: str = "packet.v1"
@@ -246,6 +277,12 @@ class DecisionPacket(BaseModel):
     sources: list[SourcePointer]
     audit: list[AuditEvent]
     
+    # Selective integration fields
+    provenance: list[dict] | None = None
+    disconfirmationResult: dict | None = None
+    riskGateResult: dict | None = None
+    memoryRecords: list[dict] | None = None
+
     # Quant workflow agent fields
     marketSnapshot: MarketSnapshot | None = None
     technicals: TechnicalIndicators | None = None

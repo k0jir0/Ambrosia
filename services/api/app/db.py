@@ -12,10 +12,12 @@ from psycopg.rows import dict_row
 from .models import (
     AuditEvent,
     AuditEventCreate,
+    DecisionMemoryRecord,
     DecisionPacket,
     DecisionState,
     JobRecord,
     JobState,
+    PacketAuditChainEvent,
     ReviewStatus,
     RoadmapDecisionRecord,
     RoadmapOutcomeRecord,
@@ -23,6 +25,7 @@ from .models import (
     TradeReview,
 )
 from .feedback import FeedbackRecord
+from .selective_integration import create_packet_audit_event, packet_content_hash
 
 
 @dataclass
@@ -748,44 +751,70 @@ class PostgresPacketStore:
             with connection.cursor() as cursor:
                 cursor.execute("SELECT 1")
 
-    def save_packet(self, packet: DecisionPacket) -> DecisionPacket:
+    def _save_packet_with_cursor(self, cursor, packet: DecisionPacket) -> None:
         payload = packet.model_dump(mode="json")
+        content_hash = packet_content_hash(packet)
+        cursor.execute(
+            """
+            INSERT INTO review_packet (
+                packet_id,
+                schema_version,
+                workflow_version,
+                ticker,
+                decision_state,
+                confidence,
+                created_at,
+                artifact
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s::jsonb)
+            ON CONFLICT (packet_id)
+            DO UPDATE SET
+                schema_version = EXCLUDED.schema_version,
+                workflow_version = EXCLUDED.workflow_version,
+                ticker = EXCLUDED.ticker,
+                decision_state = EXCLUDED.decision_state,
+                confidence = EXCLUDED.confidence,
+                artifact = EXCLUDED.artifact,
+                updated_at = now()
+            """,
+            (
+                packet.id,
+                packet.schemaVersion,
+                packet.workflowVersion,
+                packet.ticker,
+                packet.decisionState.value if packet.decisionState else None,
+                packet.confidence,
+                packet.createdAt,
+                json.dumps(payload),
+            ),
+        )
+        cursor.execute(
+            """
+            INSERT INTO packet_version (
+                packet_id,
+                packet_version,
+                schema_version,
+                contract_version,
+                content_hash,
+                artifact
+            )
+            VALUES (%s, %s, %s, %s, %s, %s::jsonb)
+            ON CONFLICT (packet_id, packet_version) DO NOTHING
+            """,
+            (
+                packet.id,
+                packet.packetVersion,
+                packet.schemaVersion,
+                packet.contractVersion,
+                content_hash,
+                json.dumps(payload),
+            ),
+        )
+
+    def save_packet(self, packet: DecisionPacket) -> DecisionPacket:
         with self._connect() as connection:
             with connection.cursor() as cursor:
-                cursor.execute(
-                    """
-                    INSERT INTO review_packet (
-                        packet_id,
-                        schema_version,
-                        workflow_version,
-                        ticker,
-                        decision_state,
-                        confidence,
-                        created_at,
-                        artifact
-                    )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s::jsonb)
-                    ON CONFLICT (packet_id)
-                    DO UPDATE SET
-                        schema_version = EXCLUDED.schema_version,
-                        workflow_version = EXCLUDED.workflow_version,
-                        ticker = EXCLUDED.ticker,
-                        decision_state = EXCLUDED.decision_state,
-                        confidence = EXCLUDED.confidence,
-                        artifact = EXCLUDED.artifact,
-                        updated_at = now()
-                    """,
-                    (
-                        packet.id,
-                        packet.schemaVersion,
-                        packet.workflowVersion,
-                        packet.ticker,
-                        packet.decisionState.value if packet.decisionState else None,
-                        packet.confidence,
-                        packet.createdAt,
-                        json.dumps(payload),
-                    ),
-                )
+                self._save_packet_with_cursor(cursor, packet)
         return packet
 
     def get_packet(self, packet_id: str) -> DecisionPacket | None:
@@ -878,15 +907,31 @@ class PostgresPacketStore:
                     (packet_id, metric_type, json.dumps(metric_payload)),
                 )
 
+    def _add_outcome_record_with_cursor(
+        self,
+        cursor,
+        packet_id: str,
+        outcome: str,
+        outcome_date: str,
+        payload: dict,
+    ) -> None:
+        cursor.execute(
+            """
+            INSERT INTO outcome_record (packet_id, outcome, outcome_date, payload)
+            VALUES (%s, %s, %s, %s::jsonb)
+            """,
+            (packet_id, outcome, outcome_date, json.dumps(payload)),
+        )
+
     def add_outcome_record(self, packet_id: str, outcome: str, outcome_date: str, payload: dict) -> None:
         with self._connect() as connection:
             with connection.cursor() as cursor:
-                cursor.execute(
-                    """
-                    INSERT INTO outcome_record (packet_id, outcome, outcome_date, payload)
-                    VALUES (%s, %s, %s, %s::jsonb)
-                    """,
-                    (packet_id, outcome, outcome_date, json.dumps(payload)),
+                self._add_outcome_record_with_cursor(
+                    cursor,
+                    packet_id,
+                    outcome,
+                    outcome_date,
+                    payload,
                 )
 
     def add_retrieval_event(self, packet_id: str, query_text: str, result_count: int, payload: dict) -> None:
@@ -905,3 +950,288 @@ class PostgresPacketStore:
                         json.dumps({"query": query_text, "resultCount": result_count, **payload}),
                     ),
                 )
+
+    def _append_packet_memory_with_cursor(self, cursor, memory: DecisionMemoryRecord) -> None:
+        payload = memory.model_dump(mode="json")
+        cursor.execute(
+            "SELECT pg_advisory_xact_lock(hashtext(%s))",
+            (f"ambrosia-packet-memory:{memory.packetId}",),
+        )
+        cursor.execute(
+            "SELECT sequence_id, event_hash FROM decision_memory_record "
+            "WHERE packet_id = %s ORDER BY sequence_id DESC LIMIT 1",
+            (memory.packetId,),
+        )
+        previous = cursor.fetchone()
+        expected_sequence = int(previous["sequence_id"]) + 1 if previous else 1
+        expected_previous_hash = previous["event_hash"] if previous else "0" * 64
+        if memory.sequence != expected_sequence or memory.previousHash != expected_previous_hash:
+            raise ValueError("decision memory hash-chain position is stale")
+        cursor.execute(
+            """
+            INSERT INTO decision_memory_record (
+                memory_id,
+                packet_id,
+                packet_version,
+                record_type,
+                outcome,
+                score,
+                sequence_id,
+                observed_at,
+                previous_hash,
+                event_hash,
+                artifact
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)
+            """,
+            (
+                memory.memoryId,
+                memory.packetId,
+                memory.packetVersion,
+                memory.recordType,
+                memory.outcome,
+                memory.score,
+                memory.sequence,
+                memory.observedAt,
+                memory.previousHash,
+                memory.eventHash,
+                json.dumps(payload),
+            ),
+        )
+
+    def append_packet_memory(self, memory: DecisionMemoryRecord) -> DecisionMemoryRecord:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                self._append_packet_memory_with_cursor(cursor, memory)
+        return memory
+
+    def get_packet_memory(self, packet_id: str) -> list[DecisionMemoryRecord]:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT artifact FROM decision_memory_record "
+                    "WHERE packet_id = %s ORDER BY sequence_id",
+                    (packet_id,),
+                )
+                rows = cursor.fetchall()
+        return [DecisionMemoryRecord.model_validate(row["artifact"]) for row in rows]
+
+    def list_decision_memories(self, limit: int = 500) -> list[DecisionMemoryRecord]:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT artifact FROM decision_memory_record "
+                    "ORDER BY created_at DESC LIMIT %s",
+                    (limit,),
+                )
+                rows = cursor.fetchall()
+        return [DecisionMemoryRecord.model_validate(row["artifact"]) for row in rows]
+
+    def _append_packet_audit_chain_event_with_cursor(
+        self,
+        cursor,
+        packet: DecisionPacket,
+        *,
+        event_type: str,
+        detail: str,
+        actor: str = "system",
+    ) -> PacketAuditChainEvent:
+        cursor.execute(
+            "SELECT pg_advisory_xact_lock(hashtext(%s))",
+            (f"ambrosia-packet-audit:{packet.id}",),
+        )
+        cursor.execute(
+            "SELECT * FROM packet_audit_chain WHERE packet_id = %s "
+            "ORDER BY sequence_id DESC LIMIT 1",
+            (packet.id,),
+        )
+        row = cursor.fetchone()
+        previous = None
+        if row is not None:
+            previous = PacketAuditChainEvent(
+                sequence=row["sequence_id"],
+                packetId=row["packet_id"],
+                packetVersion=row["packet_version"],
+                eventType=row["event_type"],
+                detail=row["detail"],
+                actor=row["actor_id"],
+                createdAt=row["event_time"].isoformat().replace("+00:00", "Z"),
+                payloadHash=row["payload_hash"],
+                previousHash=row["previous_hash"],
+                eventHash=row["event_hash"],
+            )
+        event = create_packet_audit_event(
+            packet,
+            event_type=event_type,
+            detail=detail,
+            actor=actor,
+            previous_event=previous,
+        )
+        cursor.execute(
+            """
+            INSERT INTO packet_audit_chain (
+                packet_id,
+                sequence_id,
+                packet_version,
+                event_type,
+                detail,
+                actor_id,
+                event_time,
+                payload_hash,
+                previous_hash,
+                event_hash
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            (
+                event.packetId,
+                event.sequence,
+                event.packetVersion,
+                event.eventType,
+                event.detail,
+                event.actor,
+                event.createdAt,
+                event.payloadHash,
+                event.previousHash,
+                event.eventHash,
+            ),
+        )
+        cursor.execute(
+            """
+            INSERT INTO packet_audit_head (packet_id, last_sequence, last_event_hash)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (packet_id)
+            DO UPDATE SET
+              last_sequence = EXCLUDED.last_sequence,
+              last_event_hash = EXCLUDED.last_event_hash,
+              updated_at = now()
+            """,
+            (event.packetId, event.sequence, event.eventHash),
+        )
+        return event
+
+    def append_packet_audit_chain_event(
+        self,
+        packet: DecisionPacket,
+        *,
+        event_type: str,
+        detail: str,
+        actor: str = "system",
+    ) -> PacketAuditChainEvent:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                return self._append_packet_audit_chain_event_with_cursor(
+                    cursor,
+                    packet,
+                    event_type=event_type,
+                    detail=detail,
+                    actor=actor,
+                )
+
+    def commit_packet_transition(
+        self,
+        packet: DecisionPacket,
+        *,
+        event_type: str,
+        detail: str,
+        actor: str = "system",
+        outcome_record: tuple[str, str, dict] | None = None,
+    ) -> PacketAuditChainEvent:
+        """Persist a packet transition, optional outcome, and chain event atomically."""
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                self._save_packet_with_cursor(cursor, packet)
+                if outcome_record is not None:
+                    outcome, outcome_date, payload = outcome_record
+                    self._add_outcome_record_with_cursor(
+                        cursor,
+                        packet.id,
+                        outcome,
+                        outcome_date,
+                        payload,
+                    )
+                return self._append_packet_audit_chain_event_with_cursor(
+                    cursor,
+                    packet,
+                    event_type=event_type,
+                    detail=detail,
+                    actor=actor,
+                )
+
+    def commit_selective_integration(
+        self,
+        packet: DecisionPacket,
+        memory: DecisionMemoryRecord,
+        *,
+        event_type: str,
+        detail: str,
+        actor: str = "system",
+        outcome_record: tuple[str, str, dict] | None = None,
+    ) -> PacketAuditChainEvent:
+        """Persist the packet, memory checkpoint, and audit event atomically."""
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                self._save_packet_with_cursor(cursor, packet)
+                self._append_packet_memory_with_cursor(cursor, memory)
+                if outcome_record is not None:
+                    outcome, outcome_date, payload = outcome_record
+                    self._add_outcome_record_with_cursor(
+                        cursor,
+                        packet.id,
+                        outcome,
+                        outcome_date,
+                        payload,
+                    )
+                return self._append_packet_audit_chain_event_with_cursor(
+                    cursor,
+                    packet,
+                    event_type=event_type,
+                    detail=detail,
+                    actor=actor,
+                )
+
+    def get_packet_audit_chain(self, packet_id: str) -> list[PacketAuditChainEvent]:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT * FROM packet_audit_chain WHERE packet_id = %s ORDER BY sequence_id",
+                    (packet_id,),
+                )
+                rows = cursor.fetchall()
+        return [
+            PacketAuditChainEvent(
+                sequence=row["sequence_id"],
+                packetId=row["packet_id"],
+                packetVersion=row["packet_version"],
+                eventType=row["event_type"],
+                detail=row["detail"],
+                actor=row["actor_id"],
+                createdAt=row["event_time"].isoformat().replace("+00:00", "Z"),
+                payloadHash=row["payload_hash"],
+                previousHash=row["previous_hash"],
+                eventHash=row["event_hash"],
+            )
+            for row in rows
+        ]
+
+    def get_packet_audit_head(self, packet_id: str) -> tuple[int, str] | None:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT last_sequence, last_event_hash FROM packet_audit_head WHERE packet_id = %s",
+                    (packet_id,),
+                )
+                row = cursor.fetchone()
+        if row is None:
+            return None
+        return int(row["last_sequence"]), str(row["last_event_hash"])
+
+    def list_packet_versions(self, packet_id: str) -> list[DecisionPacket]:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT artifact FROM packet_version WHERE packet_id = %s ORDER BY packet_version",
+                    (packet_id,),
+                )
+                rows = cursor.fetchall()
+        return [DecisionPacket.model_validate(row["artifact"]) for row in rows]

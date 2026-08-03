@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT / "services" / "api") not in sys.path:
     sys.path.insert(0, str(ROOT / "services" / "api"))
 
-from app.models import (
+from app.models import (  # noqa: E402
+    CoverageStatus,
     DecisionPacket,
     DecisionState,
     ReviewStatus,
@@ -19,18 +21,21 @@ from app.models import (
     AuditEvent,
     Claim,
     ProvenanceMetadata,
-    DisconfirmationOutcome,
-    RiskGateOutcome,
-    DecisionMemoryRecord,
+    DisconfirmationStatus,
+    IntegrationStage,
+    RiskGateStatus,
 )
-from app.selective_integration import (
+from app.selective_integration import (  # noqa: E402
     attach_provenance,
+    build_workflow_status,
     evaluate_risk_gate,
+    invalidate_integration,
     run_disconfirmation,
+    score_memory_relevance,
     create_decision_memory_record,
     verify_audit_chain,
 )
-from app.store import ReviewStore
+from app.store import ReviewStore  # noqa: E402
 
 
 def _make_packet() -> DecisionPacket:
@@ -92,6 +97,9 @@ def test_packet_provenance_and_disconfirmation_flow() -> None:
     outcome = run_disconfirmation(packet)
     assert outcome.status == "pass"
     assert outcome.requiresHumanReview is False
+    assert outcome.evaluator == "ambrosia-deterministic"
+    assert outcome.numericChecks[0].name == "packet_confidence_contract"
+    assert outcome.numericChecks[0].passed is True
 
 
 def test_risk_gate_blocks_when_concentration_risk_is_high() -> None:
@@ -108,6 +116,7 @@ def test_risk_gate_blocks_when_concentration_risk_is_high() -> None:
 
     outcome = evaluate_risk_gate(packet)
     assert outcome.status == "blocked"
+    assert outcome.evaluator == "ambrosia-deterministic"
     assert any("concentration" in reason.lower() for reason in outcome.reasons)
 
 
@@ -119,3 +128,129 @@ def test_decision_memory_can_be_recorded_and_retrieved() -> None:
     assert stored.memoryId == memory.memoryId
     assert store.get_packet_memory(packet.id)[0].packetId == packet.id
     assert verify_audit_chain([memory.model_dump(mode="json")], packet.id)
+
+
+def test_disconfirmation_uses_evidence_not_initial_confidence() -> None:
+    packet = _make_packet().model_copy(update={"confidence": 25})
+    packet = attach_provenance(
+        packet,
+        [
+            ProvenanceMetadata(
+                source="source",
+                sourceType="market",
+                timestamp="2026-08-02T10:00:00Z",
+                coverageStatus=CoverageStatus.full,
+                dataMode="fallback",
+            )
+        ],
+    )
+    outcome = run_disconfirmation(packet)
+    assert outcome.status == DisconfirmationStatus.passed
+
+
+def test_missing_risk_data_fails_closed() -> None:
+    packet = attach_provenance(
+        _make_packet(),
+        [
+            ProvenanceMetadata(
+                source="source",
+                sourceType="market",
+                timestamp="2026-08-02T10:00:00Z",
+                coverageStatus="full",
+                dataMode="fallback",
+            )
+        ],
+    )
+    outcome = evaluate_risk_gate(packet)
+    assert outcome.status == RiskGateStatus.insufficient_data
+    assert "riskMonitor" in outcome.missingInputs
+
+
+def test_audit_chain_detects_tampering_and_reordering() -> None:
+    packet = _make_packet()
+    first = create_decision_memory_record(packet, outcome="watch", notes="checkpoint")
+    second = create_decision_memory_record(
+        packet,
+        outcome="won",
+        notes="resolved",
+        record_type="resolution",
+        observed_at="2026-08-20T10:00:00Z",
+        previous_record=first,
+    )
+    assert verify_audit_chain([first, second], packet.id)
+    assert verify_audit_chain(
+        [first, second],
+        packet.id,
+        expected_count=2,
+        expected_head=second.eventHash,
+    )
+
+    tampered = second.model_copy(update={"outcome": "lost"})
+    assert not verify_audit_chain([first, tampered], packet.id)
+    assert not verify_audit_chain([second, first], packet.id)
+    assert not verify_audit_chain([second], packet.id)
+    assert not verify_audit_chain(
+        [first],
+        packet.id,
+        expected_count=2,
+        expected_head=second.eventHash,
+    )
+
+
+def test_input_change_invalidates_downstream_results() -> None:
+    packet = attach_provenance(
+        _make_packet(),
+        [
+            ProvenanceMetadata(
+                source="source",
+                sourceType="market",
+                timestamp="2026-08-02T10:00:00Z",
+                coverageStatus="full",
+                dataMode="fallback",
+            )
+        ],
+    )
+    disconfirmation = run_disconfirmation(packet)
+    risk = evaluate_risk_gate(packet)
+    packet = packet.model_copy(
+        update={
+            "disconfirmationResult": disconfirmation,
+            "riskGateResult": risk,
+            "integrationStatus": build_workflow_status(packet, disconfirmation, risk),
+        }
+    )
+
+    invalidated = invalidate_integration(packet, reason="evidence changed", clear_provenance=True)
+    assert invalidated.packetVersion == packet.packetVersion + 1
+    assert invalidated.disconfirmationResult is None
+    assert invalidated.riskGateResult is None
+    assert invalidated.provenance == []
+    assert invalidated.integrationStatus.state == IntegrationStage.not_started
+
+
+def test_outcome_weighted_memory_is_explainable_and_prevents_future_leakage() -> None:
+    packet = _make_packet()
+    resolved = create_decision_memory_record(
+        packet,
+        outcome="outperformed",
+        notes="Semiconductor breadth improved after the review window.",
+        score=84,
+        record_type="resolution",
+        observed_at="2026-08-20T10:00:00Z",
+    )
+    before_observation = score_memory_relevance(
+        resolved,
+        "semiconductor breadth",
+        now=datetime(2026, 8, 10, tzinfo=UTC),
+    )
+    assert before_observation is None
+
+    after_observation = score_memory_relevance(
+        resolved,
+        "semiconductor breadth",
+        now=datetime(2026, 8, 21, tzinfo=UTC),
+    )
+    assert after_observation is not None
+    score, components = after_observation
+    assert score > 0.5
+    assert set(components) == {"similarity", "recency", "outcomeQuality", "resolutionWeight"}

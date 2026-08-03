@@ -1,0 +1,76 @@
+{
+  "id": "packet-contract-fixture",
+  "schemaVersion": "packet.v1",
+  "workflowVersion": "quant-agent.v1",
+  "contractVersion": "selective-integration.v1",
+  "packetVersion": 1,
+  "workflowRunId": null,
+  "title": "Selective integration contract fixture",
+  "thesis": "A traceable packet can be evaluated without bypassing required controls.",
+  "ticker": "SPY",
+  "assetClass": "ETF",
+  "timeHorizon": "20 sessions",
+  "intendedExpression": "Advisory long review",
+  "status": "validation",
+  "decisionState": "watch",
+  "confidence": 70,
+  "trialCountImpact": 1,
+  "followUpDate": "2026-08-30",
+  "createdAt": "2026-08-02T20:00:00Z",
+  "claims": [
+    {
+      "id": "claim-1",
+      "kind": "sourced",
+      "text": "The evidence packet contains a point-in-time market snapshot.",
+      "evidence": "source-1",
+      "confidence": 80
+    }
+  ],
+  "strongestCritique": "The evidence may be stale before the review is completed.",
+  "disconfirmingTest": "Reject promotion if required evidence becomes stale or unavailable.",
+  "historicalAnalogue": {
+    "title": "Prior controlled packet",
+    "similarity": "Same governance path",
+    "differences": "Different market regime",
+    "resolution": "Require current evidence"
+  },
+  "validation": {
+    "status": "specified",
+    "hypothesis": "The governed packet satisfies every promotion invariant.",
+    "nullHypothesis": "At least one promotion invariant is unsatisfied.",
+    "dataRequirements": ["point-in-time market snapshot"],
+    "protocol": "Evaluate provenance, disconfirmation, and deterministic risk.",
+    "refusalReason": null
+  },
+  "tradeability": [
+    {
+      "topic": "liquidity",
+      "question": "Is liquidity evidence current?",
+      "severity": "medium"
+    }
+  ],
+  "sources": [
+    {
+      "id": "source-1",
+      "title": "Contract fixture source",
+      "sourceType": "market",
+      "timestamp": "2026-08-02T19:59:00Z",
+      "permission": "public",
+      "relevance": 1.0
+    }
+  ],
+  "audit": [],
+  "provenance": [],
+  "disconfirmationResult": null,
+  "riskGateResult": null,
+  "memoryRecords": [],
+  "integrationStatus": {
+    "state": "not_started",
+    "completedStages": [],
+    "staleStages": [],
+    "blockers": [],
+    "nextAction": "Attach provenance and run selective integration.",
+    "policyVersion": "selective-integration.v1",
+    "updatedAt": null
+  }
+}

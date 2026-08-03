@@ -10,6 +10,7 @@ from uuid import uuid4
 from .models import (
     AuditEvent,
     AuditEventCreate,
+    DecisionMemoryRecord,
     DecisionPacket,
     DecisionState,
     JobRecord,
@@ -19,6 +20,7 @@ from .models import (
     PacketApprovalCreate,
     PacketComment,
     PacketCommentCreate,
+    PacketAuditChainEvent,
     ReviewStatus,
     RoadmapDecisionRecord,
     RoadmapOutcomeRecord,
@@ -34,8 +36,8 @@ from .models import (
     WorkflowTemplateCreate,
     WorkflowTemplateStatus,
 )
-from .selective_integration import DecisionMemoryRecord
 from .db import PacketQuery, PostgresPacketStore, PostgresReviewStore
+from .selective_integration import create_packet_audit_event
 from .feedback import (
     FeedbackRecord,
     CalibrationBand,
@@ -88,6 +90,9 @@ class ReviewStore:
         self._cohort_calibrations: dict[tuple[str, str, str], CohortCalibration] = {}
         self._calibration_alerts: list[CalibrationAlert] = []
         self._packet_memories: dict[str, list[DecisionMemoryRecord]] = {}
+        self._packet_audit_chains: dict[str, list[PacketAuditChainEvent]] = {}
+        self._packet_audit_heads: dict[str, tuple[int, str]] = {}
+        self._packet_versions: dict[str, list[DecisionPacket]] = {}
 
         database_url = os.getenv("DATABASE_URL")
         if self._db_required and not database_url:
@@ -269,12 +274,40 @@ class ReviewStore:
         return review
 
     def append_packet_memory(self, packet_id: str, memory: DecisionMemoryRecord) -> DecisionMemoryRecord:
+        if memory.packetId != packet_id:
+            raise ValueError("decision memory packetId does not match target packet")
+        if self._db_enabled and self._packet_db is not None:
+            try:
+                return self._packet_db.append_packet_memory(memory)
+            except Exception as exc:  # pragma: no cover - environment dependent
+                self._disable_db(exc)
         memories = self._packet_memories.setdefault(packet_id, [])
+        existing = next((item for item in memories if item.memoryId == memory.memoryId), None)
+        if existing is not None:
+            return existing
+        expected_sequence = len(memories) + 1
+        expected_previous_hash = memories[-1].eventHash if memories else "0" * 64
+        if memory.sequence != expected_sequence or memory.previousHash != expected_previous_hash:
+            raise ValueError("decision memory hash-chain position is stale")
         memories.append(memory)
         return memory
 
     def get_packet_memory(self, packet_id: str) -> list[DecisionMemoryRecord]:
+        if self._db_enabled and self._packet_db is not None:
+            try:
+                return self._packet_db.get_packet_memory(packet_id)
+            except Exception as exc:  # pragma: no cover - environment dependent
+                self._disable_db(exc)
         return list(self._packet_memories.get(packet_id, []))
+
+    def list_decision_memories(self, limit: int = 500) -> list[DecisionMemoryRecord]:
+        if self._db_enabled and self._packet_db is not None:
+            try:
+                return self._packet_db.list_decision_memories(limit=limit)
+            except Exception as exc:  # pragma: no cover - environment dependent
+                self._disable_db(exc)
+        memories = [item for records in self._packet_memories.values() for item in records]
+        return sorted(memories, key=lambda item: item.createdAt, reverse=True)[:limit]
 
     def record_decision(self, review_id: str, decision_state: DecisionState) -> TradeReview | None:
         if self._db_enabled and self._review_db is not None:
@@ -374,7 +407,133 @@ class ReviewStore:
             except Exception as exc:  # pragma: no cover - environment dependent
                 self._disable_db(exc)
         self._packets[packet.id] = packet
+        versions = self._packet_versions.setdefault(packet.id, [])
+        if not any(item.packetVersion == packet.packetVersion for item in versions):
+            versions.append(packet.model_copy(deep=True))
         return packet
+
+    def list_packet_versions(self, packet_id: str) -> list[DecisionPacket]:
+        if self._db_enabled and self._packet_db is not None:
+            try:
+                return self._packet_db.list_packet_versions(packet_id)
+            except Exception as exc:  # pragma: no cover - environment dependent
+                self._disable_db(exc)
+        return [item.model_copy(deep=True) for item in self._packet_versions.get(packet_id, [])]
+
+    def append_packet_audit_chain_event(
+        self,
+        packet: DecisionPacket,
+        *,
+        event_type: str,
+        detail: str,
+        actor: str = "system",
+    ) -> PacketAuditChainEvent:
+        if self._db_enabled and self._packet_db is not None:
+            try:
+                return self._packet_db.append_packet_audit_chain_event(
+                    packet,
+                    event_type=event_type,
+                    detail=detail,
+                    actor=actor,
+                )
+            except Exception as exc:  # pragma: no cover - environment dependent
+                self._disable_db(exc)
+        events = self._packet_audit_chains.setdefault(packet.id, [])
+        event = create_packet_audit_event(
+            packet,
+            event_type=event_type,
+            detail=detail,
+            actor=actor,
+            previous_event=events[-1] if events else None,
+        )
+        events.append(event)
+        self._packet_audit_heads[packet.id] = (event.sequence, event.eventHash)
+        return event
+
+    def commit_selective_integration(
+        self,
+        packet: DecisionPacket,
+        memory: DecisionMemoryRecord,
+        *,
+        event_type: str,
+        detail: str,
+        actor: str = "system",
+        outcome_record: tuple[str, str, dict] | None = None,
+    ) -> DecisionPacket:
+        if self._db_enabled and self._packet_db is not None:
+            try:
+                self._packet_db.commit_selective_integration(
+                    packet,
+                    memory,
+                    event_type=event_type,
+                    detail=detail,
+                    actor=actor,
+                    outcome_record=outcome_record,
+                )
+                return packet
+            except ValueError:
+                # Optimistic/hash-chain conflicts are governed write conflicts,
+                # not database outages. Never degrade them to process-local state.
+                raise
+            except Exception as exc:  # pragma: no cover - environment dependent
+                self._disable_db(exc)
+        self.append_packet_memory(packet.id, memory)
+        saved = self.save_packet(packet)
+        self.append_packet_audit_chain_event(
+            saved,
+            event_type=event_type,
+            detail=detail,
+            actor=actor,
+        )
+        return saved
+
+    def commit_packet_transition(
+        self,
+        packet: DecisionPacket,
+        *,
+        event_type: str,
+        detail: str,
+        actor: str = "system",
+        outcome_record: tuple[str, str, dict] | None = None,
+    ) -> DecisionPacket:
+        if self._db_enabled and self._packet_db is not None:
+            try:
+                self._packet_db.commit_packet_transition(
+                    packet,
+                    event_type=event_type,
+                    detail=detail,
+                    actor=actor,
+                    outcome_record=outcome_record,
+                )
+                return packet
+            except ValueError:
+                raise
+            except Exception as exc:  # pragma: no cover - environment dependent
+                self._disable_db(exc)
+        saved = self.save_packet(packet)
+        self.append_packet_audit_chain_event(
+            saved,
+            event_type=event_type,
+            detail=detail,
+            actor=actor,
+        )
+        return saved
+
+    def get_packet_audit_chain(self, packet_id: str) -> list[PacketAuditChainEvent]:
+        if self._db_enabled and self._packet_db is not None:
+            try:
+                return self._packet_db.get_packet_audit_chain(packet_id)
+            except Exception as exc:  # pragma: no cover - environment dependent
+                self._disable_db(exc)
+        return list(self._packet_audit_chains.get(packet_id, []))
+
+    def get_packet_audit_head(self, packet_id: str) -> tuple[int, str] | None:
+        if self._db_enabled and self._packet_db is not None:
+            try:
+                return self._packet_db.get_packet_audit_head(packet_id)
+            except Exception as exc:  # pragma: no cover - environment dependent
+                self._disable_db(exc)
+        return self._packet_audit_heads.get(packet_id)
 
     def add_packet_audit_event(
         self,

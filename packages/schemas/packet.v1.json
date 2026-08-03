@@ -1,0 +1,270 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ambrosia.local/schemas/packet.v1.json",
+  "title": "Ambrosia Decision Packet",
+  "type": "object",
+  "required": [
+    "id",
+    "schemaVersion",
+    "workflowVersion",
+    "contractVersion",
+    "packetVersion",
+    "title",
+    "thesis",
+    "ticker",
+    "assetClass",
+    "timeHorizon",
+    "intendedExpression",
+    "status",
+    "decisionState",
+    "confidence",
+    "trialCountImpact",
+    "followUpDate",
+    "createdAt",
+    "claims",
+    "strongestCritique",
+    "disconfirmingTest",
+    "historicalAnalogue",
+    "validation",
+    "tradeability",
+    "sources",
+    "audit",
+    "provenance",
+    "memoryRecords",
+    "integrationStatus"
+  ],
+  "properties": {
+    "id": { "type": "string", "minLength": 1 },
+    "schemaVersion": { "const": "packet.v1" },
+    "workflowVersion": { "type": "string", "minLength": 1 },
+    "contractVersion": { "const": "selective-integration.v1" },
+    "packetVersion": { "type": "integer", "minimum": 1 },
+    "workflowRunId": { "type": ["string", "null"] },
+    "title": { "type": "string" },
+    "thesis": { "type": "string" },
+    "ticker": { "type": "string" },
+    "assetClass": { "type": "string" },
+    "timeHorizon": { "type": "string" },
+    "intendedExpression": { "type": "string" },
+    "status": {
+      "enum": ["intake", "retrieval", "adversarial_review", "validation", "tradeability", "synthesis", "decision_recorded"]
+    },
+    "decisionState": {
+      "type": ["string", "null"],
+      "enum": ["pursue", "watch", "reject", "needs_more_data", null]
+    },
+    "confidence": { "type": "integer", "minimum": 0, "maximum": 100 },
+    "trialCountImpact": { "type": "integer" },
+    "followUpDate": { "type": "string" },
+    "createdAt": { "type": "string" },
+    "claims": { "type": "array" },
+    "strongestCritique": { "type": "string" },
+    "disconfirmingTest": { "type": "string" },
+    "historicalAnalogue": { "type": "object" },
+    "validation": { "type": "object" },
+    "tradeability": { "type": "array" },
+    "sources": { "type": "array" },
+    "audit": { "type": "array" },
+    "provenance": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/provenanceMetadata" }
+    },
+    "disconfirmationResult": {
+      "oneOf": [
+        { "$ref": "#/$defs/disconfirmationOutcome" },
+        { "type": "null" }
+      ]
+    },
+    "riskGateResult": {
+      "oneOf": [
+        { "$ref": "#/$defs/riskGateOutcome" },
+        { "type": "null" }
+      ]
+    },
+    "memoryRecords": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/decisionMemoryRecord" }
+    },
+    "integrationStatus": { "$ref": "#/$defs/packetWorkflowStatus" }
+  },
+  "$defs": {
+    "metricLineage": {
+      "type": "object",
+      "required": ["function", "parameters", "inputEnvelopeIds", "codeVersion", "computedAt"],
+      "properties": {
+        "function": { "type": "string" },
+        "parameters": { "type": "object" },
+        "inputEnvelopeIds": { "type": "array", "items": { "type": "string" } },
+        "codeVersion": { "type": "string" },
+        "computedAt": { "type": "string" }
+      }
+    },
+    "numericCheck": {
+      "type": "object",
+      "required": ["name", "expression"],
+      "properties": {
+        "name": { "type": "string" },
+        "expression": { "type": "string" },
+        "passed": { "type": ["boolean", "null"] },
+        "observedValue": { "type": ["number", "null"] },
+        "threshold": { "type": ["number", "null"] },
+        "notes": { "type": ["string", "null"] }
+      }
+    },
+    "provenanceMetadata": {
+      "type": "object",
+      "required": [
+        "source",
+        "sourceType",
+        "timestamp",
+        "stale",
+        "coverageStatus",
+        "dataMode",
+        "pointInTime",
+        "confidence"
+      ],
+      "properties": {
+        "envelopeId": { "type": ["string", "null"] },
+        "source": { "type": "string" },
+        "sourceType": { "type": "string" },
+        "timestamp": { "type": "string" },
+        "sourceUrl": { "type": ["string", "null"] },
+        "retrievedAt": { "type": ["string", "null"] },
+        "asOf": { "type": ["string", "null"] },
+        "freshnessSeconds": { "type": ["integer", "null"], "minimum": 0 },
+        "freshnessSlaSeconds": { "type": ["integer", "null"], "minimum": 0 },
+        "stale": { "type": "boolean" },
+        "coverageStatus": { "enum": ["full", "partial", "unavailable"] },
+        "dataMode": { "enum": ["live", "fallback", "demo"] },
+        "license": { "type": ["string", "null"] },
+        "feedTier": { "type": ["string", "null"] },
+        "pointInTime": { "type": "boolean" },
+        "confidence": { "type": "string" },
+        "notes": { "type": ["string", "null"] },
+        "lineage": {
+          "oneOf": [
+            { "$ref": "#/$defs/metricLineage" },
+            { "type": "null" }
+          ]
+        }
+      }
+    },
+    "disconfirmationOutcome": {
+      "type": "object",
+      "required": [
+        "status",
+        "requiresHumanReview",
+        "summary",
+        "reasons",
+        "claimsTested",
+        "falsifiableConditions",
+        "evidenceReferences",
+        "evaluator",
+        "policyVersion",
+        "packetVersion"
+      ],
+      "properties": {
+        "status": { "enum": ["not_run", "pass", "fail", "insufficient_evidence", "requires_human_review"] },
+        "requiresHumanReview": { "type": "boolean" },
+        "summary": { "type": "string" },
+        "reasons": { "type": "array", "items": { "type": "string" } },
+        "claimsTested": { "type": "array", "items": { "type": "string" } },
+        "falsifiableConditions": { "type": "array", "items": { "type": "string" } },
+        "alternativeExplanations": { "type": "array", "items": { "type": "string" } },
+        "evidenceReferences": { "type": "array", "items": { "type": "string" } },
+        "contradictions": { "type": "array", "items": { "type": "string" } },
+        "missingEvidence": { "type": "array", "items": { "type": "string" } },
+        "numericChecks": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/numericCheck" }
+        },
+        "evaluator": { "type": "string" },
+        "policyVersion": { "type": "string" },
+        "packetVersion": { "type": "integer", "minimum": 1 },
+        "evaluatedAt": { "type": ["string", "null"] },
+        "inputHash": { "type": ["string", "null"] }
+      }
+    },
+    "riskGateOutcome": {
+      "type": "object",
+      "required": [
+        "status",
+        "reasons",
+        "warnings",
+        "hardBlocks",
+        "missingInputs",
+        "evaluator",
+        "policyVersion",
+        "packetVersion"
+      ],
+      "properties": {
+        "status": { "enum": ["not_evaluated", "pass", "warn", "blocked", "insufficient_data"] },
+        "reasons": { "type": "array", "items": { "type": "string" } },
+        "warnings": { "type": "array", "items": { "type": "string" } },
+        "hardBlocks": { "type": "array", "items": { "type": "string" } },
+        "missingInputs": { "type": "array", "items": { "type": "string" } },
+        "evaluator": { "type": "string" },
+        "policyVersion": { "type": "string" },
+        "packetVersion": { "type": "integer", "minimum": 1 },
+        "evaluatedAt": { "type": ["string", "null"] },
+        "inputHash": { "type": ["string", "null"] }
+      }
+    },
+    "decisionMemoryRecord": {
+      "type": "object",
+      "required": [
+        "memoryId",
+        "packetId",
+        "packetVersion",
+        "recordType",
+        "outcome",
+        "createdAt",
+        "sequence",
+        "previousHash",
+        "eventHash"
+      ],
+      "properties": {
+        "memoryId": { "type": "string" },
+        "packetId": { "type": "string" },
+        "packetVersion": { "type": "integer", "minimum": 1 },
+        "recordType": { "enum": ["checkpoint", "resolution"] },
+        "outcome": { "type": "string" },
+        "notes": { "type": ["string", "null"] },
+        "score": { "type": ["integer", "null"], "minimum": 0, "maximum": 100 },
+        "createdAt": { "type": "string" },
+        "observedAt": { "type": ["string", "null"] },
+        "evidenceReferences": { "type": "array", "items": { "type": "string" } },
+        "packetContentHash": { "type": ["string", "null"] },
+        "sequence": { "type": "integer", "minimum": 1 },
+        "previousHash": { "type": "string", "minLength": 64, "maxLength": 64 },
+        "eventHash": { "type": "string", "minLength": 64, "maxLength": 64 }
+      }
+    },
+    "packetWorkflowStatus": {
+      "type": "object",
+      "required": ["state", "completedStages", "staleStages", "blockers", "nextAction", "policyVersion"],
+      "properties": {
+        "state": {
+          "enum": [
+            "not_started",
+            "evidence_ready",
+            "disconfirmation_pending",
+            "disconfirmation_review",
+            "risk_pending",
+            "blocked",
+            "human_review",
+            "promotable",
+            "decided",
+            "resolved"
+          ]
+        },
+        "completedStages": { "type": "array", "items": { "type": "string" } },
+        "staleStages": { "type": "array", "items": { "type": "string" } },
+        "blockers": { "type": "array", "items": { "type": "string" } },
+        "nextAction": { "type": "string" },
+        "policyVersion": { "type": "string" },
+        "updatedAt": { "type": ["string", "null"] }
+      }
+    }
+  }
+}

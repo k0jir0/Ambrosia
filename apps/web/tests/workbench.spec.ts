@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page, type Route } from "@playwright/test";
 
 const LOCAL_API_ROUTE = "http://localhost:8000/**";
 
@@ -71,9 +71,20 @@ test("review route uses focused decision workbench", async ({ page }) => {
   await expect(page.getByText("Report exported from local fallback").first()).toBeVisible();
 });
 
+test("governed decisions fail closed when the API is unavailable", async ({ page }) => {
+  await page.goto("/review/atr-003");
+  await page.getByRole("button", { name: "Watch" }).click();
+
+  await expect(page.getByText(/Decision blocked:/)).toBeVisible();
+  await expect(page.getByText("Human decision: Watch.")).toHaveCount(0);
+  await expect(page.getByText("Decision pending", { exact: true })).toBeVisible();
+});
+
 test("soft-policy advisories do not lock watch and reject decisions", async ({ page }) => {
+  const governedPackets = new Map<string, JsonRecord>();
   await page.unroute(LOCAL_API_ROUTE);
   await page.route(LOCAL_API_ROUTE, async (route) => {
+    if (await fulfillGovernedPacketRequest(route, governedPackets)) return;
     if (route.request().url().endsWith("/signals/signal-e2e-alpha-decay/alpha-decay")) {
       await route.fulfill({
         status: 200,
@@ -116,11 +127,14 @@ test("signal proposal recreates stale linked signal before writeback", async ({ 
   let staleLinkAttempted = false;
   let replacementSignalCreated = false;
   let writebackDecisionAction = "";
+  const governedPackets = new Map<string, JsonRecord>();
 
   await page.unroute(LOCAL_API_ROUTE);
   await page.route(LOCAL_API_ROUTE, async (route) => {
     const request = route.request();
     const url = request.url();
+
+    if (await fulfillGovernedPacketRequest(route, governedPackets)) return;
 
     if (url.endsWith("/signals/stale-signal/link-review")) {
       staleLinkAttempted = true;
@@ -190,11 +204,14 @@ test("signal proposal recreates stale linked signal before writeback", async ({ 
 
 test("signal proposal sanitizes short generated signal fields", async ({ page }) => {
   let createdSignalFormula = "";
+  const governedPackets = new Map<string, JsonRecord>();
 
   await page.unroute(LOCAL_API_ROUTE);
   await page.route(LOCAL_API_ROUTE, async (route) => {
     const request = route.request();
     const url = request.url();
+
+    if (await fulfillGovernedPacketRequest(route, governedPackets)) return;
 
     if (url.endsWith("/alpha/hypotheses") && request.method() === "POST") {
       await route.fulfill({ status: 201, contentType: "application/json", body: JSON.stringify({ hypothesisId: "alpha-sanitized" }) });
@@ -338,6 +355,108 @@ async function openSidebarRoute(page: Page, label: string, path: string) {
     page.waitForURL(new RegExp(`${escapeRegExp(path)}(?:$|[?#])`), { timeout: 20000 }),
     link.click()
   ]);
+}
+
+type JsonRecord = Record<string, unknown>;
+
+async function fulfillGovernedPacketRequest(
+  route: Route,
+  packets: Map<string, JsonRecord>
+): Promise<boolean> {
+  const request = route.request();
+  const url = new URL(request.url());
+
+  if (request.method() === "POST" && url.pathname === "/packets") {
+    const input = request.postDataJSON() as JsonRecord;
+    const packetId = String(input.id);
+    const governed = {
+      ...input,
+      provenance: [
+        {
+          envelopeId: `env-${packetId}`,
+          source: "playwright-governed-fixture",
+          sourceType: "review",
+          timestamp: "2026-08-02T00:00:00Z",
+          retrievedAt: "2026-08-02T00:00:00Z",
+          asOf: "2026-08-02T00:00:00Z",
+          stale: false,
+          coverageStatus: "full",
+          dataMode: "demo",
+          pointInTime: true,
+          confidence: "verified"
+        }
+      ],
+      disconfirmationResult: {
+        status: "pass",
+        requiresHumanReview: false,
+        summary: "Playwright governed fixture passed.",
+        reasons: [],
+        evaluator: "playwright-fixture",
+        policyVersion: "disconfirmation.v1",
+        packetVersion: 1
+      },
+      riskGateResult: {
+        status: "pass",
+        reasons: [],
+        warnings: [],
+        hardBlocks: [],
+        missingInputs: [],
+        evaluator: "playwright-fixture",
+        policyVersion: "risk-policy.v1",
+        packetVersion: 1
+      },
+      integrationStatus: {
+        state: "promotable",
+        completedStages: ["provenance", "disconfirmation", "risk_gate"],
+        staleStages: [],
+        blockers: [],
+        nextAction: "Record the human decision.",
+        policyVersion: "selective-integration.v1",
+        updatedAt: "2026-08-02T00:00:00Z"
+      }
+    };
+    packets.set(packetId, governed);
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(governed) });
+    return true;
+  }
+
+  const packetMatch = url.pathname.match(/^\/packets\/([^/]+)$/);
+  if (request.method() === "GET" && packetMatch) {
+    const packet = packets.get(decodeURIComponent(packetMatch[1]));
+    await route.fulfill({
+      status: packet ? 200 : 404,
+      contentType: "application/json",
+      body: JSON.stringify(packet ?? { detail: "Packet not found" })
+    });
+    return true;
+  }
+
+  const decisionMatch = url.pathname.match(/^\/packets\/([^/]+)\/decision$/);
+  if (request.method() === "POST" && decisionMatch) {
+    const packetId = decodeURIComponent(decisionMatch[1]);
+    const packet = packets.get(packetId);
+    if (!packet) {
+      await route.fulfill({ status: 404, contentType: "application/json", body: JSON.stringify({ detail: "Packet not found" }) });
+      return true;
+    }
+    const decision = request.postDataJSON() as { decision_state: string };
+    const decided = {
+      ...packet,
+      decisionState: decision.decision_state,
+      status: "decision_recorded",
+      integrationStatus: {
+        ...(packet.integrationStatus as JsonRecord),
+        state: "decided",
+        completedStages: ["provenance", "disconfirmation", "risk_gate", "human_decision"],
+        nextAction: "Observe the forward outcome and resolve decision memory."
+      }
+    };
+    packets.set(packetId, decided);
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(decided) });
+    return true;
+  }
+
+  return false;
 }
 
 function escapeRegExp(value: string): string {

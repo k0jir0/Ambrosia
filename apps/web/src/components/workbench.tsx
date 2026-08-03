@@ -20,6 +20,7 @@ import {
   linkAlphaHypothesisSignal,
   linkSignalReview,
   recordDecision,
+  recordPacketDecision,
   recordPacketOutcome,
   refreshPacketMetrics,
   runPacketAgents,
@@ -263,7 +264,7 @@ export function Workbench({ initialReviewId }: { initialReviewId?: string } = {}
     }));
   }
 
-  function updateDecision(
+  async function updateDecision(
     decisionState: DecisionState,
     rationale?: string,
     suggestedDecision?: DecisionState | null,
@@ -279,6 +280,28 @@ export function Workbench({ initialReviewId }: { initialReviewId?: string } = {}
     }
 
     const override = suggestedDecision && decisionState !== suggestedDecision;
+    const decisionRationale = rationale?.trim() || `Human selected ${decisionLabels[decisionState]}.`;
+    setActiveAction("Record governed decision");
+    try {
+      const { reviewId, packetId } = await ensurePacketForReview(activeReview);
+      const packet = await recordPacketDecision(packetId, {
+        decision_state: decisionState,
+        rationale: decisionRationale,
+        actor: "ambrosia-workbench-human"
+      });
+      syncReviewFromPacket(reviewId, packet);
+      await recordDecision(reviewId, decisionState).catch(() => {
+        // The packet is the governed source of truth; legacy review writeback is best effort.
+      });
+      setActionFeedback({ tone: "good", message: `Governed decision recorded: ${decisionLabels[decisionState]}.` });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "unknown error";
+      appendAuditEvent("decision.governed.blocked", `Governed decision was not recorded: ${message}`);
+      setActionFeedback({ tone: "warn", message: `Decision blocked: ${message}` });
+      setActiveAction(null);
+      return;
+    }
+
     updateReview(activeReview.id, (review) => ({
       ...review,
       decisionState,
@@ -303,9 +326,7 @@ export function Workbench({ initialReviewId }: { initialReviewId?: string } = {}
         }
       ]
     }));
-    void recordDecision(activeReview.id, decisionState).catch(() => {
-      // Sample and fallback reviews may not exist in the API store; keep local decision memory intact.
-    });
+    setActiveAction(null);
 
     if (activeAlphaLink) {
       upsertAlphaWritebackForReview(activeReview.id, activeAlphaLink, {
@@ -532,6 +553,9 @@ export function Workbench({ initialReviewId }: { initialReviewId?: string } = {}
       id: `pkt-${review.id}`,
       schemaVersion: "packet.v1",
       workflowVersion: "quant-agent.v1",
+      contractVersion: "selective-integration.v1",
+      packetVersion: 1,
+      workflowRunId: null,
       title: review.title,
       thesis: review.thesis,
       ticker: review.ticker,
@@ -552,10 +576,19 @@ export function Workbench({ initialReviewId }: { initialReviewId?: string } = {}
       tradeability: review.tradeability,
       sources: review.sources,
       audit: review.audit,
-      provenance: null,
+      provenance: [],
       disconfirmationResult: null,
       riskGateResult: null,
-      memoryRecords: null,
+      memoryRecords: [],
+      integrationStatus: {
+        state: "not_started",
+        completedStages: [],
+        staleStages: [],
+        blockers: [],
+        nextAction: "Attach provenance and run selective integration.",
+        policyVersion: "selective-integration.v1",
+        updatedAt: null
+      },
       marketSnapshot: null,
       technicals: null,
       sentiment: null,
@@ -719,7 +752,7 @@ export function Workbench({ initialReviewId }: { initialReviewId?: string } = {}
       appendAuditEvent("selective.integration", `Selective integration completed for ${activeReview.ticker}: ${packet.disconfirmationResult?.status ?? "pending"}.`);
       return "ok";
     } catch {
-      appendAuditEvent("selective.integration.fallback", "Selective integration endpoint unavailable; local workflow remains active.");
+      appendAuditEvent("selective.integration.blocked", "Selective integration endpoint unavailable; governed decision actions remain blocked.");
       return "fallback";
     }
   }
@@ -2111,6 +2144,7 @@ function ProviderProvenancePanel({ packet }: { packet: DecisionPacket | null }) 
   const disconfirmation = packet?.disconfirmationResult;
   const riskGate = packet?.riskGateResult;
   const memoryRecords = packet?.memoryRecords ?? [];
+  const integration = packet?.integrationStatus;
 
   return (
     <div className="mt-4 rounded-md border border-line bg-fog/60 p-3 text-xs">
@@ -2126,6 +2160,9 @@ function ProviderProvenancePanel({ packet }: { packet: DecisionPacket | null }) 
             {provider ? (provider.fallbackUsed ? "Fallback used" : "No runtime fallback") : "Pending"}
           </Badge>
           <Badge tone="info">{roleCount}/{expectedAgentRoles.length} roles</Badge>
+          <Badge tone={integration?.state === "promotable" || integration?.state === "decided" || integration?.state === "resolved" ? "good" : integration?.state === "blocked" ? "warn" : "neutral"}>
+            {integration?.state ?? "not_started"}
+          </Badge>
         </div>
       </div>
       {provider ? (
@@ -2143,6 +2180,19 @@ function ProviderProvenancePanel({ packet }: { packet: DecisionPacket | null }) 
         <ProofMetric label="Risk gate" value={riskGate ? `${riskGate.status} ${riskGate.reasons.length ? `- ${riskGate.reasons.join(", ")}` : ""}`.trim() : "Pending"} />
         <ProofMetric label="Memory records" value={memoryRecords.length ? `${memoryRecords.length} record(s) stored` : "No memory records yet"} />
       </div>
+      <div className="mt-2 grid gap-2 md:grid-cols-2">
+        <ProofMetric label="Next governed action" value={integration?.nextAction ?? "Run selective integration before recording a decision."} />
+        <ProofMetric label="Workflow blockers" value={integration?.blockers.length ? integration.blockers.join("; ") : "None recorded"} />
+      </div>
+      {provenance.length ? (
+        <div className="mt-3 flex flex-wrap gap-2">
+          {provenance.map((item) => (
+            <Badge key={item.envelopeId ?? `${item.source}-${item.timestamp}`} tone={item.stale || item.coverageStatus === "unavailable" ? "warn" : item.dataMode === "live" ? "good" : "neutral"}>
+              {item.source}: {item.dataMode ?? "unknown"} / {item.coverageStatus ?? "unknown"}{item.stale ? " / stale" : ""}
+            </Badge>
+          ))}
+        </div>
+      ) : null}
     </div>
   );
 }

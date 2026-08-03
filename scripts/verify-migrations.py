@@ -19,6 +19,10 @@ REQUIRED_BASELINE_TABLES = [
     "CREATE TABLE IF NOT EXISTS review_packet",
     "CREATE TABLE IF NOT EXISTS retrieval_event",
     "CREATE TABLE IF NOT EXISTS outcome_record",
+    "CREATE TABLE IF NOT EXISTS packet_version",
+    "CREATE TABLE IF NOT EXISTS decision_memory_record",
+    "CREATE TABLE IF NOT EXISTS packet_audit_chain",
+    "CREATE TABLE IF NOT EXISTS packet_audit_head",
 ]
 
 

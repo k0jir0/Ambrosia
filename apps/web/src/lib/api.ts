@@ -2,12 +2,14 @@ import type {
   BacktestPrepareRequest,
   BacktestRunRequest,
   ConfidenceDeriveRequest,
+  DecisionMemoryRecord,
   DecisionPacket,
   JobRecord,
   MarketProviderStatus,
   PacketOutcomeUpdate,
   MarketSnapshot,
   PortfolioContextUpdate,
+  PacketWorkflowStatus,
   ProviderMode,
   ReportArtifact,
   RetrievalResponse,
@@ -308,6 +310,62 @@ export async function selectiveIntegratePacket(packetId: string): Promise<Decisi
   });
 
   return readJsonResponse<DecisionPacket>(response);
+}
+
+export async function recordPacketDecision(
+  packetId: string,
+  body: { decision_state: string; rationale: string; actor?: string }
+): Promise<DecisionPacket> {
+  return postPacketAction(packetId, "/decision", body);
+}
+
+export async function refreshPacketProvenance(packetId: string): Promise<DecisionPacket> {
+  return postPacketAction(packetId, "/provenance/refresh", {});
+}
+
+export async function runPacketDisconfirmation(packetId: string): Promise<DecisionPacket> {
+  return postPacketAction(packetId, "/disconfirmation/run", {});
+}
+
+export async function runPacketRiskGate(packetId: string): Promise<DecisionPacket> {
+  return postPacketAction(packetId, "/risk-gate/run", {});
+}
+
+export async function getPacketIntegrationStatus(packetId: string): Promise<PacketWorkflowStatus> {
+  const apiBaseUrl = getApiBaseUrl();
+  if (!apiBaseUrl) throw new ApiUnavailableError();
+  const response = await fetchWithTimeout(`${apiBaseUrl}/packets/${encodeURIComponent(packetId)}/integration/status`);
+  return readJsonResponse<PacketWorkflowStatus>(response);
+}
+
+export async function getPacketMemory(packetId: string): Promise<DecisionMemoryRecord[]> {
+  const apiBaseUrl = getApiBaseUrl();
+  if (!apiBaseUrl) throw new ApiUnavailableError();
+  const response = await fetchWithTimeout(`${apiBaseUrl}/packets/${encodeURIComponent(packetId)}/memory`);
+  return readJsonResponse<DecisionMemoryRecord[]>(response);
+}
+
+export async function resolvePacketMemory(
+  packetId: string,
+  body: {
+    outcome: string;
+    observedAt: string;
+    score?: number | null;
+    notes?: string | null;
+    evidenceReferences?: string[];
+    actor?: string;
+  }
+): Promise<DecisionPacket> {
+  return postPacketAction(packetId, "/memory/resolve", body);
+}
+
+export async function verifyPacketAuditChain(
+  packetId: string
+): Promise<{ packetId: string; valid: boolean; eventCount: number; verifiedAt: string }> {
+  const apiBaseUrl = getApiBaseUrl();
+  if (!apiBaseUrl) throw new ApiUnavailableError();
+  const response = await fetchWithTimeout(`${apiBaseUrl}/packets/${encodeURIComponent(packetId)}/audit-chain/verify`);
+  return readJsonResponse<{ packetId: string; valid: boolean; eventCount: number; verifiedAt: string }>(response);
 }
 
 export async function retrievePacketContext(packetId: string, query: string, topK = 5): Promise<RetrievalResponse> {

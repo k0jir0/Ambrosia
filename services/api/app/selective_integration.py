@@ -12,6 +12,7 @@ from .models import (
     DataMode,
     DecisionMemoryRecord,
     DecisionPacket,
+    DecisionState,
     DisconfirmationOutcome,
     DisconfirmationStatus,
     IntegrationStage,
@@ -675,3 +676,13 @@ def packet_promotion_blockers(packet: DecisionPacket) -> list[str]:
     if not packet.provenance:
         blockers.append("packet provenance is missing")
     return blockers
+
+
+def packet_decision_blockers(
+    packet: DecisionPacket,
+    decision_state: DecisionState,
+) -> list[str]:
+    """Return hard gates only for decisions that promote a packet toward action."""
+    if decision_state != DecisionState.pursue:
+        return []
+    return packet_promotion_blockers(packet)

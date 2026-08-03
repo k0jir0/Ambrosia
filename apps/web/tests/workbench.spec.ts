@@ -80,7 +80,7 @@ test("governed decisions fail closed when the API is unavailable", async ({ page
   await expect(page.getByText("Decision pending", { exact: true })).toBeVisible();
 });
 
-test("soft-policy advisories do not lock watch and reject decisions", async ({ page }) => {
+test("soft-policy advisories allow a safe needs-more-data decision", async ({ page }) => {
   const governedPackets = new Map<string, JsonRecord>();
   await page.unroute(LOCAL_API_ROUTE);
   await page.route(LOCAL_API_ROUTE, async (route) => {
@@ -118,8 +118,9 @@ test("soft-policy advisories do not lock watch and reject decisions", async ({ p
   await expect(page.getByText("Resolve soft-policy decay/hygiene advisories first.")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Watch" })).toBeEnabled();
   await expect(page.getByRole("button", { name: "Reject" })).toBeEnabled();
-  await page.getByRole("button", { name: "Watch" }).click();
-  await expect(page.getByText("Human decision: Watch.").first()).toBeVisible();
+  await expect(page.getByRole("button", { name: "Needs more data" })).toBeEnabled();
+  await page.getByRole("button", { name: "Needs more data" }).click();
+  await expect(page.getByText("Human decision: Needs more data.").first()).toBeVisible();
   await expect(page.getByRole("button", { name: "Write HOLD to Signal" })).toBeEnabled();
 });
 

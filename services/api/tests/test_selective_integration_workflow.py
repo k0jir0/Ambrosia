@@ -117,12 +117,51 @@ def test_missing_risk_data_blocks_packet_promotion() -> None:
     assert body["riskGateResult"]["status"] == "insufficient_data"
     assert body["integrationStatus"]["state"] == "blocked"
 
-    decision = client.post(
+    pursue = client.post(
         f"/packets/{packet_id}/decision",
-        json={"decision_state": "watch", "rationale": "Attempted bypass"},
+        json={"decision_state": "pursue", "rationale": "Attempted promotion bypass"},
     )
-    assert decision.status_code == 409
-    assert decision.json()["detail"]["code"] == "packet_not_promotable"
+    assert pursue.status_code == 409
+    assert pursue.json()["detail"]["code"] == "packet_not_promotable"
+
+    neutral = client.post(
+        f"/packets/{packet_id}/decision",
+        json={"decision_state": "needs_more_data", "rationale": "Hold for evidence"},
+    )
+    assert neutral.status_code == 200
+    assert neutral.json()["decisionState"] == "needs_more_data"
+    assert neutral.json()["integrationStatus"]["state"] == "decided"
+
+
+def test_non_promoting_decision_is_allowed_before_integration() -> None:
+    payload = _packet_payload(with_risk=False)
+    packet_id = payload["id"]
+    assert client.post("/packets", json=payload).status_code == 200
+
+    pursue = client.post(
+        f"/packets/{packet_id}/decision",
+        json={"decision_state": "pursue", "rationale": "Skip the evidence workflow"},
+    )
+    assert pursue.status_code == 409
+    assert any(
+        blocker.startswith("packet integration state is not_started")
+        for blocker in pursue.json()["detail"]["blockers"]
+    )
+
+    neutral = client.post(
+        f"/packets/{packet_id}/decision",
+        json={
+            "decision_state": "needs_more_data",
+            "rationale": "Safely stop promotion and request more evidence.",
+        },
+    )
+    assert neutral.status_code == 200
+    body = neutral.json()
+    assert body["decisionState"] == "needs_more_data"
+    assert body["integrationStatus"]["state"] == "decided"
+    assert "Non-executing disposition recorded" in body["integrationStatus"]["nextAction"]
+    assert len(body["memoryRecords"]) == 1
+    assert client.get(f"/packets/{packet_id}/audit-chain/verify").json()["valid"] is True
 
 
 def test_legacy_outcome_route_resolves_governed_memory() -> None:

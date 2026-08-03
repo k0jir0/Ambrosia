@@ -84,7 +84,7 @@ from .selective_integration import (
     create_decision_memory_record,
     evaluate_risk_gate,
     invalidate_integration,
-    packet_promotion_blockers,
+    packet_decision_blockers,
     run_disconfirmation,
     score_memory_relevance,
     verify_audit_chain,
@@ -175,7 +175,7 @@ app.include_router(completion_router)
 RBAC_ENABLED = os.getenv("RBAC_ENABLED", "true").lower() == "true"
 if RBAC_ENABLED:
     app.add_middleware(RBACMiddleware)
-    print("✅ RBAC compatibility middleware active")
+print("[ok] RBAC compatibility middleware active")
 
 # This is the authoritative identity, policy, request-safety, audit, and
 # telemetry boundary. Production identities are accepted only from managed
@@ -545,7 +545,11 @@ def record_decision(review_id: str, update: DecisionUpdate) -> TradeReview:
             packet.integrationStatus.state == IntegrationStage.decided
             and packet.decisionState == update.decision_state
         )
-        blockers = [] if already_recorded else packet_promotion_blockers(packet)
+        blockers = (
+            []
+            if already_recorded
+            else packet_decision_blockers(packet, update.decision_state)
+        )
         if blockers:
             raise HTTPException(
                 status_code=409,
@@ -777,7 +781,7 @@ def record_packet_decision(
     packet = store.get_packet(packet_id)
     if packet is None:
         raise HTTPException(status_code=404, detail="Packet not found")
-    blockers = packet_promotion_blockers(packet)
+    blockers = packet_decision_blockers(packet, update.decision_state)
     if blockers:
         telemetry.increment("selective_policy_blocked", "decision")
         raise HTTPException(
@@ -785,11 +789,16 @@ def record_packet_decision(
             detail={"code": "packet_not_promotable", "blockers": blockers},
         )
     actor = _request_actor(request, update.actor)
+    non_promoting = update.decision_state != DecisionState.pursue
     workflow_status = packet.integrationStatus.model_copy(
         update={
             "state": IntegrationStage.decided,
             "completedStages": [*packet.integrationStatus.completedStages, "human_decision"],
-            "nextAction": "Observe the forward outcome and resolve decision memory.",
+            "nextAction": (
+                "Non-executing disposition recorded; collect missing evidence or resolve the outcome."
+                if non_promoting
+                else "Observe the forward outcome and resolve decision memory."
+            ),
             "updatedAt": datetime.now().isoformat(),
         }
     )
@@ -809,13 +818,36 @@ def record_packet_decision(
             ],
         }
     )
-    saved = store.commit_packet_transition(
-        updated,
-        event_type="decision.recorded",
-        detail=f"{update.decision_state.value}: {update.rationale}",
-        actor=actor,
+    memory_records = store.get_packet_memory(packet_id)
+    decision_memory = None
+    if not memory_records:
+        decision_memory = create_decision_memory_record(
+            updated,
+            outcome=update.decision_state.value,
+            notes=update.rationale,
+            score=updated.confidence,
+        )
+        updated = updated.model_copy(update={"memoryRecords": [decision_memory]})
+
+    if decision_memory is not None:
+        saved = store.commit_selective_integration(
+            updated,
+            decision_memory,
+            event_type="decision.recorded",
+            detail=f"{update.decision_state.value}: {update.rationale}",
+            actor=actor,
+        )
+    else:
+        saved = store.commit_packet_transition(
+            updated,
+            event_type="decision.recorded",
+            detail=f"{update.decision_state.value}: {update.rationale}",
+            actor=actor,
+        )
+    telemetry.increment(
+        "selective_stage_completed",
+        "human_decision_non_promoting" if non_promoting else "human_decision",
     )
-    telemetry.increment("selective_stage_completed", "human_decision")
     return saved
 
 

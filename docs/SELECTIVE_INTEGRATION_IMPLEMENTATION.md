@@ -18,7 +18,7 @@ The selective-integration prototype is now implemented as a governed packet life
 - Disconfirmation evaluates falsifiability, null hypotheses, evidence presence, contradictions, and source references. Initial confidence is not used as a pass criterion.
 - Disconfirmation records deterministic numeric recomputations and evaluator identity alongside its versioned input hash.
 - Missing mandatory risk data returns `insufficient_data`; high-risk and stale-market cases return `blocked`.
-- The authoritative packet-decision endpoint refuses packets that are not promotable.
+- The authoritative packet-decision endpoint refuses `Pursue` when a packet is not promotable, while durably recording `Watch`, `Reject`, and `Needs more data` as non-executing human dispositions.
 - Outcome resolution is allowed only after a governed human decision.
 - Decision memory separates checkpoints from forward outcome resolutions and rejects future observations during retrieval.
 - PostgreSQL writes the integrated packet, memory checkpoint, optional outcome row, and audit event in one transaction.

@@ -105,7 +105,7 @@ def main() -> int:
             '"/packets/{packet_id}/decision"',
             '"/packets/{packet_id}/memory/resolve"',
             '"/packets/{packet_id}/audit-chain/verify"',
-            "packet_promotion_blockers",
+            "packet_decision_blockers",
             "SELECTIVE_INTEGRATION_ENFORCED",
         ],
         errors,

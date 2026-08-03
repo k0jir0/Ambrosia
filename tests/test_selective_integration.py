@@ -30,6 +30,7 @@ from app.selective_integration import (  # noqa: E402
     build_workflow_status,
     evaluate_risk_gate,
     invalidate_integration,
+    packet_decision_blockers,
     run_disconfirmation,
     score_memory_relevance,
     create_decision_memory_record,
@@ -164,6 +165,18 @@ def test_missing_risk_data_fails_closed() -> None:
     outcome = evaluate_risk_gate(packet)
     assert outcome.status == RiskGateStatus.insufficient_data
     assert "riskMonitor" in outcome.missingInputs
+
+
+def test_only_promoting_decisions_require_promotion_readiness() -> None:
+    packet = _make_packet()
+
+    assert packet_decision_blockers(packet, DecisionState.needs_more_data) == []
+    assert packet_decision_blockers(packet, DecisionState.watch) == []
+    assert packet_decision_blockers(packet, DecisionState.reject) == []
+    assert "packet integration state is not_started, not promotable" in packet_decision_blockers(
+        packet,
+        DecisionState.pursue,
+    )
 
 
 def test_audit_chain_detects_tampering_and_reordering() -> None:

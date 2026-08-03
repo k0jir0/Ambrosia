@@ -131,7 +131,7 @@ const decisionLabels: Record<DecisionState, string> = {
 const signalDecisionActions: Record<DecisionState, SignalDecisionAction> = {
   pursue: "BUY",
   watch: "HOLD",
-  needs_more_data: "RISK_ADJUST",
+  needs_more_data: "HOLD",
   reject: "BLOCK"
 };
 
@@ -1349,7 +1349,7 @@ function TopBar({ review }: { review: TradeReview }) {
     packet: DecisionPacket | null,
     pursueGateViolations: string[]
   ): SignalExecutionReadiness {
-    if (["BLOCK", "RETIRE"].includes(action)) return "not_executable";
+    if (["BLOCK", "HOLD", "RETIRE"].includes(action)) return "not_executable";
     if (review.validation.status !== "specified" || pursueGateViolations.length > 0) return "execution_blocked";
     if (!packet?.riskMonitor || packet.riskMonitor.status === "alert") return "execution_blocked";
     return "paper_trade_ready";
@@ -2025,7 +2025,7 @@ function DecisionStrip({
           <p className="mt-1 text-sm text-slate-400">Human authority remains explicit. Ambrosia supports the decision; it does not make it.</p>
           {suggestedDecision ? (
             <p className="mt-2 text-xs text-amber">
-              Soft policy suggests {decisionLabels[suggestedDecision]}; Watch and Reject remain available with optional rationale.
+              Soft policy suggests {decisionLabels[suggestedDecision]}; non-executing decisions remain available with optional rationale.
             </p>
           ) : null}
         </div>
@@ -2055,10 +2055,11 @@ function DecisionStrip({
           ) : null}
           {pursueGateViolations.length > 0 ? (
             <div className="rounded-md border border-coral/30 bg-coral/10 p-2 text-xs text-coral">
-              <p className="font-semibold">Pursue locked until these hard gates clear:</p>
+              <p className="font-semibold">Pursue and execution are locked until these hard gates clear:</p>
               {pursueGateViolations.map((reason) => (
                 <p key={reason}>{reason}</p>
               ))}
+              <p className="mt-1 text-slate-300">Watch, Reject, and Needs more data remain safe to record.</p>
             </div>
           ) : null}
           {suggestedDecision ? (

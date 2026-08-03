@@ -232,7 +232,127 @@ export interface SpecialistAgentOutput {
   fallbackUsed: boolean;
 }
 
+export type CoverageStatus = "full" | "partial" | "unavailable";
+export type DisconfirmationStatus = "not_run" | "pass" | "fail" | "insufficient_evidence" | "requires_human_review";
+export type RiskGateStatus = "not_evaluated" | "pass" | "warn" | "blocked" | "insufficient_data";
+export type IntegrationStage =
+  | "not_started"
+  | "evidence_ready"
+  | "disconfirmation_pending"
+  | "disconfirmation_review"
+  | "risk_pending"
+  | "blocked"
+  | "human_review"
+  | "promotable"
+  | "decided"
+  | "resolved";
+
+export interface MetricLineage {
+  function: string;
+  parameters: Record<string, unknown>;
+  inputEnvelopeIds: string[];
+  codeVersion: string;
+  computedAt: string;
+}
+
+export interface ProvenanceMetadata {
+  envelopeId?: string | null;
+  source: string;
+  sourceType: string;
+  timestamp: string;
+  sourceUrl?: string | null;
+  retrievedAt?: string | null;
+  asOf?: string | null;
+  freshnessSeconds?: number | null;
+  freshnessSlaSeconds?: number | null;
+  stale?: boolean;
+  coverageStatus?: CoverageStatus;
+  dataMode?: "live" | "fallback" | "demo";
+  license?: string | null;
+  feedTier?: string | null;
+  pointInTime?: boolean;
+  confidence?: string;
+  notes?: string | null;
+  lineage?: MetricLineage | null;
+}
+
+export interface DisconfirmationOutcome {
+  status: DisconfirmationStatus;
+  requiresHumanReview: boolean;
+  summary: string;
+  reasons: string[];
+  claimsTested?: string[];
+  falsifiableConditions?: string[];
+  alternativeExplanations?: string[];
+  evidenceReferences?: string[];
+  contradictions?: string[];
+  missingEvidence?: string[];
+  numericChecks?: Array<{
+    name: string;
+    expression: string;
+    passed?: boolean | null;
+    observedValue?: number | null;
+    threshold?: number | null;
+    notes?: string | null;
+  }>;
+  evaluator?: string;
+  policyVersion?: string;
+  packetVersion?: number;
+  evaluatedAt?: string | null;
+  inputHash?: string | null;
+}
+
+export interface RiskGateOutcome {
+  status: RiskGateStatus;
+  reasons: string[];
+  warnings?: string[];
+  hardBlocks?: string[];
+  missingInputs?: string[];
+  evaluator?: string;
+  policyVersion?: string;
+  packetVersion?: number;
+  evaluatedAt?: string | null;
+  inputHash?: string | null;
+}
+
+export interface DecisionMemoryRecord {
+  memoryId: string;
+  packetId: string;
+  packetVersion?: number;
+  recordType?: "checkpoint" | "resolution";
+  outcome: string;
+  notes?: string | null;
+  score?: number | null;
+  createdAt: string;
+  observedAt?: string | null;
+  evidenceReferences?: string[];
+  packetContentHash?: string | null;
+  sequence?: number;
+  previousHash?: string;
+  eventHash?: string;
+}
+
+export interface PacketWorkflowStatus {
+  state: IntegrationStage;
+  completedStages: string[];
+  staleStages: string[];
+  blockers: string[];
+  nextAction: string;
+  policyVersion: string;
+  updatedAt?: string | null;
+}
+
 export interface DecisionPacket extends TradeReview {
+  contractVersion?: string;
+  packetVersion?: number;
+  workflowRunId?: string | null;
+  // Selective integration fields
+  provenance?: ProvenanceMetadata[] | null;
+  disconfirmationResult?: DisconfirmationOutcome | null;
+  riskGateResult?: RiskGateOutcome | null;
+  memoryRecords?: DecisionMemoryRecord[] | null;
+  integrationStatus?: PacketWorkflowStatus;
+
   // New quant workflow agent fields
   marketSnapshot: MarketSnapshot | null;
   technicals: TechnicalIndicators | null;
@@ -458,11 +578,12 @@ export interface ConfidenceDeriveRequest {
 }
 
 export interface RetrievalHit {
-  kind: "prior_review" | "packet_source";
+  kind: "prior_review" | "packet_source" | "decision_memory";
   id: string;
   title: string;
   snippet: string;
   score: number;
+  scoreComponents?: Record<string, number> | null;
 }
 
 export interface RetrievalResponse {

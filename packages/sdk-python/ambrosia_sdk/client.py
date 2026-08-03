@@ -59,6 +59,65 @@ class AmbrosiaClient:
     def get_packet(self, packet_id: str) -> JsonObject:
         return self._get(f"/packets/{_path(packet_id)}")
 
+    def selective_integrate_packet(self, packet_id: str) -> JsonObject:
+        return self._post(f"/packets/{_path(packet_id)}/selective-integrate", {})
+
+    def refresh_packet_provenance(self, packet_id: str) -> JsonObject:
+        return self._post(f"/packets/{_path(packet_id)}/provenance/refresh", {})
+
+    def run_packet_disconfirmation(self, packet_id: str) -> JsonObject:
+        return self._post(f"/packets/{_path(packet_id)}/disconfirmation/run", {})
+
+    def run_packet_risk_gate(self, packet_id: str) -> JsonObject:
+        return self._post(f"/packets/{_path(packet_id)}/risk-gate/run", {})
+
+    def get_packet_integration_status(self, packet_id: str) -> JsonObject:
+        return self._get(f"/packets/{_path(packet_id)}/integration/status")
+
+    def record_packet_decision(
+        self,
+        packet_id: str,
+        decision_state: str,
+        rationale: str,
+        actor: str = "sdk-human-reviewer",
+    ) -> JsonObject:
+        return self._post(
+            f"/packets/{_path(packet_id)}/decision",
+            {"decision_state": decision_state, "rationale": rationale, "actor": actor},
+        )
+
+    def get_packet_memory(self, packet_id: str) -> list[JsonObject]:
+        return self._get(f"/packets/{_path(packet_id)}/memory")
+
+    def resolve_packet_memory(
+        self,
+        packet_id: str,
+        *,
+        outcome: str,
+        observed_at: str,
+        score: int | None = None,
+        notes: str | None = None,
+        evidence_references: list[str] | None = None,
+        actor: str = "sdk-human-reviewer",
+    ) -> JsonObject:
+        return self._post(
+            f"/packets/{_path(packet_id)}/memory/resolve",
+            {
+                "outcome": outcome,
+                "observedAt": observed_at,
+                "score": score,
+                "notes": notes,
+                "evidenceReferences": evidence_references or [],
+                "actor": actor,
+            },
+        )
+
+    def verify_packet_audit_chain(self, packet_id: str) -> JsonObject:
+        return self._get(f"/packets/{_path(packet_id)}/audit-chain/verify")
+
+    def list_packet_versions(self, packet_id: str) -> list[JsonObject]:
+        return self._get(f"/packets/{_path(packet_id)}/versions")
+
     def market_snapshot(self, ticker: str) -> JsonObject:
         return self._get(f"/market/{_path(_normalize_ticker(ticker))}/snapshot")
 

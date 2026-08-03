@@ -44,7 +44,12 @@ _sso_config: dict = {
 
 _ROOT = Path(__file__).resolve().parents[3]
 _RELEASE_EVIDENCE_PATH = _ROOT / "artifacts" / "release-evidence.json"
-_SIGNAL_STATE_PATH = _ROOT / "artifacts" / "signal-lifecycle-state.json"
+_SIGNAL_STATE_PATH = Path(
+    os.getenv(
+        "AMBROSIA_SIGNAL_STATE_PATH",
+        str(_ROOT / "artifacts" / "signal-lifecycle-state.json"),
+    )
+)
 _index84_db: PostgresReviewStore | None = None
 
 _database_url = os.getenv("DATABASE_URL")

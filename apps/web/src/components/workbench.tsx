@@ -9,6 +9,7 @@ import {
   createSignal,
   derivePacketConfidence,
   evaluatePacketRisk,
+  selectiveIntegratePacket,
   generateReport as generatePacketReport,
   getApiBaseUrl,
   getMarketSnapshot,
@@ -19,6 +20,7 @@ import {
   linkAlphaHypothesisSignal,
   linkSignalReview,
   recordDecision,
+  recordPacketDecision,
   recordPacketOutcome,
   refreshPacketMetrics,
   runPacketAgents,
@@ -129,7 +131,7 @@ const decisionLabels: Record<DecisionState, string> = {
 const signalDecisionActions: Record<DecisionState, SignalDecisionAction> = {
   pursue: "BUY",
   watch: "HOLD",
-  needs_more_data: "RISK_ADJUST",
+  needs_more_data: "HOLD",
   reject: "BLOCK"
 };
 
@@ -262,7 +264,7 @@ export function Workbench({ initialReviewId }: { initialReviewId?: string } = {}
     }));
   }
 
-  function updateDecision(
+  async function updateDecision(
     decisionState: DecisionState,
     rationale?: string,
     suggestedDecision?: DecisionState | null,
@@ -278,6 +280,28 @@ export function Workbench({ initialReviewId }: { initialReviewId?: string } = {}
     }
 
     const override = suggestedDecision && decisionState !== suggestedDecision;
+    const decisionRationale = rationale?.trim() || `Human selected ${decisionLabels[decisionState]}.`;
+    setActiveAction("Record governed decision");
+    try {
+      const { reviewId, packetId } = await ensurePacketForReview(activeReview);
+      const packet = await recordPacketDecision(packetId, {
+        decision_state: decisionState,
+        rationale: decisionRationale,
+        actor: "ambrosia-workbench-human"
+      });
+      syncReviewFromPacket(reviewId, packet);
+      await recordDecision(reviewId, decisionState).catch(() => {
+        // The packet is the governed source of truth; legacy review writeback is best effort.
+      });
+      setActionFeedback({ tone: "good", message: `Governed decision recorded: ${decisionLabels[decisionState]}.` });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "unknown error";
+      appendAuditEvent("decision.governed.blocked", `Governed decision was not recorded: ${message}`);
+      setActionFeedback({ tone: "warn", message: `Decision blocked: ${message}` });
+      setActiveAction(null);
+      return;
+    }
+
     updateReview(activeReview.id, (review) => ({
       ...review,
       decisionState,
@@ -302,9 +326,7 @@ export function Workbench({ initialReviewId }: { initialReviewId?: string } = {}
         }
       ]
     }));
-    void recordDecision(activeReview.id, decisionState).catch(() => {
-      // Sample and fallback reviews may not exist in the API store; keep local decision memory intact.
-    });
+    setActiveAction(null);
 
     if (activeAlphaLink) {
       upsertAlphaWritebackForReview(activeReview.id, activeAlphaLink, {
@@ -531,6 +553,9 @@ export function Workbench({ initialReviewId }: { initialReviewId?: string } = {}
       id: `pkt-${review.id}`,
       schemaVersion: "packet.v1",
       workflowVersion: "quant-agent.v1",
+      contractVersion: "selective-integration.v1",
+      packetVersion: 1,
+      workflowRunId: null,
       title: review.title,
       thesis: review.thesis,
       ticker: review.ticker,
@@ -551,6 +576,19 @@ export function Workbench({ initialReviewId }: { initialReviewId?: string } = {}
       tradeability: review.tradeability,
       sources: review.sources,
       audit: review.audit,
+      provenance: [],
+      disconfirmationResult: null,
+      riskGateResult: null,
+      memoryRecords: [],
+      integrationStatus: {
+        state: "not_started",
+        completedStages: [],
+        staleStages: [],
+        blockers: [],
+        nextAction: "Attach provenance and run selective integration.",
+        policyVersion: "selective-integration.v1",
+        updatedAt: null
+      },
       marketSnapshot: null,
       technicals: null,
       sentiment: null,
@@ -697,6 +735,24 @@ export function Workbench({ initialReviewId }: { initialReviewId?: string } = {}
       return "ok";
     } catch {
       appendAuditEvent("confidence.derive.fallback", "Technicals inspection endpoint unavailable; keeping deterministic local view.");
+      return "fallback";
+    }
+  }
+
+  async function runSelectiveIntegration(): Promise<ActionResult> {
+    if (!activeReview) {
+      appendAuditEvent("selective.integration.skipped", "Selective integration skipped because no active review is selected.");
+      return "skipped";
+    }
+
+    try {
+      const { reviewId, packetId } = await ensurePacketForReview(activeReview);
+      const packet = await selectiveIntegratePacket(packetId);
+      syncReviewFromPacket(reviewId, packet);
+      appendAuditEvent("selective.integration", `Selective integration completed for ${activeReview.ticker}: ${packet.disconfirmationResult?.status ?? "pending"}.`);
+      return "ok";
+    } catch {
+      appendAuditEvent("selective.integration.blocked", "Selective integration endpoint unavailable; governed decision actions remain blocked.");
       return "fallback";
     }
   }
@@ -1103,6 +1159,7 @@ export function Workbench({ initialReviewId }: { initialReviewId?: string } = {}
             onRunAgents={() => runAction("Run analysis", runAgentSwarm)}
             onPrepareBacktest={() => runAction("Prepare backtest", prepareBacktest)}
             onDeriveConfidence={() => runAction("Derive confidence", deriveConfidenceFromMarket)}
+            onRunSelectiveIntegration={() => runAction("Selective integration", runSelectiveIntegration)}
           />
           <MarketAndRiskPanel
             review={activeReview}
@@ -1292,7 +1349,7 @@ function TopBar({ review }: { review: TradeReview }) {
     packet: DecisionPacket | null,
     pursueGateViolations: string[]
   ): SignalExecutionReadiness {
-    if (["BLOCK", "RETIRE"].includes(action)) return "not_executable";
+    if (["BLOCK", "HOLD", "RETIRE"].includes(action)) return "not_executable";
     if (review.validation.status !== "specified" || pursueGateViolations.length > 0) return "execution_blocked";
     if (!packet?.riskMonitor || packet.riskMonitor.status === "alert") return "execution_blocked";
     return "paper_trade_ready";
@@ -1793,7 +1850,8 @@ function AnalysisFeed({
   activeAction,
   onRunAgents,
   onPrepareBacktest,
-  onDeriveConfidence
+  onDeriveConfidence,
+  onRunSelectiveIntegration
 }: {
   review: TradeReview;
   packet: DecisionPacket | null;
@@ -1801,6 +1859,7 @@ function AnalysisFeed({
   onRunAgents: () => void;
   onPrepareBacktest: () => void;
   onDeriveConfidence: () => void;
+  onRunSelectiveIntegration: () => void;
 }) {
   const stages = buildWorkflowStages(review, packet);
 
@@ -1813,6 +1872,7 @@ function AnalysisFeed({
             <ActionButton label="Run analysis" icon={<Activity className="h-4 w-4" />} activeAction={activeAction} onClick={onRunAgents} />
             <ActionButton label="Prepare backtest" icon={<Beaker className="h-4 w-4" />} activeAction={activeAction} onClick={onPrepareBacktest} />
             <ActionButton label="Derive confidence" icon={<SlidersHorizontal className="h-4 w-4" />} activeAction={activeAction} onClick={onDeriveConfidence} />
+            <ActionButton label="Integrate" icon={<ShieldCheck className="h-4 w-4" />} activeAction={activeAction} onClick={onRunSelectiveIntegration} />
           </div>
         </div>
         <ProviderProvenancePanel packet={packet} />
@@ -1965,7 +2025,7 @@ function DecisionStrip({
           <p className="mt-1 text-sm text-slate-400">Human authority remains explicit. Ambrosia supports the decision; it does not make it.</p>
           {suggestedDecision ? (
             <p className="mt-2 text-xs text-amber">
-              Soft policy suggests {decisionLabels[suggestedDecision]}; Watch and Reject remain available with optional rationale.
+              Soft policy suggests {decisionLabels[suggestedDecision]}; non-executing decisions remain available with optional rationale.
             </p>
           ) : null}
         </div>
@@ -1995,10 +2055,11 @@ function DecisionStrip({
           ) : null}
           {pursueGateViolations.length > 0 ? (
             <div className="rounded-md border border-coral/30 bg-coral/10 p-2 text-xs text-coral">
-              <p className="font-semibold">Pursue locked until these hard gates clear:</p>
+              <p className="font-semibold">Pursue and execution are locked until these hard gates clear:</p>
               {pursueGateViolations.map((reason) => (
                 <p key={reason}>{reason}</p>
               ))}
+              <p className="mt-1 text-slate-300">Watch, Reject, and Needs more data remain safe to record.</p>
             </div>
           ) : null}
           {suggestedDecision ? (
@@ -2080,6 +2141,11 @@ function ProviderProvenancePanel({ packet }: { packet: DecisionPacket | null }) 
   const provider = packet?.providerInfo;
   const agentOutputs = packet?.agentOutputs ? Object.values(packet.agentOutputs).filter(Boolean) : [];
   const roleCount = agentOutputs.length;
+  const provenance = packet?.provenance ?? [];
+  const disconfirmation = packet?.disconfirmationResult;
+  const riskGate = packet?.riskGateResult;
+  const memoryRecords = packet?.memoryRecords ?? [];
+  const integration = packet?.integrationStatus;
 
   return (
     <div className="mt-4 rounded-md border border-line bg-fog/60 p-3 text-xs">
@@ -2095,6 +2161,9 @@ function ProviderProvenancePanel({ packet }: { packet: DecisionPacket | null }) 
             {provider ? (provider.fallbackUsed ? "Fallback used" : "No runtime fallback") : "Pending"}
           </Badge>
           <Badge tone="info">{roleCount}/{expectedAgentRoles.length} roles</Badge>
+          <Badge tone={integration?.state === "promotable" || integration?.state === "decided" || integration?.state === "resolved" ? "good" : integration?.state === "blocked" ? "warn" : "neutral"}>
+            {integration?.state ?? "not_started"}
+          </Badge>
         </div>
       </div>
       {provider ? (
@@ -2102,6 +2171,27 @@ function ProviderProvenancePanel({ packet }: { packet: DecisionPacket | null }) 
           <ProofMetric label="Fallback chain" value={provider.fallbackChain.join(" -> ")} />
           <ProofMetric label="Reason" value={provider.reason} />
           <ProofMetric label="Coordinator" value={packet?.coordinatorVersion ?? "coordinator.v1"} />
+        </div>
+      ) : null}
+      <div className="mt-3 grid gap-2 md:grid-cols-2">
+        <ProofMetric label="Provenance sources" value={provenance.length ? provenance.map((item) => item.source).join(", ") : "No provenance attached yet"} />
+        <ProofMetric label="Disconfirmation" value={disconfirmation ? `${disconfirmation.status} (${disconfirmation.requiresHumanReview ? "needs review" : "auto-pass"})` : "Pending"} />
+      </div>
+      <div className="mt-2 grid gap-2 md:grid-cols-2">
+        <ProofMetric label="Risk gate" value={riskGate ? `${riskGate.status} ${riskGate.reasons.length ? `- ${riskGate.reasons.join(", ")}` : ""}`.trim() : "Pending"} />
+        <ProofMetric label="Memory records" value={memoryRecords.length ? `${memoryRecords.length} record(s) stored` : "No memory records yet"} />
+      </div>
+      <div className="mt-2 grid gap-2 md:grid-cols-2">
+        <ProofMetric label="Next governed action" value={integration?.nextAction ?? "Run selective integration before recording a decision."} />
+        <ProofMetric label="Workflow blockers" value={integration?.blockers.length ? integration.blockers.join("; ") : "None recorded"} />
+      </div>
+      {provenance.length ? (
+        <div className="mt-3 flex flex-wrap gap-2">
+          {provenance.map((item) => (
+            <Badge key={item.envelopeId ?? `${item.source}-${item.timestamp}`} tone={item.stale || item.coverageStatus === "unavailable" ? "warn" : item.dataMode === "live" ? "good" : "neutral"}>
+              {item.source}: {item.dataMode ?? "unknown"} / {item.coverageStatus ?? "unknown"}{item.stale ? " / stale" : ""}
+            </Badge>
+          ))}
         </div>
       ) : null}
     </div>

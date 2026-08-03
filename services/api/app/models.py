@@ -3,7 +3,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class DecisionState(str, Enum):
@@ -29,6 +29,47 @@ class ReviewStatus(str, Enum):
     tradeability = "tradeability"
     synthesis = "synthesis"
     decision_recorded = "decision_recorded"
+
+
+class DataMode(str, Enum):
+    live = "live"
+    fallback = "fallback"
+    demo = "demo"
+
+
+class CoverageStatus(str, Enum):
+    full = "full"
+    partial = "partial"
+    unavailable = "unavailable"
+
+
+class DisconfirmationStatus(str, Enum):
+    not_run = "not_run"
+    passed = "pass"
+    failed = "fail"
+    insufficient_evidence = "insufficient_evidence"
+    requires_human_review = "requires_human_review"
+
+
+class RiskGateStatus(str, Enum):
+    not_evaluated = "not_evaluated"
+    passed = "pass"
+    warning = "warn"
+    blocked = "blocked"
+    insufficient_data = "insufficient_data"
+
+
+class IntegrationStage(str, Enum):
+    not_started = "not_started"
+    evidence_ready = "evidence_ready"
+    disconfirmation_pending = "disconfirmation_pending"
+    disconfirmation_review = "disconfirmation_review"
+    risk_pending = "risk_pending"
+    blocked = "blocked"
+    human_review = "human_review"
+    promotable = "promotable"
+    decided = "decided"
+    resolved = "resolved"
 
 
 class ThesisRequest(BaseModel):
@@ -219,10 +260,123 @@ class SpecialistAgentOutput(BaseModel):
     fallbackUsed: bool
 
 
+class MetricLineage(BaseModel):
+    function: str
+    parameters: dict[str, object] = Field(default_factory=dict)
+    inputEnvelopeIds: list[str] = Field(default_factory=list)
+    codeVersion: str = "unknown"
+    computedAt: str
+
+
+class ProvenanceMetadata(BaseModel):
+    envelopeId: str | None = None
+    source: str
+    sourceType: str
+    timestamp: str
+    sourceUrl: str | None = None
+    retrievedAt: str | None = None
+    asOf: str | None = None
+    freshnessSeconds: int | None = Field(default=None, ge=0)
+    freshnessSlaSeconds: int | None = Field(default=None, ge=0)
+    stale: bool = False
+    coverageStatus: CoverageStatus = CoverageStatus.full
+    dataMode: DataMode = DataMode.fallback
+    license: str | None = None
+    feedTier: str | None = None
+    pointInTime: bool = False
+    confidence: str = "verified"
+    notes: str | None = None
+    lineage: MetricLineage | None = None
+
+
+class NumericCheck(BaseModel):
+    name: str
+    expression: str
+    passed: bool | None = None
+    observedValue: float | None = None
+    threshold: float | None = None
+    notes: str | None = None
+
+
+class DisconfirmationOutcome(BaseModel):
+    status: DisconfirmationStatus = DisconfirmationStatus.not_run
+    requiresHumanReview: bool = False
+    summary: str = ""
+    reasons: list[str] = Field(default_factory=list)
+    claimsTested: list[str] = Field(default_factory=list)
+    falsifiableConditions: list[str] = Field(default_factory=list)
+    alternativeExplanations: list[str] = Field(default_factory=list)
+    evidenceReferences: list[str] = Field(default_factory=list)
+    contradictions: list[str] = Field(default_factory=list)
+    missingEvidence: list[str] = Field(default_factory=list)
+    numericChecks: list[NumericCheck] = Field(default_factory=list)
+    evaluator: str = "ambrosia-deterministic"
+    policyVersion: str = "disconfirmation.v1"
+    packetVersion: int = Field(default=1, ge=1)
+    evaluatedAt: str | None = None
+    inputHash: str | None = None
+
+
+class RiskGateOutcome(BaseModel):
+    status: RiskGateStatus = RiskGateStatus.not_evaluated
+    reasons: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    hardBlocks: list[str] = Field(default_factory=list)
+    missingInputs: list[str] = Field(default_factory=list)
+    evaluator: str = "ambrosia-deterministic"
+    policyVersion: str = "risk-policy.v1"
+    packetVersion: int = Field(default=1, ge=1)
+    evaluatedAt: str | None = None
+    inputHash: str | None = None
+
+
+class DecisionMemoryRecord(BaseModel):
+    memoryId: str
+    packetId: str
+    packetVersion: int = Field(default=1, ge=1)
+    recordType: Literal["checkpoint", "resolution"] = "checkpoint"
+    outcome: str
+    notes: str | None = None
+    score: int | None = Field(default=None, ge=0, le=100)
+    createdAt: str
+    observedAt: str | None = None
+    evidenceReferences: list[str] = Field(default_factory=list)
+    packetContentHash: str | None = None
+    sequence: int = Field(default=1, ge=1)
+    previousHash: str = "0" * 64
+    eventHash: str = ""
+
+
+class PacketAuditChainEvent(BaseModel):
+    sequence: int = Field(ge=1)
+    packetId: str
+    packetVersion: int = Field(ge=1)
+    eventType: str
+    detail: str
+    actor: str = "system"
+    createdAt: str
+    payloadHash: str
+    previousHash: str
+    eventHash: str
+
+
+class PacketWorkflowStatus(BaseModel):
+    state: IntegrationStage = IntegrationStage.not_started
+    completedStages: list[str] = Field(default_factory=list)
+    staleStages: list[str] = Field(default_factory=list)
+    blockers: list[str] = Field(default_factory=list)
+    nextAction: str = "Attach provenance and run selective integration."
+    policyVersion: str = "selective-integration.v1"
+    updatedAt: str | None = None
+
+
 class DecisionPacket(BaseModel):
     id: str
     schemaVersion: str = "packet.v1"
     workflowVersion: str = "quant-agent.v1"
+    contractVersion: str = "selective-integration.v1"
+    packetVersion: int = Field(default=1, ge=1)
+    workflowRunId: str | None = None
     title: str
     thesis: str
     ticker: str
@@ -246,6 +400,13 @@ class DecisionPacket(BaseModel):
     sources: list[SourcePointer]
     audit: list[AuditEvent]
     
+    # Selective integration fields
+    provenance: list[ProvenanceMetadata] = Field(default_factory=list)
+    disconfirmationResult: DisconfirmationOutcome | None = None
+    riskGateResult: RiskGateOutcome | None = None
+    memoryRecords: list[DecisionMemoryRecord] = Field(default_factory=list)
+    integrationStatus: PacketWorkflowStatus = Field(default_factory=PacketWorkflowStatus)
+
     # Quant workflow agent fields
     marketSnapshot: MarketSnapshot | None = None
     technicals: TechnicalIndicators | None = None
@@ -264,6 +425,11 @@ class DecisionPacket(BaseModel):
     # Coordinator metadata
     coordinatorVersion: str = "coordinator.v1"
     providerInfo: dict | None = None
+
+    @field_validator("provenance", "memoryRecords", mode="before")
+    @classmethod
+    def normalize_legacy_nullable_lists(cls, value: object) -> object:
+        return [] if value is None else value
 
 
 class TradeReview(BaseModel):
@@ -294,6 +460,21 @@ class TradeReview(BaseModel):
 
 class DecisionUpdate(BaseModel):
     decision_state: DecisionState
+
+
+class PacketDecisionUpdate(BaseModel):
+    decision_state: DecisionState
+    rationale: str = Field(min_length=3)
+    actor: str = "human-reviewer"
+
+
+class MemoryResolutionRequest(BaseModel):
+    outcome: str = Field(min_length=2)
+    observedAt: str
+    score: int | None = Field(default=None, ge=0, le=100)
+    notes: str | None = None
+    evidenceReferences: list[str] = Field(default_factory=list)
+    actor: str = "human-reviewer"
 
 
 class OutcomeUpdate(BaseModel):
@@ -469,11 +650,12 @@ class RetrievalRequest(BaseModel):
 
 
 class RetrievalHit(BaseModel):
-    kind: Literal["prior_review", "packet_source"]
+    kind: Literal["prior_review", "packet_source", "decision_memory"]
     id: str
     title: str
     snippet: str
     score: float = Field(ge=0, le=1)
+    scoreComponents: dict[str, float] | None = None
 
 
 class RetrievalResponse(BaseModel):

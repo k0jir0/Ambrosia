@@ -262,6 +262,12 @@ Live product:
 
 GitHub production deploy wiring exists, but Render deploy hook secrets must be populated for automated hook-triggered deployment. When the hook variables are empty, the GitHub deploy workflow can pass while skipping the Render trigger steps.
 
+## Selective Integration Governance
+
+Ambrosia now includes the hardened selective-integration lifecycle described in `docs/SELECTIVE_INTEGRATION_IMPLEMENTATION.md`. It adds typed packet provenance, non-skippable disconfirmation and deterministic risk stages, guarded human packet decisions, version invalidation, durable outcome memory, and a chain-head-anchored audit ledger. Run `python scripts/verify-selective-integration.py` for the deterministic readiness gate.
+
+Production rollout is controlled by `SELECTIVE_INTEGRATION_ENABLED` and `SELECTIVE_INTEGRATION_ENFORCED`. Apply database migration `v0007` and complete staging certification before enabling enforcement.
+
 ## Future Improvements
 
 Areas for potential enhancement and additional features:

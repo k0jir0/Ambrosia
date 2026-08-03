@@ -1,5 +1,15 @@
 # Implementation Notes
 
+## Selective Integration Governance - Code Complete (2026-08-02)
+
+- Added canonical `packet.v1` contracts across Python, TypeScript, JSON Schema, fixtures, and the Python SDK.
+- Added a staged, fail-closed packet workflow for provenance, disconfirmation, risk gating, human decision, and outcome resolution.
+- Added immutable packet-version snapshots, durable decision memory, and independently anchored per-packet audit chains in migration `V0007`.
+- Added feature flags for controlled enablement and legacy-decision enforcement.
+- Added deterministic readiness evaluation, schema/migration verification, API lifecycle tests, tamper tests, and future-leakage checks.
+- Added authenticated packet-audit attribution, atomic outcome/memory/audit persistence, fail-closed chain-conflict handling, operational counters, and governed Playwright decision coverage.
+- Production promotion still requires applying and rollback-testing `V0007` in staging, exercising concurrent writers against PostgreSQL, and obtaining the release/security/data/risk approvals listed in `SELECTIVE_INTEGRATION_IMPLEMENTATION.md`.
+
 ## Current Status: Day 1-7 Core Build - COMPLETED ✅
 
 **Date**: 2026-06-24

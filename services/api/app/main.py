@@ -31,11 +31,16 @@ from .models import (
     PortfolioContextUpdate,
     ConfidenceDeriveRequest,
     DecisionPacket,
+    DecisionMemoryRecord,
     DecisionState,
     DecisionUpdate,
+    IntegrationStage,
     JobRecord,
     MarketSnapshot,
+    MemoryResolutionRequest,
     OutcomeUpdate,
+    PacketDecisionUpdate,
+    PacketWorkflowStatus,
     RiskEvaluateRequest,
     ReviewStatus,
     RoadmapDecisionRecord,
@@ -72,6 +77,18 @@ from .retrieval_quality import (
 from .review_engine import detects_prompt_injection, generate_review
 from .scanner import run_scanner
 from .sentiment import build_sentiment
+from .selective_integration import (
+    attach_provenance,
+    build_packet_provenance,
+    build_workflow_status,
+    create_decision_memory_record,
+    evaluate_risk_gate,
+    invalidate_integration,
+    packet_decision_blockers,
+    run_disconfirmation,
+    score_memory_relevance,
+    verify_audit_chain,
+)
 from .store import store
 from .visibility_registry import (
     load_admin_boundary_rules,
@@ -97,6 +114,7 @@ from .operations import (
     register_audit_sink,
     register_readiness_check,
     router as operations_router,
+    telemetry,
 )
 
 _executor = ThreadPoolExecutor(max_workers=4)
@@ -157,7 +175,7 @@ app.include_router(completion_router)
 RBAC_ENABLED = os.getenv("RBAC_ENABLED", "true").lower() == "true"
 if RBAC_ENABLED:
     app.add_middleware(RBACMiddleware)
-    print("✅ RBAC compatibility middleware active")
+print("[ok] RBAC compatibility middleware active")
 
 # This is the authoritative identity, policy, request-safety, audit, and
 # telemetry boundary. Production identities are accepted only from managed
@@ -177,6 +195,24 @@ register_audit_sink(store.append_security_audit)
 
 def _clock() -> str:
     return datetime.now().strftime("%H:%M:%S")
+
+
+def _feature_enabled(name: str, *, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _require_selective_integration_enabled() -> None:
+    if not _feature_enabled("SELECTIVE_INTEGRATION_ENABLED", default=True):
+        telemetry.increment("selective_stage_blocked", "feature_disabled")
+        raise HTTPException(status_code=503, detail="Selective integration is disabled by feature flag")
+
+
+def _request_actor(request: Request, fallback: str = "system") -> str:
+    principal = getattr(request.state, "principal", None)
+    return str(getattr(principal, "subject", fallback))
 
 
 def _verify_webhook_signature(request: Request, raw_body: bytes) -> bool:
@@ -498,6 +534,27 @@ def get_review(review_id: str) -> TradeReview:
 
 @app.patch("/reviews/{review_id}/decision", response_model=TradeReview)
 def record_decision(review_id: str, update: DecisionUpdate) -> TradeReview:
+    if _feature_enabled("SELECTIVE_INTEGRATION_ENFORCED", default=False):
+        packet = store.get_packet(f"pkt-{review_id}")
+        if packet is None:
+            raise HTTPException(
+                status_code=409,
+                detail="A governed decision packet is required before review decision writeback",
+            )
+        already_recorded = (
+            packet.integrationStatus.state == IntegrationStage.decided
+            and packet.decisionState == update.decision_state
+        )
+        blockers = (
+            []
+            if already_recorded
+            else packet_decision_blockers(packet, update.decision_state)
+        )
+        if blockers:
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "packet_not_promotable", "blockers": blockers},
+            )
     review = store.record_decision(review_id, update.decision_state)
     if review is None:
         raise HTTPException(status_code=404, detail="Review not found")
@@ -513,8 +570,396 @@ def record_outcome(review_id: str, update: OutcomeUpdate) -> TradeReview:
 
 
 @app.post("/packets", response_model=DecisionPacket)
-def create_packet(packet: DecisionPacket) -> DecisionPacket:
+def create_packet(packet: DecisionPacket, request: Request) -> DecisionPacket:
+    if not store.get_packet_audit_chain(packet.id):
+        return store.commit_packet_transition(
+            packet,
+            event_type="packet.created",
+            detail="Decision packet created under the canonical packet contract.",
+            actor=_request_actor(request),
+        )
     return store.save_packet(packet)
+
+
+def _run_selective_integration(packet: DecisionPacket, *, actor: str = "system") -> DecisionPacket:
+    if (
+        packet.disconfirmationResult is not None
+        and packet.riskGateResult is not None
+        and packet.disconfirmationResult.packetVersion == packet.packetVersion
+        and packet.riskGateResult.packetVersion == packet.packetVersion
+        and packet.integrationStatus.state
+        in {IntegrationStage.promotable, IntegrationStage.human_review, IntegrationStage.blocked}
+    ):
+        return packet
+
+    provenance = build_packet_provenance(packet)
+    evaluated_packet = attach_provenance(packet, provenance, replace=True)
+    disconfirmation = run_disconfirmation(evaluated_packet)
+    risk_gate = evaluate_risk_gate(evaluated_packet)
+    workflow_status = build_workflow_status(evaluated_packet, disconfirmation, risk_gate)
+    existing_memory = store.get_packet_memory(packet.id)
+    memory = create_decision_memory_record(
+        evaluated_packet,
+        outcome=f"integration_{workflow_status.state.value}",
+        notes="Selective integration stages completed for this packet version.",
+        score=evaluated_packet.confidence,
+        record_type="checkpoint",
+        evidence_references=disconfirmation.evidenceReferences,
+        previous_record=existing_memory[-1] if existing_memory else None,
+    )
+    updated_packet = evaluated_packet.model_copy(
+        update={
+            "workflowRunId": f"si-{uuid4().hex[:12]}",
+            "disconfirmationResult": disconfirmation,
+            "riskGateResult": risk_gate,
+            "memoryRecords": [*existing_memory, memory],
+            "integrationStatus": workflow_status,
+            "audit": [
+                *evaluated_packet.audit,
+                AuditEvent(
+                    id=f"packet-audit-{len(evaluated_packet.audit) + 1}",
+                    timestamp=_clock(),
+                    eventType="selective.integration.applied",
+                    detail=(
+                        "Selective integration completed: "
+                        f"disconfirmation={disconfirmation.status.value}; "
+                        f"risk={risk_gate.status.value}; state={workflow_status.state.value}"
+                    ),
+                ),
+            ],
+        }
+    )
+    detail = (
+        f"disconfirmation={disconfirmation.status.value}; "
+        f"risk={risk_gate.status.value}; state={workflow_status.state.value}"
+    )
+    try:
+        saved = store.commit_selective_integration(
+            updated_packet,
+            memory,
+            event_type="selective.integration.applied",
+            detail=detail,
+            actor=actor,
+        )
+        telemetry.increment("selective_stage_completed", workflow_status.state.value)
+        return saved
+    except ValueError as exc:
+        telemetry.increment("selective_write_conflict", "integration")
+        latest = store.get_packet(packet.id)
+        if (
+            latest is not None
+            and latest.packetVersion == packet.packetVersion
+            and latest.disconfirmationResult is not None
+            and latest.riskGateResult is not None
+        ):
+            return latest
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "packet_write_conflict", "message": str(exc)},
+        ) from exc
+
+
+@app.post("/packets/{packet_id}/selective-integrate", response_model=DecisionPacket)
+def selective_integrate_packet(packet_id: str, request: Request) -> DecisionPacket:
+    _require_selective_integration_enabled()
+    packet = store.get_packet(packet_id)
+    if packet is None:
+        raise HTTPException(status_code=404, detail="Packet not found")
+    return _run_selective_integration(packet, actor=_request_actor(request))
+
+
+@app.post("/packets/{packet_id}/provenance/refresh", response_model=DecisionPacket)
+def refresh_packet_provenance(packet_id: str, request: Request) -> DecisionPacket:
+    _require_selective_integration_enabled()
+    packet = store.get_packet(packet_id)
+    if packet is None:
+        raise HTTPException(status_code=404, detail="Packet not found")
+    invalidated = invalidate_integration(
+        packet,
+        reason="Packet provenance was refreshed.",
+        clear_provenance=True,
+    )
+    updated = attach_provenance(invalidated, build_packet_provenance(invalidated), replace=True)
+    updated = updated.model_copy(
+        update={
+            "integrationStatus": PacketWorkflowStatus(
+                state=IntegrationStage.evidence_ready,
+                completedStages=["provenance"],
+                staleStages=invalidated.integrationStatus.staleStages,
+                nextAction="Run disconfirmation.",
+                updatedAt=datetime.now().isoformat(),
+            )
+        }
+    )
+    saved = store.commit_packet_transition(
+        updated,
+        event_type="provenance.refreshed",
+        detail=f"Attached {len(updated.provenance)} provenance envelope(s).",
+        actor=_request_actor(request),
+    )
+    telemetry.increment("selective_stage_completed", "provenance")
+    return saved
+
+
+@app.post("/packets/{packet_id}/disconfirmation/run", response_model=DecisionPacket)
+def run_packet_disconfirmation(packet_id: str, request: Request) -> DecisionPacket:
+    _require_selective_integration_enabled()
+    packet = store.get_packet(packet_id)
+    if packet is None:
+        raise HTTPException(status_code=404, detail="Packet not found")
+    if not packet.provenance:
+        raise HTTPException(status_code=409, detail="Provenance must be attached before disconfirmation")
+    result = run_disconfirmation(packet)
+    state = (
+        IntegrationStage.risk_pending
+        if result.status.value == "pass"
+        else IntegrationStage.disconfirmation_review
+    )
+    updated = packet.model_copy(
+        update={
+            "disconfirmationResult": result,
+            "riskGateResult": None,
+            "integrationStatus": PacketWorkflowStatus(
+                state=state,
+                completedStages=["provenance", "disconfirmation"],
+                blockers=result.reasons,
+                nextAction=(
+                    "Run the deterministic risk gate."
+                    if state == IntegrationStage.risk_pending
+                    else "Resolve disconfirmation findings through human review."
+                ),
+                updatedAt=datetime.now().isoformat(),
+            ),
+        }
+    )
+    saved = store.commit_packet_transition(
+        updated,
+        event_type="disconfirmation.completed",
+        detail=f"Disconfirmation status={result.status.value}.",
+        actor=_request_actor(request),
+    )
+    telemetry.increment("selective_stage_completed", f"disconfirmation_{result.status.value}")
+    return saved
+
+
+@app.post("/packets/{packet_id}/risk-gate/run", response_model=DecisionPacket)
+def run_packet_risk_gate(packet_id: str, request: Request) -> DecisionPacket:
+    _require_selective_integration_enabled()
+    packet = store.get_packet(packet_id)
+    if packet is None:
+        raise HTTPException(status_code=404, detail="Packet not found")
+    if packet.disconfirmationResult is None:
+        raise HTTPException(status_code=409, detail="Disconfirmation must run before the risk gate")
+    result = evaluate_risk_gate(packet)
+    status = build_workflow_status(packet, packet.disconfirmationResult, result)
+    updated = packet.model_copy(update={"riskGateResult": result, "integrationStatus": status})
+    saved = store.commit_packet_transition(
+        updated,
+        event_type="risk_gate.completed",
+        detail=f"Risk-gate status={result.status.value}.",
+        actor=_request_actor(request),
+    )
+    telemetry.increment("selective_stage_completed", f"risk_{result.status.value}")
+    return saved
+
+
+@app.get("/packets/{packet_id}/integration/status", response_model=PacketWorkflowStatus)
+def get_packet_integration_status(packet_id: str) -> PacketWorkflowStatus:
+    packet = store.get_packet(packet_id)
+    if packet is None:
+        raise HTTPException(status_code=404, detail="Packet not found")
+    return packet.integrationStatus
+
+
+@app.post("/packets/{packet_id}/decision", response_model=DecisionPacket)
+def record_packet_decision(
+    packet_id: str,
+    update: PacketDecisionUpdate,
+    request: Request,
+) -> DecisionPacket:
+    _require_selective_integration_enabled()
+    packet = store.get_packet(packet_id)
+    if packet is None:
+        raise HTTPException(status_code=404, detail="Packet not found")
+    blockers = packet_decision_blockers(packet, update.decision_state)
+    if blockers:
+        telemetry.increment("selective_policy_blocked", "decision")
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "packet_not_promotable", "blockers": blockers},
+        )
+    actor = _request_actor(request, update.actor)
+    non_promoting = update.decision_state != DecisionState.pursue
+    workflow_status = packet.integrationStatus.model_copy(
+        update={
+            "state": IntegrationStage.decided,
+            "completedStages": [*packet.integrationStatus.completedStages, "human_decision"],
+            "nextAction": (
+                "Non-executing disposition recorded; collect missing evidence or resolve the outcome."
+                if non_promoting
+                else "Observe the forward outcome and resolve decision memory."
+            ),
+            "updatedAt": datetime.now().isoformat(),
+        }
+    )
+    updated = packet.model_copy(
+        update={
+            "decisionState": update.decision_state,
+            "status": ReviewStatus.decision_recorded,
+            "integrationStatus": workflow_status,
+            "audit": [
+                *packet.audit,
+                AuditEvent(
+                    id=f"packet-audit-{len(packet.audit) + 1}",
+                    timestamp=_clock(),
+                    eventType="decision.recorded",
+                    detail=f"{actor}: {update.decision_state.value}; {update.rationale}",
+                ),
+            ],
+        }
+    )
+    memory_records = store.get_packet_memory(packet_id)
+    decision_memory = None
+    if not memory_records:
+        decision_memory = create_decision_memory_record(
+            updated,
+            outcome=update.decision_state.value,
+            notes=update.rationale,
+            score=updated.confidence,
+        )
+        updated = updated.model_copy(update={"memoryRecords": [decision_memory]})
+
+    if decision_memory is not None:
+        saved = store.commit_selective_integration(
+            updated,
+            decision_memory,
+            event_type="decision.recorded",
+            detail=f"{update.decision_state.value}: {update.rationale}",
+            actor=actor,
+        )
+    else:
+        saved = store.commit_packet_transition(
+            updated,
+            event_type="decision.recorded",
+            detail=f"{update.decision_state.value}: {update.rationale}",
+            actor=actor,
+        )
+    telemetry.increment(
+        "selective_stage_completed",
+        "human_decision_non_promoting" if non_promoting else "human_decision",
+    )
+    return saved
+
+
+@app.get("/packets/{packet_id}/memory", response_model=list[DecisionMemoryRecord])
+def get_packet_memory(packet_id: str) -> list[DecisionMemoryRecord]:
+    if store.get_packet(packet_id) is None:
+        raise HTTPException(status_code=404, detail="Packet not found")
+    return store.get_packet_memory(packet_id)
+
+
+@app.post("/packets/{packet_id}/memory/resolve", response_model=DecisionPacket)
+def resolve_packet_memory(
+    packet_id: str,
+    body: MemoryResolutionRequest,
+    request: Request,
+) -> DecisionPacket:
+    _require_selective_integration_enabled()
+    packet = store.get_packet(packet_id)
+    if packet is None:
+        raise HTTPException(status_code=404, detail="Packet not found")
+    if packet.integrationStatus.state != IntegrationStage.decided:
+        raise HTTPException(status_code=409, detail="A human decision must be recorded before outcome resolution")
+    actor = _request_actor(request, body.actor)
+    existing = store.get_packet_memory(packet_id)
+    memory = create_decision_memory_record(
+        packet,
+        outcome=body.outcome,
+        notes=body.notes,
+        score=body.score,
+        record_type="resolution",
+        observed_at=body.observedAt,
+        evidence_references=body.evidenceReferences,
+        previous_record=existing[-1] if existing else None,
+    )
+    status = packet.integrationStatus.model_copy(
+        update={
+            "state": IntegrationStage.resolved,
+            "completedStages": [*packet.integrationStatus.completedStages, "outcome_resolution"],
+            "nextAction": "Use the resolved record in outcome-weighted retrieval.",
+            "updatedAt": datetime.now().isoformat(),
+        }
+    )
+    updated = packet.model_copy(
+        update={
+            "memoryRecords": [*existing, memory],
+            "integrationStatus": status,
+            "audit": [
+                *packet.audit,
+                AuditEvent(
+                    id=f"packet-audit-{len(packet.audit) + 1}",
+                    timestamp=_clock(),
+                    eventType="memory.resolved",
+                    detail=f"Forward outcome resolved by {actor}: {body.outcome}",
+                ),
+            ],
+        }
+    )
+    try:
+        saved = store.commit_selective_integration(
+            updated,
+            memory,
+            event_type="memory.resolved",
+            detail=f"Forward outcome={body.outcome}.",
+            actor=actor,
+            outcome_record=(
+                body.outcome,
+                body.observedAt[:10],
+                {
+                    "score": body.score,
+                    "notes": body.notes,
+                    "evidenceReferences": body.evidenceReferences,
+                },
+            ),
+        )
+    except ValueError as exc:
+        telemetry.increment("selective_write_conflict", "outcome_resolution")
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "packet_write_conflict", "message": str(exc)},
+        ) from exc
+    telemetry.increment("selective_stage_completed", "outcome_resolution")
+    return saved
+
+
+@app.get("/packets/{packet_id}/audit-chain/verify")
+def verify_packet_audit_chain(packet_id: str) -> dict:
+    if store.get_packet(packet_id) is None:
+        raise HTTPException(status_code=404, detail="Packet not found")
+    events = store.get_packet_audit_chain(packet_id)
+    head = store.get_packet_audit_head(packet_id)
+    valid = verify_audit_chain(
+        events,
+        packet_id,
+        expected_count=head[0] if head else None,
+        expected_head=head[1] if head else None,
+    )
+    telemetry.increment("selective_audit_verified", "valid" if valid else "invalid")
+    return {
+        "packetId": packet_id,
+        "valid": valid,
+        "eventCount": len(events),
+        "expectedEventCount": head[0] if head else 0,
+        "headHash": head[1] if head else None,
+        "verifiedAt": datetime.now().isoformat(),
+    }
+
+
+@app.get("/packets/{packet_id}/versions", response_model=list[DecisionPacket])
+def list_packet_versions(packet_id: str) -> list[DecisionPacket]:
+    if store.get_packet(packet_id) is None:
+        raise HTTPException(status_code=404, detail="Packet not found")
+    return store.list_packet_versions(packet_id)
 
 
 @app.get("/packets", response_model=list[DecisionPacket])
@@ -574,16 +1019,21 @@ def refresh_packet_metrics(packet_id: str) -> DecisionPacket:
     snapshot = build_market_snapshot(packet.ticker)
     technicals = build_technicals(packet.ticker)
     sentiment = build_sentiment(packet.ticker)
+    base_packet = invalidate_integration(
+        packet,
+        reason="Market, technical, or sentiment evidence changed.",
+        clear_provenance=True,
+    )
 
-    updated_packet = packet.model_copy(
+    updated_packet = base_packet.model_copy(
         update={
             "marketSnapshot": snapshot,
             "technicals": technicals,
             "sentiment": sentiment,
             "audit": [
-                *packet.audit,
+                *base_packet.audit,
                 AuditEvent(
-                    id=f"packet-audit-{len(packet.audit) + 1}",
+                    id=f"packet-audit-{len(base_packet.audit) + 1}",
                     timestamp=_clock(),
                     eventType="metrics.refreshed",
                     detail=f"Market, technicals, and sentiment refreshed for {packet.ticker}",
@@ -591,11 +1041,15 @@ def refresh_packet_metrics(packet_id: str) -> DecisionPacket:
             ],
         }
     )
-    store.save_packet(updated_packet)
+    saved = store.commit_packet_transition(
+        updated_packet,
+        event_type="metrics.refreshed",
+        detail=f"Market, technical, and sentiment evidence refreshed for {packet.ticker}.",
+    )
     store.record_metric_snapshot(packet_id, "market_snapshot", snapshot.model_dump(mode="json"))
     store.record_metric_snapshot(packet_id, "technicals", technicals.model_dump(mode="json"))
     store.record_metric_snapshot(packet_id, "sentiment", sentiment.model_dump(mode="json"))
-    return updated_packet
+    return saved
 
 
 @app.get("/alerts/queue", response_model=list[AlertQueueRecord])
@@ -679,8 +1133,12 @@ def run_packet_agents(packet_id: str, body: AgentRunRequest) -> DecisionPacket:
 
     selected_provider = resolve_provider(body.providerMode)
     specialist_outputs, runtime_fallback_used = run_specialists(packet, selected_provider)
+    base_packet = invalidate_integration(
+        packet,
+        reason="Specialist agent evidence or synthesis changed.",
+    )
 
-    updated_packet = packet.model_copy(
+    updated_packet = base_packet.model_copy(
         update={
             "agentOutputs": specialist_outputs,
             "providerInfo": {
@@ -691,9 +1149,9 @@ def run_packet_agents(packet_id: str, body: AgentRunRequest) -> DecisionPacket:
                 "reason": selected_provider.reason,
             },
             "audit": [
-                *packet.audit,
+                *base_packet.audit,
                 AuditEvent(
-                    id=f"packet-audit-{len(packet.audit) + 1}",
+                    id=f"packet-audit-{len(base_packet.audit) + 1}",
                     timestamp=_clock(),
                     eventType="agents.completed",
                     detail=f"Coordinator ran specialist outputs via {selected_provider.name}",
@@ -707,7 +1165,12 @@ def run_packet_agents(packet_id: str, body: AgentRunRequest) -> DecisionPacket:
         "completed",
         "coordinator.v1",
     )
-    return store.save_packet(updated_packet)
+    saved = store.commit_packet_transition(
+        updated_packet,
+        event_type="agents.completed",
+        detail=f"Specialist coordinator completed via {selected_provider.name}.",
+    )
+    return saved
 
 
 @app.post("/packets/{packet_id}/backtest/prepare", response_model=DecisionPacket)
@@ -717,13 +1180,14 @@ def prepare_packet_backtest(packet_id: str, body: BacktestPrepareRequest) -> Dec
         raise HTTPException(status_code=404, detail="Packet not found")
 
     backtest_plan = prepare_backtest_plan(packet, body)
-    updated_packet = packet.model_copy(
+    base_packet = invalidate_integration(packet, reason="Backtest validation plan changed.")
+    updated_packet = base_packet.model_copy(
         update={
             "backtestPlan": backtest_plan,
             "audit": [
-                *packet.audit,
+                *base_packet.audit,
                 AuditEvent(
-                    id=f"packet-audit-{len(packet.audit) + 1}",
+                    id=f"packet-audit-{len(base_packet.audit) + 1}",
                     timestamp=_clock(),
                     eventType="backtest.prepared",
                     detail=f"Backtest plan prepared with status {backtest_plan.status}",
@@ -731,7 +1195,12 @@ def prepare_packet_backtest(packet_id: str, body: BacktestPrepareRequest) -> Dec
             ],
         }
     )
-    return store.save_packet(updated_packet)
+    saved = store.commit_packet_transition(
+        updated_packet,
+        event_type="backtest.prepared",
+        detail=f"Backtest plan status={backtest_plan.status}.",
+    )
+    return saved
 
 
 @app.post("/packets/{packet_id}/backtest/run", response_model=DecisionPacket)
@@ -744,14 +1213,15 @@ def run_packet_backtest(packet_id: str, body: BacktestRunRequest) -> DecisionPac
     if plan is not None:
         plan.status = "completed" if result.validityScore != "refused" else "ineligible"
 
-    updated_packet = packet.model_copy(
+    base_packet = invalidate_integration(packet, reason="Backtest evidence changed.")
+    updated_packet = base_packet.model_copy(
         update={
             "backtestPlan": plan,
             "backtestResult": result,
             "audit": [
-                *packet.audit,
+                *base_packet.audit,
                 AuditEvent(
-                    id=f"packet-audit-{len(packet.audit) + 1}",
+                    id=f"packet-audit-{len(base_packet.audit) + 1}",
                     timestamp=_clock(),
                     eventType="backtest.completed" if result.validityScore != "refused" else "backtest.refused",
                     detail=f"Controlled backtest run finished with validity {result.validityScore}",
@@ -766,7 +1236,12 @@ def run_packet_backtest(packet_id: str, body: BacktestRunRequest) -> DecisionPac
         "backtest.v1",
         None if result.validityScore != "refused" else "Backtest run refused by validation gates",
     )
-    return store.save_packet(updated_packet)
+    saved = store.commit_packet_transition(
+        updated_packet,
+        event_type="backtest.completed" if result.validityScore != "refused" else "backtest.refused",
+        detail=f"Controlled backtest validity={result.validityScore}.",
+    )
+    return saved
 
 
 @app.post("/packets/{packet_id}/backtest/run/async", response_model=JobRecord)
@@ -796,14 +1271,15 @@ def run_packet_backtest_async(
             bt_plan = pkt.backtestPlan.model_copy() if pkt.backtestPlan else None
             if bt_plan is not None:
                 bt_plan.status = "completed" if bt_result.validityScore != "refused" else "ineligible"
-            updated = pkt.model_copy(
+            base_packet = invalidate_integration(pkt, reason="Asynchronous backtest evidence changed.")
+            updated = base_packet.model_copy(
                 update={
                     "backtestPlan": bt_plan,
                     "backtestResult": bt_result,
                     "audit": [
-                        *pkt.audit,
+                        *base_packet.audit,
                         AuditEvent(
-                            id=f"packet-audit-{len(pkt.audit) + 1}",
+                            id=f"packet-audit-{len(base_packet.audit) + 1}",
                             timestamp=_clock(),
                             eventType="backtest.completed" if bt_result.validityScore != "refused" else "backtest.refused",
                             detail=f"Async backtest finished with validity {bt_result.validityScore}",
@@ -811,7 +1287,11 @@ def run_packet_backtest_async(
                     ],
                 }
             )
-            store.save_packet(updated)
+            store.commit_packet_transition(
+                updated,
+                event_type="backtest.completed" if bt_result.validityScore != "refused" else "backtest.refused",
+                detail=f"Async controlled backtest validity={bt_result.validityScore}.",
+            )
             store.complete_job(job.id, bt_result.model_dump(mode="json"))
         except Exception as exc:  # pragma: no cover
             store.fail_job(job.id, str(exc))
@@ -827,13 +1307,14 @@ def evaluate_packet_risk(packet_id: str, body: RiskEvaluateRequest) -> DecisionP
         raise HTTPException(status_code=404, detail="Packet not found")
 
     risk = evaluate_risk(packet, body)
-    updated_packet = packet.model_copy(
+    base_packet = invalidate_integration(packet, reason="Risk-monitor inputs changed.")
+    updated_packet = base_packet.model_copy(
         update={
             "riskMonitor": risk,
             "audit": [
-                *packet.audit,
+                *base_packet.audit,
                 AuditEvent(
-                    id=f"packet-audit-{len(packet.audit) + 1}",
+                    id=f"packet-audit-{len(base_packet.audit) + 1}",
                     timestamp=_clock(),
                     eventType="risk.evaluated",
                     detail=f"Risk monitor status updated to {risk.status}",
@@ -841,7 +1322,11 @@ def evaluate_packet_risk(packet_id: str, body: RiskEvaluateRequest) -> DecisionP
             ],
         }
     )
-    saved = store.save_packet(updated_packet)
+    saved = store.commit_packet_transition(
+        updated_packet,
+        event_type="risk.evaluated",
+        detail=f"Risk monitor status={risk.status}.",
+    )
     if risk.status == "alert":
         store.emit_mobile_alert(
             packet_id=packet_id,
@@ -852,25 +1337,15 @@ def evaluate_packet_risk(packet_id: str, body: RiskEvaluateRequest) -> DecisionP
     return saved
 
 
-@app.post("/packets/{packet_id}/outcome", response_model=DecisionPacket)
-def record_packet_outcome(packet_id: str, body: PacketOutcomeUpdate) -> DecisionPacket:
+def _record_outcome_feedback(
+    packet: DecisionPacket,
+    body: PacketOutcomeUpdate,
+    *,
+    actor: str,
+) -> None:
     from .feedback import FeedbackRecord, OutcomeResult
-    
-    packet = store.get_packet(packet_id)
-    if packet is None:
-        raise HTTPException(status_code=404, detail="Packet not found")
 
-    store.record_packet_outcome(
-        packet_id,
-        body.outcome,
-        body.outcome_date,
-        {"pnl": body.pnl, "notes": body.notes},
-    )
-
-    # Create and save feedback record for calibration tracking
     try:
-        # Map outcome string to OutcomeResult enum (try common variations)
-        outcome_lower = body.outcome.lower().strip()
         outcome_mapping = {
             "won": OutcomeResult.won,
             "win": OutcomeResult.won,
@@ -886,38 +1361,80 @@ def record_packet_outcome(packet_id: str, body: PacketOutcomeUpdate) -> Decision
             "partial": OutcomeResult.partial,
             "half": OutcomeResult.partial,
         }
-        
-        outcome_enum = outcome_mapping.get(outcome_lower, OutcomeResult.no_setup)
-        
-        feedback = FeedbackRecord(
-            packet_id=packet_id,
-            decision_state=packet.decisionState.value if packet.decisionState else "unknown",
-            confidence=packet.confidence,
-            ticker=packet.ticker,
-            asset_class=packet.assetClass,
-            time_horizon=packet.timeHorizon,
-            outcome_date=body.outcome_date,
-            outcome=outcome_enum,
-            pnl=body.pnl,
-            notes=body.notes or "",
-            recorded_by="system",  # TODO: Use authenticated user ID when available
+        outcome_enum = outcome_mapping.get(
+            body.outcome.lower().strip(),
+            OutcomeResult.no_setup,
         )
-        
-        store.save_feedback_record(feedback)
-        
-        # Recompute cohort calibration
+        store.save_feedback_record(
+            FeedbackRecord(
+                packet_id=packet.id,
+                decision_state=packet.decisionState.value if packet.decisionState else "unknown",
+                confidence=packet.confidence,
+                ticker=packet.ticker,
+                asset_class=packet.assetClass,
+                time_horizon=packet.timeHorizon,
+                outcome_date=body.outcome_date,
+                outcome=outcome_enum,
+                pnl=body.pnl,
+                notes=body.notes or "",
+                recorded_by=actor,
+            )
+        )
         store.recompute_cohort_calibration(
             packet.ticker,
             packet.assetClass,
             packet.timeHorizon,
         )
     except Exception as exc:
-        # Log but don't fail the outcome recording
         logger = __import__("logging").getLogger(__name__)
-        logger.warning("Failed to record feedback for packet %s: %s", packet_id, exc)
+        logger.warning("Failed to record feedback for packet %s: %s", packet.id, exc)
+
+
+@app.post("/packets/{packet_id}/outcome", response_model=DecisionPacket)
+def record_packet_outcome(
+    packet_id: str,
+    body: PacketOutcomeUpdate,
+    request: Request,
+) -> DecisionPacket:
+    packet = store.get_packet(packet_id)
+    if packet is None:
+        raise HTTPException(status_code=404, detail="Packet not found")
+    if (
+        _feature_enabled("SELECTIVE_INTEGRATION_ENFORCED", default=False)
+        and packet.integrationStatus.state != IntegrationStage.decided
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail="A governed human packet decision is required before outcome recording",
+        )
+
+    memory_records = store.get_packet_memory(packet_id)
+    memory = None
+    next_status = packet.integrationStatus
+    if packet.integrationStatus.state == IntegrationStage.decided:
+        memory = create_decision_memory_record(
+            packet,
+            outcome=body.outcome,
+            notes=body.notes,
+            score=None,
+            record_type="resolution",
+            observed_at=body.outcome_date,
+            evidence_references=[],
+            previous_record=memory_records[-1] if memory_records else None,
+        )
+        next_status = packet.integrationStatus.model_copy(
+            update={
+                "state": IntegrationStage.resolved,
+                "completedStages": [*packet.integrationStatus.completedStages, "outcome_resolution"],
+                "nextAction": "Use the resolved record in outcome-weighted retrieval.",
+                "updatedAt": datetime.now().isoformat(),
+            }
+        )
 
     updated_packet = packet.model_copy(
         update={
+            "memoryRecords": [*memory_records, memory] if memory is not None else packet.memoryRecords,
+            "integrationStatus": next_status,
             "audit": [
                 *packet.audit,
                 AuditEvent(
@@ -929,7 +1446,38 @@ def record_packet_outcome(packet_id: str, body: PacketOutcomeUpdate) -> Decision
             ],
         }
     )
-    saved = store.save_packet(updated_packet)
+    actor = _request_actor(request)
+    outcome_record = (
+        body.outcome,
+        body.outcome_date,
+        {"pnl": body.pnl, "notes": body.notes},
+    )
+    try:
+        if memory is not None:
+            saved = store.commit_selective_integration(
+                updated_packet,
+                memory,
+                event_type="memory.resolved",
+                detail=f"Forward outcome={body.outcome}.",
+                actor=actor,
+                outcome_record=outcome_record,
+            )
+        else:
+            saved = store.commit_packet_transition(
+                updated_packet,
+                event_type="outcome.recorded",
+                detail=f"Forward outcome={body.outcome}.",
+                actor=actor,
+                outcome_record=outcome_record,
+            )
+    except ValueError as exc:
+        telemetry.increment("selective_write_conflict", "legacy_outcome")
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "packet_write_conflict", "message": str(exc)},
+        ) from exc
+
+    _record_outcome_feedback(saved, body, actor=actor)
 
     outcome_label = body.outcome.lower().strip()
     if outcome_label in {"lost", "loss", "whipsaw", "invalidated", "invalid"}:
@@ -1013,13 +1561,14 @@ def update_packet_portfolio_context(packet_id: str, body: PortfolioContextUpdate
         raise HTTPException(status_code=404, detail="Packet not found")
 
     portfolio = build_portfolio_context(body)
-    updated_packet = packet.model_copy(
+    base_packet = invalidate_integration(packet, reason="Portfolio risk context changed.")
+    updated_packet = base_packet.model_copy(
         update={
             "portfolioContext": portfolio,
             "audit": [
-                *packet.audit,
+                *base_packet.audit,
                 AuditEvent(
-                    id=f"packet-audit-{len(packet.audit) + 1}",
+                    id=f"packet-audit-{len(base_packet.audit) + 1}",
                     timestamp=_clock(),
                     eventType="portfolio.updated",
                     detail="Portfolio context updated for advisory risk sizing",
@@ -1027,7 +1576,12 @@ def update_packet_portfolio_context(packet_id: str, body: PortfolioContextUpdate
             ],
         }
     )
-    return store.save_packet(updated_packet)
+    saved = store.commit_packet_transition(
+        updated_packet,
+        event_type="portfolio.updated",
+        detail="Portfolio context changed and downstream integration stages were invalidated.",
+    )
+    return saved
 
 
 @app.post("/packets/{packet_id}/retrieve", response_model=RetrievalResponse)
@@ -1069,6 +1623,26 @@ def retrieve_packet_context(packet_id: str, body: RetrievalRequest) -> Retrieval
                     score=score,
                 )
             )
+
+    for memory in store.list_decision_memories(limit=500):
+        if memory.packetId == packet_id:
+            continue
+        scored = score_memory_relevance(memory, query)
+        if scored is None:
+            continue
+        score, components = scored
+        if components["similarity"] <= 0:
+            continue
+        hits.append(
+            RetrievalHit(
+                kind="decision_memory",
+                id=memory.memoryId,
+                title=f"Resolved decision memory: {memory.packetId}",
+                snippet=f"{memory.outcome}: {(memory.notes or 'No notes')[:140]}",
+                score=score,
+                scoreComponents=components,
+            )
+        )
 
     hits.sort(key=lambda hit: hit.score, reverse=True)
     top_hits = hits[: body.topK]
@@ -1125,14 +1699,15 @@ def derive_packet_confidence(packet_id: str, body: ConfidenceDeriveRequest) -> D
         raise HTTPException(status_code=404, detail="Packet not found")
 
     confidence = derive_confidence(packet, body)
-    updated_packet = packet.model_copy(
+    base_packet = invalidate_integration(packet, reason="Derived confidence inputs changed.")
+    updated_packet = base_packet.model_copy(
         update={
             "confidenceBreakdown": confidence,
             "confidence": confidence.overallConfidence,
             "audit": [
-                *packet.audit,
+                *base_packet.audit,
                 AuditEvent(
-                    id=f"packet-audit-{len(packet.audit) + 1}",
+                    id=f"packet-audit-{len(base_packet.audit) + 1}",
                     timestamp=_clock(),
                     eventType="confidence.derived",
                     detail=f"Confidence recomputed with risk-adjusted score {confidence.riskAdjustedScore}",
@@ -1140,7 +1715,12 @@ def derive_packet_confidence(packet_id: str, body: ConfidenceDeriveRequest) -> D
             ],
         }
     )
-    return store.save_packet(updated_packet)
+    saved = store.commit_packet_transition(
+        updated_packet,
+        event_type="confidence.derived",
+        detail=f"Risk-adjusted confidence={confidence.riskAdjustedScore}.",
+    )
+    return saved
 
 
 @app.post("/webhooks/tradingview", response_model=TradeReview)
@@ -1337,6 +1917,13 @@ def health_detailed() -> dict:
         "checks": {
             "store": "ok",
             "persistence": persistence,
+            "selectiveIntegration": {
+                "enabled": _feature_enabled("SELECTIVE_INTEGRATION_ENABLED", default=True),
+                "enforced": _feature_enabled("SELECTIVE_INTEGRATION_ENFORCED", default=False),
+                "contractVersion": "selective-integration.v1",
+                "disconfirmationPolicyVersion": "disconfirmation.v1",
+                "riskPolicyVersion": "risk-policy.v1",
+            },
             "marketData": mkt_status,
             "llmProviders": provider_status(),
             "calibrationMetrics": {

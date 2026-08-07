@@ -66,6 +66,42 @@ def test_production_allows_cors_preflight_without_identity(monkeypatch) -> None:
     assert "authorization" in response.headers["access-control-allow-headers"].lower()
 
 
+def test_staging_web_identity_is_scoped_to_configured_origin(monkeypatch) -> None:
+    monkeypatch.setenv("ENVIRONMENT", "staging")
+    monkeypatch.setenv("ALLOW_STAGING_WEB_IDENTITY", "true")
+    monkeypatch.setenv(
+        "STAGING_WEB_ORIGIN",
+        "https://ambrosia-web-staging.onrender.com",
+    )
+
+    allowed = client.get(
+        "/market/SPY/snapshot",
+        headers={"Origin": "https://ambrosia-web-staging.onrender.com"},
+    )
+    denied = client.get(
+        "/market/SPY/snapshot",
+        headers={"Origin": "https://evil.example"},
+    )
+    admin_denied = client.post(
+        "/roadmap/sync-plans",
+        headers={"Origin": "https://ambrosia-web-staging.onrender.com"},
+    )
+
+    assert allowed.status_code == 200
+    assert denied.status_code == 401
+    assert admin_denied.status_code == 403
+
+
+def test_production_ignores_staging_web_identity(monkeypatch) -> None:
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setenv("ALLOW_STAGING_WEB_IDENTITY", "true")
+    response = client.get(
+        "/market/SPY/snapshot",
+        headers={"Origin": "https://ambrosia-web-staging.onrender.com"},
+    )
+    assert response.status_code == 401
+
+
 def test_production_identity_and_route_policy(monkeypatch) -> None:
     monkeypatch.setenv("ENVIRONMENT", "production")
     monkeypatch.setenv(

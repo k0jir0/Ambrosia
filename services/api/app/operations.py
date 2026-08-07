@@ -167,6 +167,19 @@ def authenticate(request: Request) -> Principal | None:
         if jwt_principal is not None:
             return jwt_principal
 
+    if _environment() == "staging" and _truthy("ALLOW_STAGING_WEB_IDENTITY"):
+        staging_origin = os.getenv(
+            "STAGING_WEB_ORIGIN",
+            "https://ambrosia-web-staging.onrender.com",
+        ).rstrip("/")
+        if request.headers.get("origin", "").rstrip("/") == staging_origin:
+            return Principal(
+                subject="staging-web-demo",
+                role="analyst",
+                team="staging",
+                auth_method="staging-web-origin",
+            )
+
     allow_dev = _truthy("ALLOW_INSECURE_DEV_IDENTITY", default=not _is_production())
     if allow_dev and not _is_production():
         role = (

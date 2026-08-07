@@ -386,6 +386,13 @@ class ProductionBoundaryMiddleware:
         request = Request(scope, receive=receive)
         path = request.url.path
         method = request.method.upper()
+
+        # Browser preflight requests do not include bearer credentials. Let
+        # CORSMiddleware validate the requested origin, method, and headers.
+        if method == "OPTIONS":
+            await self.app(scope, receive, send)
+            return
+
         request_id = request.headers.get("x-request-id", "").strip()
         if not request_id or len(request_id) > 128:
             request_id = str(uuid4())

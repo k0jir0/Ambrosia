@@ -24,6 +24,11 @@ locals {
   api_hostname            = local.custom_domain ? (local.production ? "api.${var.domain_name}" : "api-staging.${var.domain_name}") : ""
   origin_hostname         = local.custom_domain ? (local.production ? "origin.${var.domain_name}" : "origin-staging.${var.domain_name}") : ""
   public_web_url          = local.custom_domain ? "https://${local.configured_web_hostname}" : "https://${aws_cloudfront_distribution.web.domain_name}"
+  explicit_auth_email     = trimspace(var.auth_email_from) != "" && trimspace(var.auth_ses_identity_arn) != ""
+  auth_email_enabled      = local.custom_domain || local.explicit_auth_email
+  auth_email_from         = local.explicit_auth_email ? trimspace(var.auth_email_from) : (local.custom_domain ? "no-reply@${var.domain_name}" : "")
+  auth_ses_identity_arn   = local.explicit_auth_email ? trimspace(var.auth_ses_identity_arn) : (local.custom_domain ? aws_sesv2_email_identity.domain[0].arn : "")
+  auth_ses_identity_name  = local.explicit_auth_email ? element(split("identity/", trimspace(var.auth_ses_identity_arn)), 1) : var.domain_name
   tags = {
     Project            = var.project
     Environment        = var.environment
@@ -32,6 +37,25 @@ locals {
     Owner              = var.owner
     CostCenter         = var.cost_center
     DataClassification = var.data_classification
+  }
+}
+
+check "auth_email_configuration" {
+  assert {
+    condition     = (trimspace(var.auth_email_from) == "") == (trimspace(var.auth_ses_identity_arn) == "")
+    error_message = "auth_email_from and auth_ses_identity_arn must be configured together."
+  }
+  assert {
+    condition = !local.explicit_auth_email || (
+      strcontains(local.auth_ses_identity_name, "@")
+      ? lower(local.auth_email_from) == lower(local.auth_ses_identity_name)
+      : endswith(lower(local.auth_email_from), "@${lower(local.auth_ses_identity_name)}")
+    )
+    error_message = "auth_email_from must match the SES email identity or belong to the SES domain identity."
+  }
+  assert {
+    condition     = !local.explicit_auth_email || split(":", local.auth_ses_identity_arn)[4] == data.aws_caller_identity.current.account_id
+    error_message = "auth_ses_identity_arn must belong to the active AWS account."
   }
 }
 
@@ -568,10 +592,10 @@ resource "aws_iam_role_policy" "ecs_task" {
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = concat(
-      local.custom_domain ? [{
+      local.auth_email_enabled ? [{
         Effect   = "Allow"
         Action   = ["ses:SendEmail"]
-        Resource = [aws_sesv2_email_identity.domain[0].arn]
+        Resource = [local.auth_ses_identity_arn]
       }] : [],
       [
         {
@@ -705,11 +729,11 @@ resource "aws_ecs_task_definition" "api" {
       { name = "ENVIRONMENT", value = var.environment },
       { name = "REQUIRE_DATABASE", value = "true" },
       { name = "ALLOW_INSECURE_DEV_IDENTITY", value = "false" },
-      { name = "AUTH_EMAIL_MODE", value = local.custom_domain ? "ses" : "console" },
-      { name = "AUTH_ALLOW_STAGING_CONSOLE_DELIVERY", value = !local.custom_domain && var.environment == "staging" ? "true" : "false" },
-      { name = "AUTH_EXPOSE_DEVELOPMENT_TOKENS", value = !local.custom_domain && var.environment == "staging" ? "true" : "false" },
-      { name = "AUTH_EMAIL_FROM", value = local.custom_domain ? "no-reply@${var.domain_name}" : "" },
-      { name = "AUTH_SES_CONFIGURATION_SET", value = local.custom_domain ? aws_sesv2_configuration_set.transactional.configuration_set_name : "" },
+      { name = "AUTH_EMAIL_MODE", value = local.auth_email_enabled ? "ses" : "console" },
+      { name = "AUTH_ALLOW_STAGING_CONSOLE_DELIVERY", value = !local.auth_email_enabled && var.environment == "staging" ? "true" : "false" },
+      { name = "AUTH_EXPOSE_DEVELOPMENT_TOKENS", value = !local.auth_email_enabled && var.environment == "staging" ? "true" : "false" },
+      { name = "AUTH_EMAIL_FROM", value = local.auth_email_from },
+      { name = "AUTH_SES_CONFIGURATION_SET", value = local.auth_email_enabled ? aws_sesv2_configuration_set.transactional.configuration_set_name : "" },
       { name = "PUBLIC_WEB_URL", value = local.public_web_url },
       { name = "ALLOWED_ORIGINS", value = join(",", concat([local.public_web_url], var.extra_allowed_origins)) },
       { name = "AWS_REGION", value = var.aws_region },

@@ -53,11 +53,21 @@ issue, JSON evidence file, shell history, or screenshot.
    independent approval at the protected `staging` branch instead. Populate
    environment variables `AWS_ACCOUNT_ID`, `AWS_REGION`, `TF_STATE_BUCKET`,
    `TF_STATE_KMS_KEY_ARN`, `DOMAIN_NAME`, `HOSTED_ZONE_ID`,
+   `AUTH_EMAIL_FROM`, `AUTH_SES_IDENTITY_ARN`,
    `API_DESIRED_COUNT`, `WEB_DESIRED_COUNT`, `ALERT_EMAIL`, `OWNER`,
    `COST_CENTER`, `DATA_CLASSIFICATION`, and `BUDGET_NAME`; add protected secrets
    `AWS_DEPLOY_ROLE_ARN`, `ALB_CERTIFICATE_ARN`, and
    `CLOUDFRONT_CERTIFICATE_ARN`. Re-run the script with `-VerifyOnly` (and the
    same plan-limitation switch, when used) and retain its value-free output.
+   For generated-hostname staging, set `AUTH_EMAIL_FROM` to a verified SES
+   mailbox and `AUTH_SES_IDENTITY_ARN` to that email identity or its verified
+   domain identity in `ca-central-1`. Leave both empty to make password recovery
+   fail closed. The release workflow refuses SES mode unless the identity is
+   verified, the sender belongs to it, and SES production access is enabled.
+   Custom-domain releases perform the same live verification after DNS and SES
+   resources are applied and before migration or service enablement, waiting up
+   to ten minutes for initial DNS verification. If verification remains pending,
+   rerun the release after SES reports the domain as verified.
 4. Review `infra/aws/environments/staging.tfvars.example`, run `terraform fmt`,
    `init`, `validate`, and a saved plan. A second operator reviews the plan.
 5. Record the exact merged `staging` SHA. Dispatch **AWS release** with

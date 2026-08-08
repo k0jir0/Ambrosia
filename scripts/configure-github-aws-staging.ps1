@@ -9,6 +9,8 @@ param(
     [string]$StateKmsKeyArn,
     [bool]$CustomDomainEnabled = $true,
     [string]$DomainName,
+    [string]$AuthEmailFrom,
+    [string]$AuthSesIdentityArn,
     [string]$HostedZoneId,
     [string]$DeployRoleArn,
     [string]$AlbCertificateArn,
@@ -25,12 +27,16 @@ param(
 $ErrorActionPreference = "Stop"
 $RequiredVariables = @(
     "AWS_ACCOUNT_ID", "AWS_REGION", "TF_STATE_BUCKET", "TF_STATE_KMS_KEY_ARN",
-    "CUSTOM_DOMAIN_ENABLED", "DOMAIN_NAME", "HOSTED_ZONE_ID", "API_DESIRED_COUNT", "WEB_DESIRED_COUNT",
+    "CUSTOM_DOMAIN_ENABLED", "API_DESIRED_COUNT", "WEB_DESIRED_COUNT",
     "ALERT_EMAIL", "OWNER", "COST_CENTER", "DATA_CLASSIFICATION", "BUDGET_NAME"
 )
 $RequiredSecrets = @("AWS_DEPLOY_ROLE_ARN")
 if ($CustomDomainEnabled) {
+    $RequiredVariables += @("DOMAIN_NAME", "HOSTED_ZONE_ID")
     $RequiredSecrets += @("ALB_CERTIFICATE_ARN", "CLOUDFRONT_CERTIFICATE_ARN")
+}
+if (-not [string]::IsNullOrWhiteSpace($AuthEmailFrom) -or -not [string]::IsNullOrWhiteSpace($AuthSesIdentityArn)) {
+    $RequiredVariables += @("AUTH_EMAIL_FROM", "AUTH_SES_IDENTITY_ARN")
 }
 $RequiredChecks = @(
     "API tests & lint",
@@ -88,6 +94,9 @@ if (-not $VerifyOnly) {
     if (-not $CustomDomainEnabled -and $Environment -ne "staging") {
         throw "The generated CloudFront hostname is permitted only for staging."
     }
+    if ([string]::IsNullOrWhiteSpace($AuthEmailFrom) -ne [string]::IsNullOrWhiteSpace($AuthSesIdentityArn)) {
+        throw "AuthEmailFrom and AuthSesIdentityArn must be configured together."
+    }
     if ($DataClassification -notin @("synthetic", "approved-staging")) {
         throw "DataClassification must be synthetic or approved-staging."
     }
@@ -129,6 +138,8 @@ if (-not $VerifyOnly) {
             TF_STATE_KMS_KEY_ARN = $StateKmsKeyArn
             CUSTOM_DOMAIN_ENABLED = $CustomDomainEnabled.ToString().ToLowerInvariant()
             DOMAIN_NAME = $DomainName
+            AUTH_EMAIL_FROM = $AuthEmailFrom
+            AUTH_SES_IDENTITY_ARN = $AuthSesIdentityArn
             HOSTED_ZONE_ID = $HostedZoneId
             API_DESIRED_COUNT = "1"
             WEB_DESIRED_COUNT = "1"
@@ -138,8 +149,23 @@ if (-not $VerifyOnly) {
             DATA_CLASSIFICATION = $DataClassification
             BUDGET_NAME = $BudgetName
         }
+        $existingVariableNames = @(
+            & gh variable list --repo $Repository --env $Environment --json name |
+                ConvertFrom-Json |
+                ForEach-Object { $_.name }
+        )
+        if ($LASTEXITCODE -ne 0) { throw "Failed to list environment variables." }
         foreach ($entry in $variables.GetEnumerator()) {
-            & gh variable set $entry.Key --repo $Repository --env $Environment --body $entry.Value
+            if ([string]::IsNullOrWhiteSpace([string]$entry.Value)) {
+                if ($existingVariableNames -contains $entry.Key) {
+                    & gh variable delete $entry.Key --repo $Repository --env $Environment
+                    if ($LASTEXITCODE -ne 0) {
+                        throw "Failed to clear optional environment variable $($entry.Key)."
+                    }
+                }
+                continue
+            }
+            & gh variable set $entry.Key --repo $Repository --env $Environment --body ([string]$entry.Value)
             if ($LASTEXITCODE -ne 0) { throw "Failed to set environment variable $($entry.Key)." }
         }
 

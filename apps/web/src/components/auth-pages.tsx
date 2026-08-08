@@ -174,16 +174,17 @@ export function LoginForm() {
 export function ForgotPasswordForm() {
   const [pending, setPending] = useState(false);
   const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
   const [token, setToken] = useState<string | undefined>();
   async function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault(); setPending(true);
+    event.preventDefault(); setPending(true); setError("");
     const data = new FormData(event.currentTarget);
     try { const result = await requestPasswordReset(String(data.get("email"))); setMessage(result.message); setToken(result.developmentResetToken); }
-    catch { setMessage("If an eligible account exists, a password-reset email has been sent."); }
+    catch { setError("Password recovery is temporarily unavailable. Please try again later."); }
     finally { setPending(false); }
   }
   if (message) return <div className="rounded-xl border border-line bg-paper p-5 text-sm leading-6 text-ink/68"><CheckCircle2 className="mb-3 h-6 w-6 text-teal" />{message}{token ? <Link href={`/reset-password?token=${encodeURIComponent(token)}`} className="mt-4 flex items-center gap-2 font-semibold text-teal">Open development reset <ArrowRight className="h-4 w-4" /></Link> : null}</div>;
-  return <form onSubmit={submit} className="space-y-5"><label className="block text-sm font-medium">Email<input className={inputClass} name="email" type="email" autoComplete="email" required /></label><button className={buttonClass} disabled={pending}>{pending ? <Loader2 className="h-4 w-4 animate-spin" /> : null} Send reset link</button><Link href="/login" className="block text-center text-sm font-semibold text-teal">Back to sign in</Link></form>;
+  return <form onSubmit={submit} className="space-y-5"><label className="block text-sm font-medium">Email<input className={inputClass} name="email" type="email" autoComplete="email" required /></label>{error ? <p role="alert" className="rounded-md border border-rose-300/25 bg-rose-300/10 p-3 text-sm text-rose-100">{error}</p> : null}<button className={buttonClass} disabled={pending}>{pending ? <Loader2 className="h-4 w-4 animate-spin" /> : null} Send reset link</button><Link href="/login" className="block text-center text-sm font-semibold text-teal">Back to sign in</Link></form>;
 }
 
 export function ResetPasswordForm() {

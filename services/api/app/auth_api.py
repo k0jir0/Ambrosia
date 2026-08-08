@@ -6,7 +6,7 @@ import os
 from datetime import datetime
 
 import psycopg
-from fastapi import APIRouter, HTTPException, Request, Response, status
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, Response, status
 from pydantic import BaseModel, Field
 
 from .identity import (
@@ -15,6 +15,7 @@ from .identity import (
     development_tokens_exposed,
     get_identity_service,
     is_production,
+    password_reset_delivery_available,
     session_cookie_name,
     utc_now,
     verification_tokens_exposed,
@@ -197,10 +198,20 @@ def login(body: LoginRequest, request: Request, response: Response) -> dict:
 
 
 @router.post("/forgot-password", status_code=status.HTTP_202_ACCEPTED)
-def forgot_password(body: ForgotPasswordRequest) -> dict:
-    token = get_identity_service().forgot_password(body.email)
+def forgot_password(body: ForgotPasswordRequest, background_tasks: BackgroundTasks) -> dict:
+    if not password_reset_delivery_available():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Password recovery is temporarily unavailable",
+        )
+    service = get_identity_service()
+    token = None
+    if development_tokens_exposed():
+        token = service.forgot_password(body.email)
+    else:
+        background_tasks.add_task(service.forgot_password, body.email)
     payload = {
-        "message": "If an eligible account exists, a password-reset email has been sent."
+        "message": "If an eligible account exists and email delivery succeeds, password-reset instructions will arrive shortly."
     }
     if token and development_tokens_exposed():
         payload["developmentResetToken"] = token

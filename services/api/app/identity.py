@@ -139,6 +139,15 @@ def verification_tokens_exposed() -> bool:
     )
 
 
+def password_reset_delivery_available() -> bool:
+    if _environment() == "development":
+        return True
+    return (
+        os.getenv("AUTH_EMAIL_MODE", "").strip().lower() == "ses"
+        and bool(os.getenv("AUTH_EMAIL_FROM", "").strip())
+    )
+
+
 def session_cookie_name() -> str:
     return SESSION_COOKIE_PRODUCTION if is_production() else SESSION_COOKIE_DEVELOPMENT
 
@@ -1140,6 +1149,14 @@ class IdentityService:
         return bool(token) and hmac.compare_digest(identity.csrf_hash, hash_token(token or ""))
 
     def forgot_password(self, email: str) -> str | None:
+        prepared = self.prepare_password_reset(email)
+        if not prepared:
+            return None
+        delivery_email, token = prepared
+        self.deliver_password_reset(delivery_email, token)
+        return token
+
+    def prepare_password_reset(self, email: str) -> tuple[str, str] | None:
         try:
             _, canonical = canonicalize_email(email)
         except ValueError:
@@ -1148,10 +1165,13 @@ class IdentityService:
         delivery_email = self.repository.create_password_reset(
             canonical, hash_token(token), utc_now()
         )
-        if delivery_email:
-            self.sender.send_password_reset(delivery_email, token)
-            return token
-        return None
+        return (delivery_email, token) if delivery_email else None
+
+    def deliver_password_reset(self, email: str, token: str) -> None:
+        try:
+            self.sender.send_password_reset(email, token)
+        except Exception:
+            LOGGER.exception("password reset delivery failed")
 
     def reset_password(self, token: str, new_password: str) -> bool:
         validate_password(new_password)

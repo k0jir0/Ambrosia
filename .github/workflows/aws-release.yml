@@ -93,6 +93,8 @@ jobs:
       TF_STATE_KMS_KEY_ARN: ${{ vars.TF_STATE_KMS_KEY_ARN }}
       CUSTOM_DOMAIN_ENABLED: ${{ vars.CUSTOM_DOMAIN_ENABLED || 'false' }}
       DOMAIN_NAME: ${{ vars.DOMAIN_NAME }}
+      AUTH_EMAIL_FROM: ${{ vars.AUTH_EMAIL_FROM }}
+      AUTH_SES_IDENTITY_ARN: ${{ vars.AUTH_SES_IDENTITY_ARN }}
       HOSTED_ZONE_ID: ${{ vars.HOSTED_ZONE_ID }}
       API_DESIRED_COUNT: ${{ vars.API_DESIRED_COUNT || '1' }}
       WEB_DESIRED_COUNT: ${{ vars.WEB_DESIRED_COUNT || '1' }}
@@ -133,6 +135,23 @@ jobs:
           test "$API_DESIRED_COUNT" -ge 1
           test "$WEB_DESIRED_COUNT" -ge 1
           test "$CUSTOM_DOMAIN_ENABLED" = "true" -o "$CUSTOM_DOMAIN_ENABLED" = "false"
+          test -z "$AUTH_EMAIL_FROM" -a -z "$AUTH_SES_IDENTITY_ARN" -o -n "$AUTH_EMAIL_FROM" -a -n "$AUTH_SES_IDENTITY_ARN"
+          if [ -n "$AUTH_EMAIL_FROM" ]; then
+            case "$AUTH_SES_IDENTITY_ARN" in
+              "arn:aws:ses:$AWS_REGION:$EXPECTED_ACCOUNT_ID:identity/"*) ;;
+              *) exit 1 ;;
+            esac
+            SES_IDENTITY="${AUTH_SES_IDENTITY_ARN##*/}"
+            NORMALIZED_FROM="${AUTH_EMAIL_FROM,,}"
+            NORMALIZED_IDENTITY="${SES_IDENTITY,,}"
+            if [[ "$NORMALIZED_IDENTITY" == *"@"* ]]; then
+              test "$NORMALIZED_FROM" = "$NORMALIZED_IDENTITY"
+            else
+              [[ "$NORMALIZED_FROM" == *"@$NORMALIZED_IDENTITY" ]]
+            fi
+            test "$(aws sesv2 get-email-identity --email-identity "$SES_IDENTITY" --query VerifiedForSendingStatus --output text)" = "True"
+            test "$(aws sesv2 get-account --query ProductionAccessEnabled --output text)" = "True"
+          fi
           if [ "$CUSTOM_DOMAIN_ENABLED" = "true" ]; then
             test -n "$DOMAIN_NAME"
             test "$DOMAIN_NAME" != "example.com"
@@ -184,6 +203,8 @@ jobs:
             -var="aws_region=$AWS_REGION" \
             -var="custom_domain_enabled=$CUSTOM_DOMAIN_ENABLED" \
             -var="domain_name=$DOMAIN_NAME" \
+            -var="auth_email_from=$AUTH_EMAIL_FROM" \
+            -var="auth_ses_identity_arn=$AUTH_SES_IDENTITY_ARN" \
             -var="hosted_zone_id=$HOSTED_ZONE_ID" \
             -var="alb_certificate_arn=$ALB_CERTIFICATE_ARN" \
             -var="cloudfront_certificate_arn=$CLOUDFRONT_CERTIFICATE_ARN" \
@@ -325,6 +346,8 @@ jobs:
             -var="aws_region=$AWS_REGION" \
             -var="custom_domain_enabled=$CUSTOM_DOMAIN_ENABLED" \
             -var="domain_name=$DOMAIN_NAME" \
+            -var="auth_email_from=$AUTH_EMAIL_FROM" \
+            -var="auth_ses_identity_arn=$AUTH_SES_IDENTITY_ARN" \
             -var="hosted_zone_id=$HOSTED_ZONE_ID" \
             -var="alb_certificate_arn=$ALB_CERTIFICATE_ARN" \
             -var="cloudfront_certificate_arn=$CLOUDFRONT_CERTIFICATE_ARN" \
@@ -375,6 +398,8 @@ jobs:
       TF_STATE_KMS_KEY_ARN: ${{ vars.TF_STATE_KMS_KEY_ARN }}
       CUSTOM_DOMAIN_ENABLED: ${{ vars.CUSTOM_DOMAIN_ENABLED || 'false' }}
       DOMAIN_NAME: ${{ vars.DOMAIN_NAME }}
+      AUTH_EMAIL_FROM: ${{ vars.AUTH_EMAIL_FROM }}
+      AUTH_SES_IDENTITY_ARN: ${{ vars.AUTH_SES_IDENTITY_ARN }}
       HOSTED_ZONE_ID: ${{ vars.HOSTED_ZONE_ID }}
       API_DESIRED_COUNT: ${{ vars.API_DESIRED_COUNT || '1' }}
       WEB_DESIRED_COUNT: ${{ vars.WEB_DESIRED_COUNT || '1' }}
@@ -424,6 +449,21 @@ jobs:
           PLAN_PATH="$RUNNER_TEMP/foundation.tfplan"
           aws s3 cp "s3://$TF_STATE_BUCKET/$FOUNDATION_PLAN_KEY" "$PLAN_PATH" --only-show-errors
           terraform -chdir=infra/aws apply -auto-approve "$PLAN_PATH"
+      - name: Verify managed SES delivery readiness
+        if: env.CUSTOM_DOMAIN_ENABLED == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERIFIED=false
+          for attempt in $(seq 1 60); do
+            if [ "$(aws sesv2 get-email-identity --email-identity "$DOMAIN_NAME" --query VerifiedForSendingStatus --output text)" = "True" ]; then
+              VERIFIED=true
+              break
+            fi
+            sleep 10
+          done
+          test "$VERIFIED" = "true"
+          test "$(aws sesv2 get-account --query ProductionAccessEnabled --output text)" = "True"
       - name: Run schema migration task
         id: migration
         shell: bash
@@ -453,6 +493,8 @@ jobs:
             -var="aws_region=$AWS_REGION" \
             -var="custom_domain_enabled=$CUSTOM_DOMAIN_ENABLED" \
             -var="domain_name=$DOMAIN_NAME" \
+            -var="auth_email_from=$AUTH_EMAIL_FROM" \
+            -var="auth_ses_identity_arn=$AUTH_SES_IDENTITY_ARN" \
             -var="hosted_zone_id=$HOSTED_ZONE_ID" \
             -var="alb_certificate_arn=$ALB_CERTIFICATE_ARN" \
             -var="cloudfront_certificate_arn=$CLOUDFRONT_CERTIFICATE_ARN" \

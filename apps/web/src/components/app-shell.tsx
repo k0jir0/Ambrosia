@@ -10,27 +10,21 @@ import {
   LayoutDashboard,
   LogOut,
   Menu,
+  Search,
   ScanSearch,
   Settings,
+  TerminalSquare,
+  TestTubeDiagonal,
+  Activity,
+  RadioTower,
   Users,
   X,
 } from "lucide-react";
 
 import { getAccountSession, logoutAccount, type AccountSession } from "@/lib/api";
+import { getRouteAvailability, isRouteAvailable, PUBLIC_PATHS } from "@/lib/route-availability";
+import { CommandPalette } from "./command-palette";
 import { cn } from "./ui";
-
-const PUBLIC_PATHS = new Set([
-  "/",
-  "/signup",
-  "/login",
-  "/forgot-password",
-  "/reset-password",
-  "/verify-email",
-  "/accept-invite",
-  "/terms",
-  "/privacy",
-  "/company-proof",
-]);
 
 const NAV_ITEMS = [
   { href: "/review/new", label: "Intake", icon: ClipboardPlus },
@@ -38,37 +32,13 @@ const NAV_ITEMS = [
   { href: "/review", label: "Review Queue", icon: ClipboardCheck },
   { href: "/history", label: "Outcomes & Memory", icon: History },
   { href: "/market-scanner", label: "Market Scanner", icon: ScanSearch },
+  { href: "/alpha", label: "Alpha Lab", icon: TestTubeDiagonal },
+  { href: "/signals", label: "Signals Lab", icon: RadioTower },
+  { href: "/cli-design", label: "CLI Guide", icon: TerminalSquare },
+  { href: "/operations", label: "Operations", icon: Activity },
   { href: "/team", label: "Team", icon: Users },
   { href: "/admin", label: "Admin", icon: Settings },
 ] as const;
-
-const LAB_PATH_PREFIXES = [
-  "/advanced",
-  "/alpha",
-  "/calibration",
-  "/cli-design",
-  "/discovery",
-  "/enterprise",
-  "/execution-intelligence",
-  "/governance",
-  "/market-scanner",
-  "/markets",
-  "/platform",
-  "/relay-benchmarks",
-  "/reports",
-  "/signals",
-] as const;
-
-const labsEnabled =
-  process.env.NEXT_PUBLIC_ENABLE_LABS === "true" ||
-  (process.env.NEXT_PUBLIC_ENABLE_LABS === undefined && process.env.NODE_ENV !== "production");
-
-const marketScannerEnabled =
-  process.env.NEXT_PUBLIC_ENABLE_MARKET_SCANNER === "true" ||
-  (process.env.NEXT_PUBLIC_ENABLE_MARKET_SCANNER === undefined && process.env.NODE_ENV !== "production");
-
-const MARKET_SCANNER_PATH_PREFIXES = ["/market-scanner", "/markets"] as const;
-const MARKET_SCANNER_ROLES = new Set(["analyst", "reviewer", "owner", "admin"]);
 
 function activePath(pathname: string, href: string) {
   return pathname === href || pathname.startsWith(`${href}/`);
@@ -77,23 +47,20 @@ function activePath(pathname: string, href: string) {
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname() || "/";
   const isPublic = PUBLIC_PATHS.has(pathname);
-  const isMarketScannerPath = MARKET_SCANNER_PATH_PREFIXES.some(
-    (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`),
-  );
-  const isHiddenLab = LAB_PATH_PREFIXES.some(
-    (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`),
-  ) && !(isMarketScannerPath && marketScannerEnabled);
+  const routeAvailability = getRouteAvailability(pathname);
+  const routeEnabled = routeAvailability?.enabled ?? true;
   const [profile, setProfile] = useState<AccountSession | null>(null);
   const [checking, setChecking] = useState(!isPublic);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
 
   useEffect(() => {
     if (isPublic) {
       setChecking(false);
       return;
     }
-    if (isHiddenLab && !labsEnabled) {
-      window.location.replace("/app");
+    if (!routeEnabled && routeAvailability) {
+      window.location.replace(routeAvailability.unavailableRedirect);
       return;
     }
     let active = true;
@@ -101,8 +68,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     getAccountSession()
       .then((session) => {
         if (!active) return;
-        if (isMarketScannerPath && !MARKET_SCANNER_ROLES.has(session.organization.role)) {
-          window.location.replace("/app");
+        if (!isRouteAvailable(pathname, session.organization.role)) {
+          window.location.replace(routeAvailability?.unavailableRedirect ?? "/app");
           return;
         }
         setProfile(session);
@@ -117,7 +84,18 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     return () => {
       active = false;
     };
-  }, [isHiddenLab, isMarketScannerPath, isPublic, pathname]);
+  }, [isPublic, pathname, routeAvailability, routeEnabled]);
+
+  useEffect(() => {
+    function openCommandPalette(event: KeyboardEvent) {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        setCommandPaletteOpen(true);
+      }
+    }
+    window.addEventListener("keydown", openCommandPalette);
+    return () => window.removeEventListener("keydown", openCommandPalette);
+  }, []);
 
   if (isPublic) return <>{children}</>;
 
@@ -132,10 +110,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     );
   }
 
-  const navItems = NAV_ITEMS.filter(
-    (item) => item.href !== "/market-scanner" ||
-      (marketScannerEnabled && MARKET_SCANNER_ROLES.has(profile.organization.role)),
-  );
+  const navItems = NAV_ITEMS.filter((item) => isRouteAvailable(item.href, profile.organization.role));
 
   async function signOut() {
     await logoutAccount();
@@ -190,6 +165,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 <LogOut className="h-4 w-4" />
               </button>
             </div>
+            <button
+              type="button"
+              onClick={() => setCommandPaletteOpen(true)}
+              className="focus-ring mt-3 flex w-full items-center justify-between rounded-md border border-line px-2 py-2 text-xs text-ink/65"
+            >
+              <span className="inline-flex items-center gap-2"><Search className="h-3.5 w-3.5" /> Commands</span>
+              <span>Ctrl K</span>
+            </button>
           </section>
         </aside>
 
@@ -262,6 +245,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </section>
         </div>
       ) : null}
+      <CommandPalette
+        open={commandPaletteOpen}
+        onClose={() => setCommandPaletteOpen(false)}
+        role={profile.organization.role}
+      />
     </div>
   );
 }

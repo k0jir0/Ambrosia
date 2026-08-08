@@ -13,6 +13,25 @@ from app.store import ReviewStore
 client = TestClient(app)
 
 
+def test_market_intelligence_runtime_gate_is_independent_from_scanner(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ENVIRONMENT", "development")
+    monkeypatch.setenv("MARKET_SCANNER_ENABLED", "true")
+    monkeypatch.setenv("MARKET_INTELLIGENCE_ENABLED", "false")
+
+    for path in ("/market/AAPL/snapshot", "/market/AAPL/technicals", "/sentiment/AAPL"):
+        response = client.get(path)
+        assert response.status_code == 503
+        assert response.json()["detail"] == "Market Intelligence is temporarily unavailable"
+
+
+def test_market_intelligence_requires_analyst_role(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("MARKET_INTELLIGENCE_ENABLED", "true")
+
+    for path in ("/market/AAPL/snapshot", "/market/AAPL/technicals", "/sentiment/AAPL"):
+        assert client.get(path, headers={"X-Ambrosia-Role": "viewer"}).status_code == 403
+        assert client.get(path, headers={"X-Ambrosia-Role": "analyst"}).status_code == 200
+
+
 def test_create_review_refuses_naive_backtest_language() -> None:
     response = client.post(
         "/reviews",
@@ -641,7 +660,8 @@ def test_scanner_candidate_promotions_endpoint_returns_records() -> None:
     assert "status" in first
 
 
-def test_index97_signal_seed_populates_valid_lifecycle_inventory() -> None:
+def test_index97_signal_seed_populates_valid_lifecycle_inventory(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ALPHA_LAB_DEMO_SEED_ENABLED", "true")
     response = client.post("/signals/seed-index97")
     assert response.status_code == 200
     payload = response.json()
@@ -772,7 +792,7 @@ def test_health_detailed_endpoint() -> None:
     assert "store" in health["checks"]
     assert health["checks"]["persistence"]["mode"] in {"memory", "postgres"}
     assert health["checks"]["persistence"]["databaseRequired"] is False
-    assert health["checks"]["persistence"]["dbSchemaVersion"] == "v0008"
+    assert health["checks"]["persistence"]["dbSchemaVersion"] == "v0009"
     assert "marketData" in health["checks"]
     assert "llmProviders" in health["checks"]
     assert "slo" in health

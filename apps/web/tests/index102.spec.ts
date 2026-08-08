@@ -18,45 +18,10 @@ test.beforeEach(async ({ page }) => {
   }
 });
 
-test("reports export uses query review id and email recipient contract", async ({ page }) => {
-  await page.unroute(LOCAL_API_ROUTE);
-  await page.addInitScript(() => {
-    window.open = () => null;
-  });
-  const requests: string[] = [];
-
-  await page.route(LOCAL_API_ROUTE, async (route) => {
-    if (await fulfillAuthenticatedAccount(route)) return;
-    const request = route.request();
-    const url = new URL(request.url());
-    requests.push(`${request.method()} ${url.pathname}${url.search}`);
-
-    if (url.pathname === "/discovery/reports/atr-query-001/email") {
-      expect(url.searchParams.get("recipient")).toBe("analyst@example.com");
-      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ status: "sent" }) });
-      return;
-    }
-
-    if (url.pathname === "/discovery/reports/atr-query-001/export") {
-      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ url: "about:blank" }) });
-      return;
-    }
-
-    await route.abort();
-  });
-
+test("standalone report export retires to the governed Review workflow", async ({ page }) => {
   await page.goto("/reports/export?id=atr-query-001");
-  await expect(page.getByText("Review ID: atr-query-001")).toBeVisible();
-  await page.getByText("HTML", { exact: true }).click();
-  await page.getByRole("button", { name: "Export as HTML" }).click();
-  await expect(page.getByText("Export successful")).toBeVisible();
-  expect(requests).toContain("POST /discovery/reports/atr-query-001/export?format=html");
-
-  await page.getByText("Email", { exact: true }).click();
-  await page.getByPlaceholder("recipient@example.com").fill("analyst@example.com");
-  await page.getByRole("button", { name: "Export as EMAIL" }).click();
-  await expect(page.getByText("Export successful")).toBeVisible();
-  expect(requests).toContain("POST /discovery/reports/atr-query-001/email?recipient=analyst%40example.com");
+  await expect(page).toHaveURL(/\/review$/);
+  await expect(page.getByRole("heading", { name: "Review Queue" })).toBeVisible();
 });
 
 test("calibration route does not emit browser page errors", async ({ page }) => {
@@ -217,7 +182,7 @@ test("market scanner presents Alpha as a hypothesis workflow", async ({ page }) 
   await expect(page.getByText("Queued scan completed.")).toBeAttached();
 });
 
-test("viewer cannot discover or deep-link into Market Scanner", async ({ page }) => {
+test("viewer cannot deep-link into Market Scanner or Market Intelligence", async ({ page }) => {
   for (const routePattern of API_ROUTE_PATTERNS) await page.unroute(routePattern);
   const handleViewerRoute = async (route: Route) => {
     const url = new URL(route.request().url());
@@ -241,14 +206,21 @@ test("viewer cannot discover or deep-link into Market Scanner", async ({ page })
   await page.goto("/market-scanner");
   await expect(page).toHaveURL(/\/app$/);
   await expect(page.getByRole("link", { name: "Market Scanner", exact: true })).toHaveCount(0);
+
+  await page.goto("/markets/AAPL");
+  await expect(page).toHaveURL(/\/app$/);
 });
 
-test("market intelligence labels fallback provenance", async ({ page }) => {
+test("market intelligence labels API evidence and simulated analytics independently", async ({ page }) => {
   await page.goto("/markets/AAPL");
   await expect(page.getByRole("heading", { name: /AAPL intelligence/i })).toBeVisible();
-  await expect(page.getByText("Fallback", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText("Quote: Unavailable", { exact: true })).toBeVisible();
+  await expect(page.getByText("Technicals: Unavailable", { exact: true })).toBeVisible();
+  await expect(page.getByText("Sentiment: Unavailable", { exact: true })).toBeVisible();
   await expect(page.getByText("Fallback deterministic").first()).toBeVisible();
   await expect(page.getByText("Fallback simulated").first()).toBeVisible();
+  await expect(page.getByText("Simulated series", { exact: true })).toBeVisible();
+  await expect(page.getByText(/not observed history or portfolio performance/i)).toBeVisible();
 });
 
 test("history can seed demo archive records", async ({ page }) => {

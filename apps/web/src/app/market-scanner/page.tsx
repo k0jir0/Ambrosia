@@ -124,33 +124,54 @@ export default function MarketScannerPage() {
     setStatus("loading");
     setMessage("Queueing scanner job...");
     try {
-      let job = await runScannerAsync(requestBody);
+      const job = await runScannerAsync(requestBody);
       setJobs((current) => [job, ...current.filter((item) => item.id !== job.id)]);
       setMessage(`Scanner job ${job.id} is ${job.state}.`);
-
-      for (let attempt = 0; attempt < 30 && (job.state === "queued" || job.state === "running"); attempt += 1) {
-        await new Promise((resolve) => window.setTimeout(resolve, 1_000));
-        job = await getJobStatus(job.id);
-        setJobs((current) => [job, ...current.filter((item) => item.id !== job.id)]);
-        setMessage(`Scanner job ${job.id} is ${job.state}.`);
-      }
-
-      if (job.state === "failed") {
-        throw new Error(job.error || `Scanner job ${job.id} failed.`);
-      }
-      if (job.state !== "completed" || !isScannerResult(job.result)) {
-        throw new Error(`Scanner job ${job.id} did not return a valid result before the polling deadline.`);
-      }
-
-      setResult(job.result);
-      setStatus(job.result.candidates.length === 0 ? "empty" : "success");
-      setMessage(job.result.candidates.length === 0 ? "Queued scan completed with no matching candidates." : "Queued scan completed.");
+      await monitorJob(job);
     } catch (error) {
       setStatus("error");
       setMessage(error instanceof Error ? error.message : "Unable to queue scanner job.");
     } finally {
       setActiveAction(null);
     }
+  }
+
+  async function resumeJob(job: JobRecord) {
+    setActiveAction("queue");
+    setStatus("loading");
+    setMessage(`Resuming scanner job ${job.id}...`);
+    try {
+      await monitorJob(await getJobStatus(job.id));
+    } catch (error) {
+      setStatus("error");
+      setMessage(error instanceof Error ? error.message : `Unable to resume scanner job ${job.id}.`);
+    } finally {
+      setActiveAction(null);
+    }
+  }
+
+  async function monitorJob(initialJob: JobRecord) {
+    let job = initialJob;
+    for (let attempt = 0; attempt < 30 && (job.state === "queued" || job.state === "running"); attempt += 1) {
+      await new Promise((resolve) => window.setTimeout(resolve, 1_000));
+      job = await getJobStatus(job.id);
+      setJobs((current) => [job, ...current.filter((item) => item.id !== job.id)]);
+      setMessage(`Scanner job ${job.id} is ${job.state}.`);
+    }
+
+    if (job.state === "failed") throw new Error(job.error || `Scanner job ${job.id} failed.`);
+    if (job.state === "queued" || job.state === "running") {
+      setStatus("degraded");
+      setMessage(`Scanner job ${job.id} is still ${job.state}. Resume polling from the job queue.`);
+      return;
+    }
+    if (job.state !== "completed" || !isScannerResult(job.result)) {
+      throw new Error(`Scanner job ${job.id} completed without a valid scanner result.`);
+    }
+
+    setResult(job.result);
+    setStatus(job.result.candidates.length === 0 ? "empty" : "success");
+    setMessage(job.result.candidates.length === 0 ? "Queued scan completed with no matching candidates." : "Queued scan completed.");
   }
 
   async function promoteCandidate(candidate: ScannerCandidate) {
@@ -394,6 +415,12 @@ export default function MarketScannerPage() {
               <Detail label="Queued" value={formatTime(latestJob.queuedAt)} />
               <Detail label="Completed" value={latestJob.completedAt ? formatTime(latestJob.completedAt) : "pending"} />
               {latestJob.error ? <Detail label="Error" value={latestJob.error} tone="bad" /> : null}
+              {latestJob.state === "queued" || latestJob.state === "running" ? (
+                <button type="button" onClick={() => void resumeJob(latestJob)} disabled={activeAction !== null} className="focus-ring inline-flex items-center gap-2 rounded-md border border-line px-3 py-2 text-xs font-semibold disabled:opacity-60">
+                  <RefreshCw className="h-3.5 w-3.5" />
+                  Resume polling
+                </button>
+              ) : null}
             </div>
           ) : (
             <p className="mt-4 rounded-md border border-dashed border-line bg-fog/50 px-3 py-4 text-sm text-ink/60">

@@ -96,7 +96,7 @@ processing. No LLM belongs in a live order-validity or kill-switch loop.
 - `packages/evals/` — model and workflow evaluation protocols
 - `packages/cli/`, `packages/sdk-python/` — operator interfaces
 - `infra/aws/` — AWS infrastructure as code
-- `infra/db/` — schema and ordered migrations through `v0008`
+- `infra/db/` — schema and ordered migrations through `v0009`
 - `scripts/` — migration, validation, evidence, and local-stack automation
 - `docs/operations/` — current operational and release authority
 - `docs/session-archives/` — historical planning material, not current proof
@@ -189,12 +189,13 @@ evidence. That failure is a safety property, not missing repository work.
 ## Current limitations
 
 - The default production navigation exposes the governed decision loop. Market
-  Scanner and ticker intelligence now use the dedicated
-  `NEXT_PUBLIC_ENABLE_MARKET_SCANNER` boundary; unrelated signal, alpha,
-  calibration, execution, enterprise, and platform labs remain hidden unless
-  `NEXT_PUBLIC_ENABLE_LABS=true`. AWS release builds enable scanner discovery
-  and review intake while keeping scanner promotion disabled until tenant-
-  isolated lifecycle storage is certified.
+  Scanner uses `NEXT_PUBLIC_ENABLE_MARKET_SCANNER` with
+  `MARKET_SCANNER_ENABLED`; ticker intelligence is independently controlled by
+  `NEXT_PUBLIC_ENABLE_MARKET_INTELLIGENCE` with
+  `MARKET_INTELLIGENCE_ENABLED`. Market Intelligence is fail-closed in staging
+  and production until its evidence panels are qualified. AWS release builds
+  enable scanner discovery and review intake while keeping scanner promotion
+  and unrelated research or execution capabilities disabled.
 - AWS staging enforces governed selective integration, while the mobile client
   still uses a legacy direct decision endpoint. Mobile parity requires an
   enforced-mode compatibility update and test.

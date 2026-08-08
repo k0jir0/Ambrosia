@@ -58,8 +58,8 @@ def main() -> int:
                 failures.append(f"{relative} missing marker: {marker}")
 
     schema = json.loads((ROOT / "infra/db/schema-version.json").read_text(encoding="utf-8"))
-    if schema.get("dbSchemaVersion") != "v0008":
-        failures.append("database schema version is not v0008")
+    if schema.get("dbSchemaVersion", "") < "v0008":
+        failures.append("database schema version is older than v0008")
 
     if failures:
         print("Index119 repository readiness: FAIL")

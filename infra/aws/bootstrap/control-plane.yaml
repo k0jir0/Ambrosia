@@ -194,9 +194,13 @@ Resources:
           PolicyDocument:
             Version: "2012-10-17"
             Statement:
-              - Sid: TerraformStateBucket
+              - Sid: TerraformStateBucketMetadata
                 Effect: Allow
-                Action: [s3:GetBucketLocation, s3:GetBucketVersioning, s3:GetEncryptionConfiguration, s3:GetBucketPublicAccessBlock, s3:ListBucket]
+                Action: [s3:GetBucketLocation, s3:GetBucketVersioning, s3:GetEncryptionConfiguration, s3:GetBucketPublicAccessBlock]
+                Resource: !GetAtt StateBucket.Arn
+              - Sid: TerraformStateBucketList
+                Effect: Allow
+                Action: s3:ListBucket
                 Resource: !GetAtt StateBucket.Arn
                 Condition:
                   StringLike:

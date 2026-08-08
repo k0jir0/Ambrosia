@@ -756,10 +756,10 @@ resource "aws_ecs_task_definition" "web" {
   execution_role_arn       = aws_iam_role.ecs_execution.arn
   task_role_arn            = aws_iam_role.ecs_task.arn
   container_definitions = jsonencode([{
-    name                   = "web"
-    image                  = var.web_image != "" ? var.web_image : "${aws_ecr_repository.web.repository_url}:bootstrap"
-    essential              = true
-    portMappings           = [{ containerPort = 3000, hostPort = 3000, protocol = "tcp" }]
+    name         = "web"
+    image        = var.web_image != "" ? var.web_image : "${aws_ecr_repository.web.repository_url}:bootstrap"
+    essential    = true
+    portMappings = [{ containerPort = 3000, hostPort = 3000, protocol = "tcp" }]
     environment = [
       { name = "PORT", value = "3000" },
       { name = "NEXT_PUBLIC_ENABLE_LABS", value = "false" },

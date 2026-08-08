@@ -7,9 +7,11 @@ const projectDirectory = path.dirname(fileURLToPath(import.meta.url));
 const configuredApiUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? process.env.NEXT_PUBLIC_API_URL;
 let apiConnectSource = "";
 try {
-  apiConnectSource = configuredApiUrl ? ` ${new URL(configuredApiUrl).origin}` : "";
+  apiConnectSource = configuredApiUrl && !configuredApiUrl.startsWith("/")
+    ? ` ${new URL(configuredApiUrl).origin}`
+    : "";
 } catch {
-  throw new Error("NEXT_PUBLIC_API_BASE_URL must be an absolute URL");
+  throw new Error("NEXT_PUBLIC_API_BASE_URL must be an absolute URL or a same-origin path beginning with /");
 }
 
 const nextConfig = {

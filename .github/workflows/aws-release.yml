@@ -85,6 +85,7 @@ jobs:
       AWS_REGION: ${{ vars.AWS_REGION }}
       TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
       TF_STATE_KMS_KEY_ARN: ${{ vars.TF_STATE_KMS_KEY_ARN }}
+      CUSTOM_DOMAIN_ENABLED: ${{ vars.CUSTOM_DOMAIN_ENABLED || 'false' }}
       DOMAIN_NAME: ${{ vars.DOMAIN_NAME }}
       HOSTED_ZONE_ID: ${{ vars.HOSTED_ZONE_ID }}
       API_DESIRED_COUNT: ${{ vars.API_DESIRED_COUNT || '1' }}
@@ -120,21 +121,24 @@ jobs:
           test "$(aws sts get-caller-identity --query Account --output text)" = "$EXPECTED_ACCOUNT_ID"
           test -n "$AWS_REGION"
           test -n "$TF_STATE_BUCKET"
-          test -n "$DOMAIN_NAME"
-          test "$DOMAIN_NAME" != "example.com"
-          test -n "$HOSTED_ZONE_ID"
           test -n "$OWNER"
           test -n "$COST_CENTER"
           test "$DATA_CLASSIFICATION" = "synthetic" -o "$DATA_CLASSIFICATION" = "approved-staging"
-          test -n "$ALB_CERTIFICATE_ARN"
-          test -n "$CLOUDFRONT_CERTIFICATE_ARN"
           test "$API_DESIRED_COUNT" -ge 1
           test "$WEB_DESIRED_COUNT" -ge 1
-          test "$(aws route53 get-hosted-zone --id "$HOSTED_ZONE_ID" --query 'HostedZone.Config.PrivateZone' --output text)" = "False"
-          ZONE_NAME=$(aws route53 get-hosted-zone --id "$HOSTED_ZONE_ID" --query 'HostedZone.Name' --output text)
-          test "${ZONE_NAME%.}" = "$DOMAIN_NAME"
-          test "$(aws acm describe-certificate --region "$AWS_REGION" --certificate-arn "$ALB_CERTIFICATE_ARN" --query 'Certificate.Status' --output text)" = "ISSUED"
-          test "$(aws acm describe-certificate --region us-east-1 --certificate-arn "$CLOUDFRONT_CERTIFICATE_ARN" --query 'Certificate.Status' --output text)" = "ISSUED"
+          test "$CUSTOM_DOMAIN_ENABLED" = "true" -o "$CUSTOM_DOMAIN_ENABLED" = "false"
+          if [ "$CUSTOM_DOMAIN_ENABLED" = "true" ]; then
+            test -n "$DOMAIN_NAME"
+            test "$DOMAIN_NAME" != "example.com"
+            test -n "$HOSTED_ZONE_ID"
+            test -n "$ALB_CERTIFICATE_ARN"
+            test -n "$CLOUDFRONT_CERTIFICATE_ARN"
+            test "$(aws route53 get-hosted-zone --id "$HOSTED_ZONE_ID" --query 'HostedZone.Config.PrivateZone' --output text)" = "False"
+            ZONE_NAME=$(aws route53 get-hosted-zone --id "$HOSTED_ZONE_ID" --query 'HostedZone.Name' --output text)
+            test "${ZONE_NAME%.}" = "$DOMAIN_NAME"
+            test "$(aws acm describe-certificate --region "$AWS_REGION" --certificate-arn "$ALB_CERTIFICATE_ARN" --query 'Certificate.Status' --output text)" = "ISSUED"
+            test "$(aws acm describe-certificate --region us-east-1 --certificate-arn "$CLOUDFRONT_CERTIFICATE_ARN" --query 'Certificate.Status' --output text)" = "ISSUED"
+          fi
           aws budgets describe-budget --account-id "$EXPECTED_ACCOUNT_ID" --budget-name "$BUDGET_NAME" >/dev/null
 
       - name: Verify remote-state protection
@@ -172,6 +176,7 @@ jobs:
             -target=aws_ecr_repository.web \
             -var="environment=$DEPLOY_ENVIRONMENT" \
             -var="aws_region=$AWS_REGION" \
+            -var="custom_domain_enabled=$CUSTOM_DOMAIN_ENABLED" \
             -var="domain_name=$DOMAIN_NAME" \
             -var="hosted_zone_id=$HOSTED_ZONE_ID" \
             -var="alb_certificate_arn=$ALB_CERTIFICATE_ARN" \
@@ -194,15 +199,22 @@ jobs:
           WEB_REPOSITORY: ${{ steps.repositories.outputs.web }}
         run: |
           set -euo pipefail
-          if [ "$DEPLOY_ENVIRONMENT" = "production" ]; then
-            WEB_HOST="$DOMAIN_NAME"
+          if [ "$CUSTOM_DOMAIN_ENABLED" = "true" ]; then
+            if [ "$DEPLOY_ENVIRONMENT" = "production" ]; then
+              WEB_HOST="$DOMAIN_NAME"
+            else
+              WEB_HOST="staging.$DOMAIN_NAME"
+            fi
+            API_BASE_URL="https://$WEB_HOST/api"
+            SITE_URL="https://$WEB_HOST"
           else
-            WEB_HOST="staging.$DOMAIN_NAME"
+            API_BASE_URL="/api"
+            SITE_URL="https://staging.invalid"
           fi
           docker build --pull -f services/api/Dockerfile -t "$API_REPOSITORY:$GITHUB_SHA" .
           docker build --pull -f apps/web/Dockerfile \
-            --build-arg "NEXT_PUBLIC_API_BASE_URL=https://$WEB_HOST/api" \
-            --build-arg "NEXT_PUBLIC_SITE_URL=https://$WEB_HOST" \
+            --build-arg "NEXT_PUBLIC_API_BASE_URL=$API_BASE_URL" \
+            --build-arg "NEXT_PUBLIC_SITE_URL=$SITE_URL" \
             -t "$WEB_REPOSITORY:$GITHUB_SHA" .
 
       - name: Scan API image for fixed critical or high vulnerabilities
@@ -293,6 +305,7 @@ jobs:
           terraform -chdir=infra/aws plan -out="$PLAN_PATH" \
             -var="environment=$DEPLOY_ENVIRONMENT" \
             -var="aws_region=$AWS_REGION" \
+            -var="custom_domain_enabled=$CUSTOM_DOMAIN_ENABLED" \
             -var="domain_name=$DOMAIN_NAME" \
             -var="hosted_zone_id=$HOSTED_ZONE_ID" \
             -var="alb_certificate_arn=$ALB_CERTIFICATE_ARN" \
@@ -342,6 +355,7 @@ jobs:
       AWS_REGION: ${{ vars.AWS_REGION }}
       TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
       TF_STATE_KMS_KEY_ARN: ${{ vars.TF_STATE_KMS_KEY_ARN }}
+      CUSTOM_DOMAIN_ENABLED: ${{ vars.CUSTOM_DOMAIN_ENABLED || 'false' }}
       DOMAIN_NAME: ${{ vars.DOMAIN_NAME }}
       HOSTED_ZONE_ID: ${{ vars.HOSTED_ZONE_ID }}
       API_DESIRED_COUNT: ${{ vars.API_DESIRED_COUNT || '1' }}
@@ -419,6 +433,7 @@ jobs:
           terraform -chdir=infra/aws plan -out="$PLAN_PATH" \
             -var="environment=$DEPLOY_ENVIRONMENT" \
             -var="aws_region=$AWS_REGION" \
+            -var="custom_domain_enabled=$CUSTOM_DOMAIN_ENABLED" \
             -var="domain_name=$DOMAIN_NAME" \
             -var="hosted_zone_id=$HOSTED_ZONE_ID" \
             -var="alb_certificate_arn=$ALB_CERTIFICATE_ARN" \

@@ -8,15 +8,33 @@ Parameters:
     Type: String
     AllowedPattern: "^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$"
     Description: Globally unique S3 bucket name for protected Terraform state.
+  GitHubOidcProviderArn:
+    Type: String
+    Default: ""
+    Description: Existing token.actions.githubusercontent.com provider ARN; leave empty to create it.
+  CustomDomainEnabled:
+    Type: String
+    Default: "true"
+    AllowedValues: ["true", "false"]
+    Description: Set false for staging on the generated CloudFront HTTPS hostname.
   DomainName:
     Type: String
-    AllowedPattern: "^[a-z0-9][a-z0-9.-]+[a-z0-9]$"
+    Default: ""
+    AllowedPattern: "^$|^[a-z0-9][a-z0-9.-]+[a-z0-9]$"
     Description: Route53-managed apex domain.
   HostedZoneId:
-    Type: AWS::Route53::HostedZone::Id
+    Type: String
+    Default: ""
+    AllowedPattern: "^$|^Z[A-Z0-9]+$"
+  ExistingBudgetName:
+    Type: String
+    Default: ""
+    Description: Existing AWS cost budget validated by the release gate; leave empty to create one.
   BudgetEmail:
     Type: String
-    AllowedPattern: "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$"
+    Default: ""
+    AllowedPattern: "^$|^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$"
+    NoEcho: true
   MonthlyBudgetUsd:
     Type: Number
     MinValue: 1
@@ -31,6 +49,19 @@ Parameters:
     Type: String
     Default: synthetic
     AllowedValues: [synthetic, approved-staging]
+
+Conditions:
+  UseCustomDomain: !Equals [!Ref CustomDomainEnabled, "true"]
+  CreateGitHubOidcProvider: !Equals [!Ref GitHubOidcProviderArn, ""]
+  CreateBudget: !Equals [!Ref ExistingBudgetName, ""]
+
+Rules:
+  BudgetMustExistOrBeNotified:
+    Assertions:
+      - Assert: !Or
+          - !Not [!Equals [!Ref ExistingBudgetName, ""]]
+          - !Not [!Equals [!Ref BudgetEmail, ""]]
+        AssertDescription: Supply ExistingBudgetName or an email for a new managed budget.
 
 Resources:
   StateKey:
@@ -127,6 +158,7 @@ Resources:
                 aws:SecureTransport: false
 
   GitHubOidcProvider:
+    Condition: CreateGitHubOidcProvider
     Type: AWS::IAM::OIDCProvider
     Properties:
       Url: https://token.actions.githubusercontent.com
@@ -148,7 +180,10 @@ Resources:
         Statement:
           - Effect: Allow
             Principal:
-              Federated: !Ref GitHubOidcProvider
+              Federated: !If
+                - CreateGitHubOidcProvider
+                - !Ref GitHubOidcProvider
+                - !Ref GitHubOidcProviderArn
             Action: sts:AssumeRoleWithWebIdentity
             Condition:
               StringEquals:
@@ -177,12 +212,15 @@ Resources:
                 Effect: Allow
                 Action: [kms:Decrypt, kms:Encrypt, kms:GenerateDataKey, kms:DescribeKey]
                 Resource: !GetAtt StateKey.Arn
-              - Sid: Route53StagingZone
-                Effect: Allow
-                Action: [route53:GetHostedZone, route53:GetChange, route53:ListResourceRecordSets, route53:ChangeResourceRecordSets]
-                Resource:
-                  - !Sub arn:${AWS::Partition}:route53:::hostedzone/${HostedZoneId}
-                  - !Sub arn:${AWS::Partition}:route53:::change/*
+              - !If
+                - UseCustomDomain
+                - Sid: Route53StagingZone
+                  Effect: Allow
+                  Action: [route53:GetHostedZone, route53:GetChange, route53:ListResourceRecordSets, route53:ChangeResourceRecordSets]
+                  Resource:
+                    - !Sub arn:${AWS::Partition}:route53:::hostedzone/${HostedZoneId}
+                    - !Sub arn:${AWS::Partition}:route53:::change/*
+                - !Ref AWS::NoValue
               - Sid: CertificateAndBudgetRead
                 Effect: Allow
                 Action: [acm:DescribeCertificate, acm:ListCertificates, budgets:ViewBudget]
@@ -252,6 +290,7 @@ Resources:
         - { Key: DataClassification, Value: !Ref DataClassification }
 
   RegionalCertificate:
+    Condition: UseCustomDomain
     Type: AWS::CertificateManager::Certificate
     Properties:
       DomainName: !Sub api-staging.${DomainName}
@@ -271,6 +310,7 @@ Resources:
         - { Key: CostCenter, Value: !Ref CostCenter }
 
   StagingBudget:
+    Condition: CreateBudget
     Type: AWS::Budgets::Budget
     Properties:
       Budget:
@@ -321,6 +361,6 @@ Outputs:
   GitHubDeployRoleArn:
     Value: !GetAtt GitHubDeployRole.Arn
   AlbCertificateArn:
-    Value: !Ref RegionalCertificate
+    Value: !If [UseCustomDomain, !Ref RegionalCertificate, ""]
   BudgetName:
-    Value: !Ref StagingBudget
+    Value: !If [CreateBudget, !Ref StagingBudget, !Ref ExistingBudgetName]

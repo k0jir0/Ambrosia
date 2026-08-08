@@ -5,6 +5,25 @@ team challenge a thesis, preserve evidence and disagreement, apply deterministic
 risk gates, record a human decision, and learn from the outcome. Models advise;
 they never hold decision authority or mutate a live brokerage account.
 
+## Current staging state
+
+AWS staging is deployed from commit
+`8fec6a0b162d611bc35f92200bc4292142437b95` at:
+
+<https://d1c00nr674401f.cloudfront.net/>
+
+On August 8, 2026, the landing, login, signup, onboarding, `/api/live`, and
+`/api/ready` routes returned HTTP 200. Readiness reported healthy persistence,
+artifact storage, distributed rate limiting, account identity, and identity
+checks. The environment uses synthetic data, generated CloudFront addressing,
+one API task, and one web task in `ca-central-1`; no custom domain is enabled.
+
+This proves that the current staging web and API are deployed and reachable. It
+does not prove production readiness, unrestricted public-beta readiness, model
+quality, security certification, backup recovery, or the complete
+signup-to-decision journey. The evidence-backed Index133 readiness generator
+still returns `NO_GO` with 25 pending external gates.
+
 ## The first product journey
 
 1. A visitor understands the product promise on the public landing page.
@@ -47,10 +66,11 @@ decision loop. Research labs remain available in development or behind
 - Render-to-AWS inventory, rehearsal, validation, cutover, rollback, and
   evidence procedures.
 
-Infrastructure code is not evidence that AWS is deployed. Repository code is
-not evidence of model quality, legal approval, security certification, customer
-traction, or investment performance. The machine-readable readiness result
-stays `NO_GO` until the external gates have approved evidence.
+The AWS staging deployment is evidence of a reachable environment, but
+repository code and basic health checks are not evidence of model quality,
+legal approval, security certification, customer traction, investment
+performance, or recovery readiness. The machine-readable release decision
+stays `NO_GO` until the remaining external gates have approved evidence.
 
 ## Architecture
 
@@ -76,7 +96,7 @@ processing. No LLM belongs in a live order-validity or kill-switch loop.
 - `packages/evals/` — model and workflow evaluation protocols
 - `packages/cli/`, `packages/sdk-python/` — operator interfaces
 - `infra/aws/` — AWS infrastructure as code
-- `infra/db/` — schema and ordered migrations
+- `infra/db/` — schema and ordered migrations through `v0008`
 - `scripts/` — migration, validation, evidence, and local-stack automation
 - `docs/operations/` — current operational and release authority
 - `docs/session-archives/` — historical planning material, not current proof
@@ -119,8 +139,10 @@ pnpm test:api
 pnpm test:unit
 python scripts/verify-migrations.py
 python scripts/verify-index119-readiness.py
+python scripts/verify-aws-staging-control-plane.py
 python packages/evals/run_ollama_disconfirmation_eval.py
 python scripts/generate-index132-readiness.py
+python scripts/generate-index133-staging-readiness.py
 ```
 
 Terraform validation:
@@ -137,13 +159,23 @@ No credential values belong in logs or evidence JSON.
 
 ## AWS migration and release
 
-Follow `docs/operations/AWS_MIGRATION_RUNBOOK.md`. The sequence is inventory,
-AWS staging, two isolated data rehearsals, restore and rollback rehearsals,
-approved production cutover, and a minimum 72-hour bake. Render remains a
-deploy-frozen recovery target until the bake and formal go decision complete.
+Follow `docs/operations/AWS_MIGRATION_RUNBOOK.md`. AWS staging is live on its
+generated CloudFront hostname. The remaining sequence is evidence completion,
+two isolated data rehearsals, restore and rollback rehearsals, an approved
+production cutover, and a minimum 72-hour bake. Render remains a recovery
+reference until the formal go decision supersedes it.
 
-The current external-evidence template is
-`docs/operations/index132-external-evidence.template.json`. Run:
+The current AWS staging evidence template is
+`docs/operations/index133-staging-evidence.template.json`. Run:
+
+```powershell
+python scripts/generate-index133-staging-readiness.py `
+  --external-evidence <approved-staging-evidence.json> `
+  --require-live
+```
+
+For the broader release-readiness decision, use
+`docs/operations/index132-external-evidence.template.json`:
 
 ```powershell
 python scripts/generate-index132-readiness.py `
@@ -153,6 +185,28 @@ python scripts/generate-index132-readiness.py `
 
 The command must fail until every external gate is passed and linked to real
 evidence. That failure is a safety property, not missing repository work.
+
+## Current limitations
+
+- The default production navigation exposes the governed decision loop; market,
+  scanner, signal, alpha, calibration, execution, enterprise, and platform labs
+  remain hidden unless `NEXT_PUBLIC_ENABLE_LABS=true`.
+- AWS staging enforces governed selective integration, while the mobile client
+  still uses a legacy direct decision endpoint. Mobile parity requires an
+  enforced-mode compatibility update and test.
+- The current administration surface focuses on identity, workers, activation,
+  and artifacts. Earlier provider-health, alert, certification, metric, and
+  tool-boundary panels do not yet have an equivalent staging-native operator
+  console.
+- The local API suite passes 240 tests with three skipped when run with an
+  explicit writable `--basetemp`; the default shared Windows pytest temp and
+  cache directories can be inaccessible on this workstation.
+- pnpm 9 warns that the `pnpm` field in `package.json` no longer applies the
+  configured overrides and audit settings. Dependency policy should be moved to
+  the supported pnpm configuration surface.
+- Portfolio Intelligence is not part of staging. The former local portfolio
+  branch, integration worktree, migrations, and development servers were
+  removed rather than merged.
 
 ## Claims boundary
 

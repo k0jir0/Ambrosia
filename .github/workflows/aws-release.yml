@@ -2,11 +2,6 @@ name: AWS release
 
 on:
   pull_request:
-    paths:
-      - "infra/aws/**"
-      - "services/api/Dockerfile"
-      - "apps/web/Dockerfile"
-      - ".github/workflows/aws-release.yml"
   workflow_dispatch:
     inputs:
       environment:

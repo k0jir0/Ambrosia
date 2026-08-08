@@ -5,9 +5,12 @@ created by the application Terraform root itself. They do not deploy Ambrosia.
 Run them from a governed non-production AWS account using a named federated
 administrator role—never root credentials or long-lived GitHub access keys.
 
-Prerequisites are an existing public Route53 hosted zone, an approved apex
-domain, a globally unique state bucket name, a named owner/cost center, and an
-approved monthly budget. Account-level CloudTrail, Config, GuardDuty, IAM
+Custom-domain deployments require an existing public Route53 hosted zone and
+approved apex domain. Initial staging may instead set
+`CustomDomainEnabled=false` and use the generated CloudFront HTTPS hostname;
+the regional and edge certificates are then intentionally omitted. Every path
+still requires a globally unique state bucket name, named owner/cost center,
+and approved monthly budget. Account-level CloudTrail, Config, GuardDuty, IAM
 Access Analyzer, Cost Anomaly Detection, security contacts, and service quotas
 remain organization controls and must be verified separately.
 
@@ -21,14 +24,24 @@ aws cloudformation deploy `
   --capabilities CAPABILITY_NAMED_IAM `
   --parameter-overrides `
     StateBucketName=<globally-unique-bucket> `
+    CustomDomainEnabled=true `
     DomainName=<apex-domain> `
     HostedZoneId=<public-zone-id> `
+    ExistingBudgetName="" `
     BudgetEmail=<billing-owner-email> `
     MonthlyBudgetUsd=<approved-usd-limit> `
     Owner=<owner> `
     CostCenter=<cost-center> `
     DataClassification=synthetic
 ```
+
+For generated-hostname staging, omit `DomainName` and `HostedZoneId`, set
+`CustomDomainEnabled=false`, and do not deploy the edge-certificate stack.
+Signup exposes its single-use development verification link in staging because
+SES domain identity cannot be established before a domain is selected.
+If a governed AWS budget already exists, pass its exact name as
+`ExistingBudgetName` and omit `BudgetEmail`; the release workflow still fails
+closed unless that budget can be described in the target account.
 
 Deploy the edge certificate separately in `us-east-1`:
 

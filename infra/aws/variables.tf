@@ -53,39 +53,49 @@ variable "vpc_cidr" {
   default = "10.42.0.0/16"
 }
 
+variable "custom_domain_enabled" {
+  type        = bool
+  default     = true
+  description = "Use Route53 and ACM hostnames; staging may disable this to use the generated CloudFront HTTPS hostname"
+}
+
 variable "domain_name" {
   type        = string
+  default     = ""
   description = "Route53-managed apex domain, for example ambrosia.example"
   validation {
-    condition     = can(regex("^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$", var.domain_name)) && var.domain_name != "example.com"
-    error_message = "domain_name must be a real lower-case DNS apex and cannot be example.com."
+    condition     = var.domain_name == "" || (can(regex("^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$", var.domain_name)) && var.domain_name != "example.com")
+    error_message = "domain_name must be empty for generated-hostname staging, or a real lower-case DNS apex other than example.com."
   }
 }
 
 variable "hosted_zone_id" {
   type        = string
+  default     = ""
   description = "Route53 public hosted zone id for domain_name"
   validation {
-    condition     = can(regex("^Z[A-Z0-9]+$", var.hosted_zone_id))
-    error_message = "hosted_zone_id must be a Route53 hosted-zone identifier beginning with Z."
+    condition     = var.hosted_zone_id == "" || can(regex("^Z[A-Z0-9]+$", var.hosted_zone_id))
+    error_message = "hosted_zone_id must be empty for generated-hostname staging, or a Route53 identifier beginning with Z."
   }
 }
 
 variable "alb_certificate_arn" {
   type        = string
+  default     = ""
   description = "Regional ACM certificate covering the API and CloudFront-to-ALB origin hostnames"
   validation {
-    condition     = can(regex("^arn:aws[a-z-]*:acm:ca-central-1:[0-9]{12}:certificate/", var.alb_certificate_arn))
-    error_message = "alb_certificate_arn must identify a ca-central-1 ACM certificate."
+    condition     = var.alb_certificate_arn == "" || can(regex("^arn:aws[a-z-]*:acm:ca-central-1:[0-9]{12}:certificate/", var.alb_certificate_arn))
+    error_message = "alb_certificate_arn must be empty for generated-hostname staging, or identify a ca-central-1 ACM certificate."
   }
 }
 
 variable "cloudfront_certificate_arn" {
   type        = string
+  default     = ""
   description = "us-east-1 ACM certificate covering the web hostname"
   validation {
-    condition     = can(regex("^arn:aws[a-z-]*:acm:us-east-1:[0-9]{12}:certificate/", var.cloudfront_certificate_arn))
-    error_message = "cloudfront_certificate_arn must identify a us-east-1 ACM certificate."
+    condition     = var.cloudfront_certificate_arn == "" || can(regex("^arn:aws[a-z-]*:acm:us-east-1:[0-9]{12}:certificate/", var.cloudfront_certificate_arn))
+    error_message = "cloudfront_certificate_arn must be empty for generated-hostname staging, or identify a us-east-1 ACM certificate."
   }
 }
 

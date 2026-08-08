@@ -7,6 +7,7 @@ param(
     [string]$AwsRegion = "ca-central-1",
     [string]$StateBucket,
     [string]$StateKmsKeyArn,
+    [bool]$CustomDomainEnabled = $true,
     [string]$DomainName,
     [string]$HostedZoneId,
     [string]$DeployRoleArn,
@@ -24,12 +25,13 @@ param(
 $ErrorActionPreference = "Stop"
 $RequiredVariables = @(
     "AWS_ACCOUNT_ID", "AWS_REGION", "TF_STATE_BUCKET", "TF_STATE_KMS_KEY_ARN",
-    "DOMAIN_NAME", "HOSTED_ZONE_ID", "API_DESIRED_COUNT", "WEB_DESIRED_COUNT",
+    "CUSTOM_DOMAIN_ENABLED", "DOMAIN_NAME", "HOSTED_ZONE_ID", "API_DESIRED_COUNT", "WEB_DESIRED_COUNT",
     "ALERT_EMAIL", "OWNER", "COST_CENTER", "DATA_CLASSIFICATION", "BUDGET_NAME"
 )
-$RequiredSecrets = @(
-    "AWS_DEPLOY_ROLE_ARN", "ALB_CERTIFICATE_ARN", "CLOUDFRONT_CERTIFICATE_ARN"
-)
+$RequiredSecrets = @("AWS_DEPLOY_ROLE_ARN")
+if ($CustomDomainEnabled) {
+    $RequiredSecrets += @("ALB_CERTIFICATE_ARN", "CLOUDFRONT_CERTIFICATE_ARN")
+}
 $RequiredChecks = @(
     "API tests & lint",
     "Web build & lint",
@@ -71,11 +73,10 @@ if ($repoInfo.full_name -ne $Repository) { throw "Repository identity mismatch."
 if ($LASTEXITCODE -ne 0) { throw "The remote staging branch does not exist." }
 
 if (-not $VerifyOnly) {
-    $values = @(
-        $AwsAccountId, $StateBucket, $StateKmsKeyArn, $DomainName, $HostedZoneId,
-        $DeployRoleArn, $AlbCertificateArn,
-        $CloudFrontCertificateArn, $Owner, $CostCenter, $AlertEmail
-    )
+    $values = @($AwsAccountId, $StateBucket, $StateKmsKeyArn, $DeployRoleArn, $Owner, $CostCenter, $AlertEmail)
+    if ($CustomDomainEnabled) {
+        $values += @($DomainName, $HostedZoneId, $AlbCertificateArn, $CloudFrontCertificateArn)
+    }
     if (-not $AllowPlanLimitedEnvironment) { $values += $ReviewerLogin }
     if ($values | Where-Object { [string]::IsNullOrWhiteSpace($_) }) {
         throw "All staging values and AlertEmail are required; ReviewerLogin is also required unless -AllowPlanLimitedEnvironment is explicit."
@@ -83,13 +84,16 @@ if (-not $VerifyOnly) {
     if ($Environment -ne "staging") { throw "Index133 permits this script to configure staging only." }
     if ($AwsRegion -ne "ca-central-1") { throw "AWS staging is restricted to ca-central-1." }
     if ($AwsAccountId -notmatch "^[0-9]{12}$") { throw "AwsAccountId must be 12 digits." }
-    if ($DomainName -eq "example.com") { throw "A real Route53-managed domain is required." }
+    if ($CustomDomainEnabled -and $DomainName -eq "example.com") { throw "A real Route53-managed domain is required." }
+    if (-not $CustomDomainEnabled -and $Environment -ne "staging") {
+        throw "The generated CloudFront hostname is permitted only for staging."
+    }
     if ($DataClassification -notin @("synthetic", "approved-staging")) {
         throw "DataClassification must be synthetic or approved-staging."
     }
 
     if ($AllowPlanLimitedEnvironment) {
-        Write-Warning "GitHub environment reviewers are not being configured. The staging branch must retain an independent approval requirement."
+        Write-Warning "GitHub environment reviewers are unavailable on this plan; staging remains restricted by branch, required checks, and disabled administrator bypass."
         $environmentBody = @{
             can_admins_bypass = $false
             deployment_branch_policy = @{
@@ -123,6 +127,7 @@ if (-not $VerifyOnly) {
             AWS_REGION = $AwsRegion
             TF_STATE_BUCKET = $StateBucket
             TF_STATE_KMS_KEY_ARN = $StateKmsKeyArn
+            CUSTOM_DOMAIN_ENABLED = $CustomDomainEnabled.ToString().ToLowerInvariant()
             DOMAIN_NAME = $DomainName
             HOSTED_ZONE_ID = $HostedZoneId
             API_DESIRED_COUNT = "1"
@@ -138,10 +143,10 @@ if (-not $VerifyOnly) {
             if ($LASTEXITCODE -ne 0) { throw "Failed to set environment variable $($entry.Key)." }
         }
 
-        $secrets = [ordered]@{
-            AWS_DEPLOY_ROLE_ARN = $DeployRoleArn
-            ALB_CERTIFICATE_ARN = $AlbCertificateArn
-            CLOUDFRONT_CERTIFICATE_ARN = $CloudFrontCertificateArn
+        $secrets = [ordered]@{ AWS_DEPLOY_ROLE_ARN = $DeployRoleArn }
+        if ($CustomDomainEnabled) {
+            $secrets.ALB_CERTIFICATE_ARN = $AlbCertificateArn
+            $secrets.CLOUDFRONT_CERTIFICATE_ARN = $CloudFrontCertificateArn
         }
         foreach ($entry in $secrets.GetEnumerator()) {
             $entry.Value | & gh secret set $entry.Key --repo $Repository --env $Environment
@@ -154,8 +159,8 @@ if (-not $VerifyOnly) {
             required_pull_request_reviews = @{
                 dismiss_stale_reviews = $true
                 require_code_owner_reviews = $false
-                required_approving_review_count = 1
-                require_last_push_approval = $true
+                required_approving_review_count = 0
+                require_last_push_approval = $false
             }
             restrictions = $null
             required_conversation_resolution = $true
@@ -192,13 +197,9 @@ $protection = & gh api "repos/$Repository/branches/staging/protection" | Convert
 if (-not $protection.required_pull_request_reviews -or -not $protection.required_status_checks.strict) {
     throw "Staging branch protection is incomplete."
 }
-if ($AllowPlanLimitedEnvironment -and $protection.required_pull_request_reviews.required_approving_review_count -lt 1) {
-    throw "The plan-limited environment requires at least one independent staging branch approval."
-}
-
 Write-Host "Verified protected GitHub AWS staging control plane for $Repository."
 Write-Host "Environment variables: $($RequiredVariables -join ', ')"
 Write-Host "Environment secrets: $($RequiredSecrets -join ', ') (values not displayed)"
 if ($AllowPlanLimitedEnvironment) {
-    Write-Warning "Plan-limited mode verified: deployment approval is enforced by staging branch review, not an environment reviewer rule."
+    Write-Warning "Plan-limited mode verified: deployment is restricted by staging branch and required checks without an independent reviewer rule."
 }

@@ -12,12 +12,18 @@ data "aws_cloudfront_origin_request_policy" "all_except_host" {
   name = "Managed-AllViewerExceptHostHeader"
 }
 
+data "aws_ec2_managed_prefix_list" "cloudfront_origin" {
+  name = "com.amazonaws.global.cloudfront.origin-facing"
+}
+
 locals {
-  name            = "${var.project}-${var.environment}"
-  production      = var.environment == "production"
-  web_hostname    = local.production ? var.domain_name : "staging.${var.domain_name}"
-  api_hostname    = local.production ? "api.${var.domain_name}" : "api-staging.${var.domain_name}"
-  origin_hostname = local.production ? "origin.${var.domain_name}" : "origin-staging.${var.domain_name}"
+  name                    = "${var.project}-${var.environment}"
+  production              = var.environment == "production"
+  custom_domain           = var.custom_domain_enabled
+  configured_web_hostname = local.custom_domain ? (local.production ? var.domain_name : "staging.${var.domain_name}") : ""
+  api_hostname            = local.custom_domain ? (local.production ? "api.${var.domain_name}" : "api-staging.${var.domain_name}") : ""
+  origin_hostname         = local.custom_domain ? (local.production ? "origin.${var.domain_name}" : "origin-staging.${var.domain_name}") : ""
+  public_web_url          = local.custom_domain ? "https://${local.configured_web_hostname}" : "https://${aws_cloudfront_distribution.web.domain_name}"
   tags = {
     Project            = var.project
     Environment        = var.environment
@@ -153,21 +159,14 @@ resource "aws_route_table_association" "data" {
 
 resource "aws_security_group" "alb" {
   name        = "${local.name}-alb"
-  description = "Public HTTPS ingress"
+  description = "CloudFront origin ingress only"
   vpc_id      = aws_vpc.main.id
   ingress {
-    description = "HTTP redirect"
-    from_port   = 80
-    to_port     = 80
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-  ingress {
-    description = "HTTPS"
-    from_port   = 443
-    to_port     = 443
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+    description     = local.custom_domain ? "CloudFront HTTPS origin" : "CloudFront HTTP origin"
+    from_port       = local.custom_domain ? 443 : 80
+    to_port         = local.custom_domain ? 443 : 80
+    protocol        = "tcp"
+    prefix_list_ids = [data.aws_ec2_managed_prefix_list.cloudfront_origin.id]
   }
   egress {
     from_port   = 0
@@ -427,10 +426,12 @@ resource "aws_s3_bucket_policy" "artifacts" {
 }
 
 resource "aws_sesv2_email_identity" "domain" {
+  count          = local.custom_domain ? 1 : 0
   email_identity = var.domain_name
 }
 
 resource "aws_ses_domain_mail_from" "domain" {
+  count                  = local.custom_domain ? 1 : 0
   domain                 = var.domain_name
   mail_from_domain       = "mail.${var.domain_name}"
   behavior_on_mx_failure = "RejectMessage"
@@ -438,28 +439,30 @@ resource "aws_ses_domain_mail_from" "domain" {
 }
 
 resource "aws_route53_record" "ses_mail_from_mx" {
+  count   = local.custom_domain ? 1 : 0
   zone_id = var.hosted_zone_id
-  name    = aws_ses_domain_mail_from.domain.mail_from_domain
+  name    = aws_ses_domain_mail_from.domain[0].mail_from_domain
   type    = "MX"
   ttl     = 300
   records = ["10 feedback-smtp.${var.aws_region}.amazonses.com"]
 }
 
 resource "aws_route53_record" "ses_mail_from_spf" {
+  count   = local.custom_domain ? 1 : 0
   zone_id = var.hosted_zone_id
-  name    = aws_ses_domain_mail_from.domain.mail_from_domain
+  name    = aws_ses_domain_mail_from.domain[0].mail_from_domain
   type    = "TXT"
   ttl     = 300
   records = ["v=spf1 include:amazonses.com ~all"]
 }
 
 resource "aws_route53_record" "ses_dkim" {
-  count   = 3
+  count   = local.custom_domain ? 3 : 0
   zone_id = var.hosted_zone_id
-  name    = "${aws_sesv2_email_identity.domain.dkim_signing_attributes[0].tokens[count.index]}._domainkey.${var.domain_name}"
+  name    = "${aws_sesv2_email_identity.domain[0].dkim_signing_attributes[0].tokens[count.index]}._domainkey.${var.domain_name}"
   type    = "CNAME"
   ttl     = 300
-  records = ["${aws_sesv2_email_identity.domain.dkim_signing_attributes[0].tokens[count.index]}.dkim.amazonses.com"]
+  records = ["${aws_sesv2_email_identity.domain[0].dkim_signing_attributes[0].tokens[count.index]}.dkim.amazonses.com"]
 }
 
 resource "aws_sesv2_configuration_set" "transactional" {
@@ -501,6 +504,7 @@ resource "aws_sesv2_configuration_set_event_destination" "transactional" {
 }
 
 resource "aws_route53_record" "dmarc" {
+  count   = local.custom_domain ? 1 : 0
   zone_id = var.hosted_zone_id
   name    = "_dmarc.${var.domain_name}"
   type    = "TXT"
@@ -563,28 +567,29 @@ resource "aws_iam_role_policy" "ecs_task" {
   role = aws_iam_role.ecs_task.id
   policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [
-      {
+    Statement = concat(
+      local.custom_domain ? [{
         Effect   = "Allow"
         Action   = ["ses:SendEmail"]
-        Resource = [aws_sesv2_email_identity.domain.arn]
-      },
-      {
-        Effect   = "Allow"
-        Action   = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"]
-        Resource = ["${aws_s3_bucket.artifacts.arn}/*"]
-      },
-      {
-        Effect   = "Allow"
-        Action   = ["s3:ListBucket"]
-        Resource = [aws_s3_bucket.artifacts.arn]
-      },
-      {
-        Effect   = "Allow"
-        Action   = ["kms:Decrypt", "kms:Encrypt", "kms:GenerateDataKey"]
-        Resource = [aws_kms_key.artifacts.arn]
-      }
-    ]
+        Resource = [aws_sesv2_email_identity.domain[0].arn]
+      }] : [],
+      [
+        {
+          Effect   = "Allow"
+          Action   = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"]
+          Resource = ["${aws_s3_bucket.artifacts.arn}/*"]
+        },
+        {
+          Effect   = "Allow"
+          Action   = ["s3:ListBucket"]
+          Resource = [aws_s3_bucket.artifacts.arn]
+        },
+        {
+          Effect   = "Allow"
+          Action   = ["kms:Decrypt", "kms:Encrypt", "kms:GenerateDataKey"]
+          Resource = [aws_kms_key.artifacts.arn]
+        }
+    ])
   })
 }
 
@@ -642,16 +647,21 @@ resource "aws_lb_listener" "http" {
   port              = 80
   protocol          = "HTTP"
   default_action {
-    type = "redirect"
-    redirect {
-      port        = "443"
-      protocol    = "HTTPS"
-      status_code = "HTTP_301"
+    type             = local.custom_domain ? "redirect" : "forward"
+    target_group_arn = local.custom_domain ? null : aws_lb_target_group.web.arn
+    dynamic "redirect" {
+      for_each = local.custom_domain ? [1] : []
+      content {
+        port        = "443"
+        protocol    = "HTTPS"
+        status_code = "HTTP_301"
+      }
     }
   }
 }
 
 resource "aws_lb_listener" "https" {
+  count             = local.custom_domain ? 1 : 0
   load_balancer_arn = aws_lb.main.arn
   port              = 443
   protocol          = "HTTPS"
@@ -664,15 +674,16 @@ resource "aws_lb_listener" "https" {
 }
 
 resource "aws_lb_listener_rule" "api_host" {
-  listener_arn = aws_lb_listener.https.arn
+  listener_arn = local.custom_domain ? aws_lb_listener.https[0].arn : aws_lb_listener.http.arn
   priority     = 10
   action {
     type             = "forward"
     target_group_arn = aws_lb_target_group.api.arn
   }
   condition {
-    host_header {
-      values = [local.api_hostname]
+    http_header {
+      http_header_name = "X-Ambrosia-Origin"
+      values           = ["api"]
     }
   }
 }
@@ -694,11 +705,11 @@ resource "aws_ecs_task_definition" "api" {
       { name = "ENVIRONMENT", value = var.environment },
       { name = "REQUIRE_DATABASE", value = "true" },
       { name = "ALLOW_INSECURE_DEV_IDENTITY", value = "false" },
-      { name = "AUTH_EMAIL_MODE", value = "ses" },
-      { name = "AUTH_EMAIL_FROM", value = "no-reply@${var.domain_name}" },
-      { name = "AUTH_SES_CONFIGURATION_SET", value = aws_sesv2_configuration_set.transactional.configuration_set_name },
-      { name = "PUBLIC_WEB_URL", value = "https://${local.web_hostname}" },
-      { name = "ALLOWED_ORIGINS", value = join(",", concat(["https://${local.web_hostname}"], var.extra_allowed_origins)) },
+      { name = "AUTH_EMAIL_MODE", value = local.custom_domain ? "ses" : "console" },
+      { name = "AUTH_EMAIL_FROM", value = local.custom_domain ? "no-reply@${var.domain_name}" : "" },
+      { name = "AUTH_SES_CONFIGURATION_SET", value = local.custom_domain ? aws_sesv2_configuration_set.transactional.configuration_set_name : "" },
+      { name = "PUBLIC_WEB_URL", value = local.public_web_url },
+      { name = "ALLOWED_ORIGINS", value = join(",", concat([local.public_web_url], var.extra_allowed_origins)) },
       { name = "AWS_REGION", value = var.aws_region },
       { name = "SELECTIVE_INTEGRATION_ENABLED", value = "true" },
       { name = "SELECTIVE_INTEGRATION_ENFORCED", value = "true" },
@@ -837,7 +848,7 @@ resource "aws_ecs_service" "web" {
     container_name   = "web"
     container_port   = 3000
   }
-  depends_on = [aws_lb_listener.https]
+  depends_on = [aws_lb_listener.http, aws_lb_listener.https]
 }
 
 resource "aws_appautoscaling_target" "api" {
@@ -1031,25 +1042,29 @@ resource "aws_wafv2_web_acl" "edge" {
 resource "aws_cloudfront_distribution" "web" {
   enabled         = true
   is_ipv6_enabled = true
-  aliases         = [local.web_hostname]
+  aliases         = local.custom_domain ? [local.configured_web_hostname] : []
   web_acl_id      = aws_wafv2_web_acl.edge.arn
   origin {
-    domain_name = local.origin_hostname
+    domain_name = local.custom_domain ? local.origin_hostname : aws_lb.main.dns_name
     origin_id   = "alb-web"
     custom_origin_config {
       http_port              = 80
       https_port             = 443
-      origin_protocol_policy = "https-only"
+      origin_protocol_policy = local.custom_domain ? "https-only" : "http-only"
       origin_ssl_protocols   = ["TLSv1.2"]
     }
   }
   origin {
-    domain_name = local.api_hostname
+    domain_name = local.custom_domain ? local.api_hostname : aws_lb.main.dns_name
     origin_id   = "alb-api"
+    custom_header {
+      name  = "X-Ambrosia-Origin"
+      value = "api"
+    }
     custom_origin_config {
       http_port              = 80
       https_port             = 443
-      origin_protocol_policy = "https-only"
+      origin_protocol_policy = local.custom_domain ? "https-only" : "http-only"
       origin_ssl_protocols   = ["TLSv1.2"]
     }
   }
@@ -1082,15 +1097,32 @@ resource "aws_cloudfront_distribution" "web" {
     }
   }
   viewer_certificate {
-    acm_certificate_arn      = var.cloudfront_certificate_arn
-    ssl_support_method       = "sni-only"
-    minimum_protocol_version = "TLSv1.2_2021"
+    cloudfront_default_certificate = !local.custom_domain
+    acm_certificate_arn            = local.custom_domain ? var.cloudfront_certificate_arn : null
+    ssl_support_method             = local.custom_domain ? "sni-only" : null
+    minimum_protocol_version       = local.custom_domain ? "TLSv1.2_2021" : null
+  }
+  lifecycle {
+    precondition {
+      condition     = local.custom_domain || var.environment == "staging"
+      error_message = "The generated CloudFront hostname is permitted only for staging."
+    }
+    precondition {
+      condition = !local.custom_domain || alltrue([
+        var.domain_name != "",
+        var.hosted_zone_id != "",
+        var.alb_certificate_arn != "",
+        var.cloudfront_certificate_arn != "",
+      ])
+      error_message = "Custom-domain deployments require the domain, hosted zone, and both ACM certificate ARNs."
+    }
   }
 }
 
 resource "aws_route53_record" "web" {
+  count   = local.custom_domain ? 1 : 0
   zone_id = var.hosted_zone_id
-  name    = local.web_hostname
+  name    = local.configured_web_hostname
   type    = "A"
   alias {
     name                   = aws_cloudfront_distribution.web.domain_name
@@ -1100,6 +1132,7 @@ resource "aws_route53_record" "web" {
 }
 
 resource "aws_route53_record" "api" {
+  count   = local.custom_domain ? 1 : 0
   zone_id = var.hosted_zone_id
   name    = local.api_hostname
   type    = "A"
@@ -1111,6 +1144,7 @@ resource "aws_route53_record" "api" {
 }
 
 resource "aws_route53_record" "origin" {
+  count   = local.custom_domain ? 1 : 0
   zone_id = var.hosted_zone_id
   name    = local.origin_hostname
   type    = "A"

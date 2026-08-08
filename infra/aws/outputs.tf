@@ -1,9 +1,9 @@
 output "web_url" {
-  value = "https://${local.web_hostname}"
+  value = local.public_web_url
 }
 
 output "api_url" {
-  value = "https://${local.web_hostname}/api"
+  value = "${local.public_web_url}/api"
 }
 
 output "ecs_cluster" {
@@ -40,5 +40,5 @@ output "web_ecr_repository" {
 }
 
 output "ses_dkim_tokens" {
-  value = aws_sesv2_email_identity.domain.dkim_signing_attributes[0].tokens
+  value = local.custom_domain ? aws_sesv2_email_identity.domain[0].dkim_signing_attributes[0].tokens : []
 }

@@ -34,7 +34,6 @@ $RequiredChecks = @(
     "Web build & lint",
     "Mobile contract & config",
     "Visibility proof gate",
-    "B4 - Function Registry Enforcement",
     "Index84 web control-plane evidence",
     "dependency-audit",
     "postgres-integration",

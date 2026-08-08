@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 
 from app.identity import (
     CSRF_COOKIE,
+    EmailSender,
     canonicalize_email,
     development_tokens_exposed,
     get_identity_service,
@@ -90,6 +91,82 @@ def test_production_never_accepts_staging_console_opt_in(monkeypatch) -> None:
     with pytest.raises(RuntimeError, match="production_email_not_configured"):
         get_identity_service().healthcheck()
     reset_identity_service()
+
+
+def test_staging_password_recovery_fails_before_account_lookup_without_ses(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("ENVIRONMENT", "staging")
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.setenv("AUTH_TOKEN_PEPPER", "x" * 32)
+    monkeypatch.setenv("AUTH_EMAIL_MODE", "console")
+    monkeypatch.setenv("AUTH_ALLOW_STAGING_CONSOLE_DELIVERY", "true")
+    monkeypatch.setenv("AUTH_EXPOSE_DEVELOPMENT_TOKENS", "true")
+    monkeypatch.setattr(rate_limiter, "allow", lambda *_args, **_kwargs: (True, 299))
+    reset_identity_service()
+
+    with TestClient(app, base_url="https://staging.example") as client:
+        response = client.post(
+            "/auth/forgot-password", json={"email": "unknown@example.com"}
+        )
+
+    assert response.status_code == 503
+    assert response.json() == {"detail": "Password recovery is temporarily unavailable"}
+    reset_identity_service()
+
+
+def test_ses_password_reset_uses_verified_sender_and_configuration_set(
+    monkeypatch,
+) -> None:
+    sent: list[dict] = []
+
+    class FakeSesClient:
+        def send_email(self, **request) -> None:
+            sent.append(request)
+
+    monkeypatch.setenv("AUTH_EMAIL_MODE", "ses")
+    monkeypatch.setenv("AUTH_EMAIL_FROM", "no-reply@example.com")
+    monkeypatch.setenv("AUTH_SES_CONFIGURATION_SET", "ambrosia-staging-transactional")
+    monkeypatch.setenv("PUBLIC_WEB_URL", "https://staging.example.com")
+    monkeypatch.setattr("app.identity.boto3.client", lambda *_args, **_kwargs: FakeSesClient())
+
+    EmailSender().send_password_reset("owner@example.com", "single-use-token")
+
+    assert sent == [{
+        "FromEmailAddress": "no-reply@example.com",
+        "Destination": {"ToAddresses": ["owner@example.com"]},
+        "Content": {"Simple": {
+            "Subject": {"Data": "Reset your Ambrosia password"},
+            "Body": {"Text": {"Data": "Reset your password: https://staging.example.com/reset-password?token=single-use-token"}},
+        }},
+        "ConfigurationSetName": "ambrosia-staging-transactional",
+    }]
+
+
+def test_ses_failure_does_not_disclose_account_existence(
+    identity_client: TestClient, monkeypatch,
+) -> None:
+    _signup(identity_client)
+    monkeypatch.setenv("ENVIRONMENT", "staging")
+    monkeypatch.setenv("AUTH_TOKEN_PEPPER", "x" * 32)
+    monkeypatch.setenv("AUTH_EMAIL_MODE", "ses")
+    monkeypatch.setenv("AUTH_EMAIL_FROM", "no-reply@example.com")
+    monkeypatch.setattr(rate_limiter, "allow", lambda *_args, **_kwargs: (True, 299))
+    monkeypatch.setattr(
+        "app.identity.EmailSender.send_password_reset",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("SES unavailable")),
+    )
+
+    unknown = identity_client.post(
+        "/auth/forgot-password", json={"email": "unknown@example.com"}
+    )
+    known = identity_client.post(
+        "/auth/forgot-password", json={"email": "owner@example.com"}
+    )
+
+    assert unknown.status_code == known.status_code == 202
+    assert unknown.json() == known.json()
+    assert "developmentResetToken" not in known.json()
 
 
 def test_signup_verification_session_and_logout(identity_client: TestClient) -> None:

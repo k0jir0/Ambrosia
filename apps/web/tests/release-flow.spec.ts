@@ -61,6 +61,29 @@ test("protected workspace redirects an unauthenticated visitor to login", async 
   await expect(page.getByRole("heading", { name: /Return to the decisions/i })).toBeVisible();
 });
 
+test("password recovery reports unavailable delivery without claiming success", async ({ page }) => {
+  await page.route(LOCAL_API_ROUTE, async (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    if (path === "/auth/forgot-password" && request.method() === "POST") {
+      await route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({ detail: "Password recovery is temporarily unavailable" }),
+      });
+      return;
+    }
+    await route.abort();
+  });
+
+  await page.goto("/forgot-password");
+  await page.getByLabel("Email").fill("owner@example.com");
+  await page.getByRole("button", { name: "Send reset link" }).click();
+  await expect(page.getByText("Password recovery is temporarily unavailable. Please try again later.", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Send reset link" })).toBeVisible();
+  await expect(page.getByText(/has been sent/i)).toHaveCount(0);
+});
+
 test("team surface renders only tenant-backed members and invitations", async ({ page }) => {
   let invitations = 0;
   await page.route(LOCAL_API_ROUTE, async (route) => {

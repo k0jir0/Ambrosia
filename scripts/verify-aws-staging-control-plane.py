@@ -60,6 +60,12 @@ def main() -> None:
         "explicit web capacity": '-var="web_desired_count=$WEB_DESIRED_COUNT"',
         "accountable owner": '-var="owner=$OWNER"',
         "cost allocation": '-var="cost_center=$COST_CENTER"',
+        "auth sender variable": "AUTH_EMAIL_FROM: ${{ vars.AUTH_EMAIL_FROM }}",
+        "auth identity variable": "AUTH_SES_IDENTITY_ARN: ${{ vars.AUTH_SES_IDENTITY_ARN }}",
+        "auth sender plan input": '-var="auth_email_from=$AUTH_EMAIL_FROM"',
+        "auth identity plan input": '-var="auth_ses_identity_arn=$AUTH_SES_IDENTITY_ARN"',
+        "verified SES identity preflight": "aws sesv2 get-email-identity",
+        "SES production-access preflight": "ProductionAccessEnabled",
     }
     for label, fragment in required_workflow_fragments.items():
         require(workflow, fragment, label)

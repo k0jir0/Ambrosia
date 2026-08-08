@@ -69,6 +69,26 @@ variable "domain_name" {
   }
 }
 
+variable "auth_email_from" {
+  type        = string
+  default     = ""
+  description = "Verified SES sender address used when staging runs on a generated CloudFront hostname"
+  validation {
+    condition     = var.auth_email_from == "" || can(regex("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$", var.auth_email_from))
+    error_message = "auth_email_from must be empty or a valid email address."
+  }
+}
+
+variable "auth_ses_identity_arn" {
+  type        = string
+  default     = ""
+  description = "Verified ca-central-1 SES email or domain identity authorized to send auth email"
+  validation {
+    condition     = var.auth_ses_identity_arn == "" || can(regex("^arn:aws[a-z-]*:ses:ca-central-1:[0-9]{12}:identity/.+", var.auth_ses_identity_arn))
+    error_message = "auth_ses_identity_arn must be empty or a ca-central-1 SES identity ARN."
+  }
+}
+
 variable "hosted_zone_id" {
   type        = string
   default     = ""

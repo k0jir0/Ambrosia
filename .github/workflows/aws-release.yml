@@ -263,8 +263,9 @@ jobs:
           API_REPOSITORY: ${{ steps.repositories.outputs.api }}
           WEB_REPOSITORY: ${{ steps.repositories.outputs.web }}
         run: |
-          docker push "$API_REPOSITORY:$GITHUB_SHA"
-          docker push "$WEB_REPOSITORY:$GITHUB_SHA"
+          set -euo pipefail
+          bash scripts/push-or-verify-ecr-image.sh "$API_REPOSITORY:$GITHUB_SHA"
+          bash scripts/push-or-verify-ecr-image.sh "$WEB_REPOSITORY:$GITHUB_SHA"
 
       - name: Resolve immutable ECR digests
         id: images

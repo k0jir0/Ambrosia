@@ -46,6 +46,7 @@ def main() -> None:
         "native state locking": 'backend-config="use_lockfile=true"',
         "fixed vulnerability scan": "ignore-unfixed: true",
         "SPDX SBOM": "format: spdx-json",
+        "idempotent immutable image publication": "push-or-verify-ecr-image.sh",
         "digest resolution": "Resolve immutable ECR digests",
         "keyless signing": "cosign sign --yes",
         "foundation saved plan": 'PLAN_KEY="ambrosia/$DEPLOY_ENVIRONMENT/plans/',
@@ -66,6 +67,18 @@ def main() -> None:
     reject(workflow, "options: [staging, production]", "production selection in staging workflow")
     reject(workflow, "actions/upload-artifact", "broadly readable Terraform binary plan artifact")
     reject(workflow, "Sanitized Terraform plan output", "value-bearing textual plan summary")
+
+    image_publisher = (ROOT / "scripts/push-or-verify-ecr-image.sh").read_text(
+        encoding="utf-8"
+    )
+    require(image_publisher, "aws ecr batch-get-image", "existing immutable image lookup")
+    require(image_publisher, ".config.digest", "remote image config digest")
+    require(image_publisher, "docker image inspect", "local image config digest")
+    require(
+        image_publisher,
+        "Immutable ECR tag exists but does not match",
+        "immutable tag mismatch failure",
+    )
 
     require(terraform, "aws_cloudfront_function", "same-origin API prefix rewrite")
     require(terraform, "request.uri.substring(4)", "FastAPI root-path forwarding")

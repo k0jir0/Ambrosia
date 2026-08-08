@@ -84,12 +84,12 @@ def main() -> int:
         [sys.executable, "scripts/verify-migrations.py"], ROOT
     )
     retrieval_ok, retrieval_output = run_check(
-        ["uv", "run", "python", "../../packages/evals/run_retrieval_benchmark.py"],
-        ROOT / "services" / "api",
+        [sys.executable, "packages/evals/run_retrieval_benchmark.py"],
+        ROOT,
     )
     scorecard_ok, scorecard_output = run_check(
-        ["uv", "run", "python", "../../scripts/verify-scorecard-runtime.py"],
-        ROOT / "services" / "api",
+        [sys.executable, "scripts/verify-scorecard-runtime.py"],
+        ROOT,
     )
 
     schema_version = read_json(ROOT / "infra" / "db" / "schema-version.json")
@@ -110,11 +110,11 @@ def main() -> int:
         },
         "retrievalBenchmark": {
             "passed": retrieval_passed,
-            "command": "uv run python ../../packages/evals/run_retrieval_benchmark.py",
+            "command": "python packages/evals/run_retrieval_benchmark.py",
         },
         "scorecardRuntime": {
             "passed": scorecard_passed,
-            "command": "uv run python ../../scripts/verify-scorecard-runtime.py",
+            "command": "python scripts/verify-scorecard-runtime.py",
         },
     }
 

@@ -20,7 +20,7 @@ def read_text(relative_path: str) -> str:
 
 
 class Index90StackTests(unittest.TestCase):
-    def test_frontend_routes_and_menu_expose_index84_modules(self) -> None:
+    def test_frontend_labs_remain_addressable_but_outside_sellable_navigation(self) -> None:
         app_shell = read_text("apps/web/src/components/app-shell.tsx")
         palette = read_text("apps/web/src/components/command-palette.tsx")
 
@@ -43,7 +43,19 @@ class Index90StackTests(unittest.TestCase):
             'Enterprise',
             'CLI Design',
         ]:
-            self.assertIn(label, app_shell)
+            self.assertIn(label, palette)
+
+        sellable_navigation = app_shell.split("const NAV_ITEMS = [", 1)[1].split("] as const;", 1)[0]
+        for route in [
+            '/platform',
+            '/alpha',
+            '/execution-intelligence',
+            '/relay-benchmarks',
+            '/enterprise',
+            '/cli-design',
+        ]:
+            self.assertNotIn(route, sellable_navigation)
+        self.assertIn("NEXT_PUBLIC_ENABLE_LABS", app_shell)
 
     def test_index89_pages_have_route_state_boundaries(self) -> None:
         for page in [

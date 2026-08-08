@@ -1,0 +1,42 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Ambrosia staging CloudFront certificate; deploy this stack only in us-east-1.
+
+Parameters:
+  DomainName:
+    Type: String
+    AllowedPattern: "^[a-z0-9][a-z0-9.-]+[a-z0-9]$"
+  HostedZoneId:
+    Type: AWS::Route53::HostedZone::Id
+  Owner:
+    Type: String
+    MinLength: 2
+  CostCenter:
+    Type: String
+    MinLength: 2
+
+Rules:
+  MustRunInUsEast1:
+    Assertions:
+      - Assert: !Equals [!Ref AWS::Region, us-east-1]
+        AssertDescription: The CloudFront viewer certificate must be created in us-east-1.
+
+Resources:
+  EdgeCertificate:
+    Type: AWS::CertificateManager::Certificate
+    Properties:
+      DomainName: !Sub staging.${DomainName}
+      ValidationMethod: DNS
+      DomainValidationOptions:
+        - DomainName: !Sub staging.${DomainName}
+          HostedZoneId: !Ref HostedZoneId
+      Tags:
+        - { Key: Project, Value: ambrosia }
+        - { Key: Environment, Value: staging }
+        - { Key: ManagedBy, Value: cloudformation }
+        - { Key: Roadmap, Value: index133 }
+        - { Key: Owner, Value: !Ref Owner }
+        - { Key: CostCenter, Value: !Ref CostCenter }
+
+Outputs:
+  CloudFrontCertificateArn:
+    Value: !Ref EdgeCertificate

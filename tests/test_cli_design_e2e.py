@@ -97,7 +97,7 @@ def test_cli_status_reports_target_and_recovery_without_failing() -> None:
     assert payload["apiUrl"] == "http://127.0.0.1:1"
     assert payload["apiUrlSource"] == "flag"
     assert payload["apiReachable"] is False
-    assert any("setx AMBROSIA_API_URL" in item["command"] for item in payload["recovery"])
+    assert any("Start the local API" in item["label"] for item in payload["recovery"])
 
 
 def test_cli_api_unavailable_error_is_actionable() -> None:
@@ -106,8 +106,7 @@ def test_cli_api_unavailable_error_is_actionable() -> None:
     assert result.returncode == 1
     assert "Status: error" in result.stdout
     assert "Tried: http://127.0.0.1:1/market/GOOG/snapshot" in result.stdout
-    assert "Use staging for this command" in result.stdout
-    assert "setx AMBROSIA_API_URL" in result.stdout
+    assert "Start the local API" in result.stdout
     assert "Traceback" not in result.stderr
 
 
@@ -119,6 +118,7 @@ def test_cli_quickstart_can_write_profile(tmp_path: Path) -> None:
         "PYTHONPATH": _pythonpath(),
         "HOME": str(env_home),
         "USERPROFILE": str(env_home),
+        "AMBROSIA_STAGING_API_URL": "https://staging.ambrosia.example/api",
     }
     result = subprocess.run(
         [sys.executable, "-c", CLI_MAIN, "--json", "quickstart", "--target", "staging", "--write-profile"],
@@ -133,11 +133,11 @@ def test_cli_quickstart_can_write_profile(tmp_path: Path) -> None:
     assert result.returncode == 0
     payload = json.loads(result.stdout)
     assert payload["target"] == "staging"
-    assert payload["apiUrl"] == "https://ambrosia-api-staging.onrender.com"
+    assert payload["apiUrl"] == "https://staging.ambrosia.example/api"
 
     config_path = env_home / ".ambrosia" / "config.json"
     config = json.loads(config_path.read_text(encoding="utf-8"))
-    assert config["profiles"]["default"]["api_url"] == "https://ambrosia-api-staging.onrender.com"
+    assert config["profiles"]["default"]["api_url"] == "https://staging.ambrosia.example/api"
 
 
 def test_cli_json_mode_and_token_file_are_scriptable(tmp_path: Path) -> None:
@@ -209,7 +209,7 @@ def test_windows_launcher_is_target_aware() -> None:
 
     assert "uv run ambrosia status" in launcher
     assert "Choose API target" in launcher
-    assert "https://ambrosia-api-staging.onrender.com" in launcher
+    assert "AMBROSIA_STAGING_API_URL" in launcher
     assert "quickstart --target custom" in launcher
     assert "Run common quick checks" in launcher
 

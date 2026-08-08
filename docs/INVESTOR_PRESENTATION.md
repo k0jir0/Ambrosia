@@ -1,5 +1,9 @@
 # Ambrosia Investor Presentation
 
+> [!WARNING]
+> Historical draft; not approved for investors or diligence. Rebuild every
+> material statement from the Index132 claims register and primary evidence.
+
 As of June 24, 2026
 
 ## Opening

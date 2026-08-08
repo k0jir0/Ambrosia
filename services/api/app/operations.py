@@ -17,13 +17,21 @@ import os
 import threading
 import time
 from collections import Counter, defaultdict, deque
+from contextvars import ContextVar, Token
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
-from typing import Callable
+from typing import Any, Callable
 from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import JSONResponse, PlainTextResponse
+
+from .identity import CSRF_COOKIE, get_identity_service, session_cookie_name
+from .tenant_context import (
+    LEGACY_QUARANTINE_ORGANIZATION_ID,
+    reset_organization_id,
+    set_organization_id,
+)
 
 LOGGER = logging.getLogger("ambrosia.operations")
 router = APIRouter(tags=["operations"])
@@ -38,8 +46,21 @@ ROLE_LEVELS = {
     "admin": 3,
     "service": 3,
 }
-PUBLIC_PATHS = {"/", "/health", "/live", "/ready", "/openapi.json"}
-PUBLIC_PREFIXES = ("/docs", "/redoc")
+PUBLIC_PATHS = {
+    "/",
+    "/health",
+    "/live",
+    "/ready",
+    "/openapi.json",
+    "/auth/signup",
+    "/auth/login",
+    "/auth/verify-email",
+    "/auth/resend-verification",
+    "/auth/accept-invite",
+    "/auth/forgot-password",
+    "/auth/reset-password",
+}
+PUBLIC_PREFIXES = ("/docs", "/redoc", "/local-worker/")
 SENSITIVE_PREFIXES = (
     "/admin", "/enterprise", "/governance", "/roadmap", "/execution",
 )
@@ -70,6 +91,28 @@ class Principal:
     role: str
     team: str | None
     auth_method: str
+    organization_id: str | None = None
+    organization_name: str | None = None
+    email: str | None = None
+    session_id: str | None = None
+    csrf_hash: str | None = None
+
+
+_current_principal: ContextVar[Principal | None] = ContextVar(
+    "ambrosia_principal", default=None
+)
+
+
+def current_principal() -> Principal | None:
+    return _current_principal.get()
+
+
+def _set_current_principal(principal: Principal | None) -> Token:
+    return _current_principal.set(principal)
+
+
+def _reset_current_principal(token: Token) -> None:
+    _current_principal.reset(token)
 
 
 def _configured_api_keys() -> dict[str, dict[str, str]]:
@@ -98,6 +141,7 @@ def _configured_api_keys() -> dict[str, dict[str, str]]:
                 "subject": subject,
                 "role": role,
                 "team": str(identity.get("team", "")).strip(),
+                "organization_id": str(identity.get("organization_id", "")).strip(),
             }
     return identities
 
@@ -148,6 +192,8 @@ def _authenticate_hs256_jwt(token: str) -> Principal | None:
         role=role,
         team=str(claims.get("team", "")).strip() or None,
         auth_method="jwt-hs256",
+        organization_id=str(claims.get("organization_id") or claims.get("org") or "").strip() or None,
+        email=str(claims.get("email", "")).strip() or None,
     )
 
 
@@ -162,22 +208,26 @@ def authenticate(request: Request) -> Principal | None:
                     role=identity["role"],
                     team=identity["team"] or None,
                     auth_method="bearer-api-key",
+                    organization_id=identity["organization_id"] or None,
                 )
         jwt_principal = _authenticate_hs256_jwt(candidate)
         if jwt_principal is not None:
             return jwt_principal
 
-    if _environment() == "staging" and _truthy("ALLOW_STAGING_WEB_IDENTITY", default=True):
-        staging_origin = os.getenv(
-            "STAGING_WEB_ORIGIN",
-            "https://ambrosia-web-staging.onrender.com",
-        ).rstrip("/")
-        if request.headers.get("origin", "").rstrip("/") == staging_origin:
+    session_token = request.cookies.get(session_cookie_name(), "").strip()
+    if session_token:
+        identity = get_identity_service().authenticate_session(session_token)
+        if identity is not None:
             return Principal(
-                subject="staging-web-demo",
-                role="analyst",
-                team="staging",
-                auth_method="staging-web-origin",
+                subject=identity.user_id,
+                role=identity.role,
+                team=identity.organization_id,
+                auth_method="session",
+                organization_id=identity.organization_id,
+                organization_name=identity.organization_name,
+                email=identity.email,
+                session_id=identity.session_id,
+                csrf_hash=identity.csrf_hash,
             )
 
     allow_dev = _truthy("ALLOW_INSECURE_DEV_IDENTITY", default=not _is_production())
@@ -193,6 +243,9 @@ def authenticate(request: Request) -> Principal | None:
                 role=role,
                 team=request.headers.get("x-ambrosia-team"),
                 auth_method="development-header",
+                organization_id=os.getenv(
+                    "AMBROSIA_DEV_ORGANIZATION_ID", LEGACY_QUARANTINE_ORGANIZATION_ID
+                ),
             )
     return None
 
@@ -209,7 +262,7 @@ def _required_level(path: str, method: str) -> int:
     return 0
 
 
-class SlidingWindowRateLimiter:
+class InMemorySlidingWindowRateLimiter:
     def __init__(self) -> None:
         self._events: dict[str, deque[float]] = defaultdict(deque)
         self._lock = threading.Lock()
@@ -226,6 +279,96 @@ class SlidingWindowRateLimiter:
                 return False, 0
             events.append(now)
             return True, max(0, remaining - 1)
+
+
+# Backwards-compatible name for callers that explicitly need the local
+# implementation. Production middleware uses DistributedSlidingWindowRateLimiter.
+SlidingWindowRateLimiter = InMemorySlidingWindowRateLimiter
+
+
+class RateLimiterUnavailable(RuntimeError):
+    """Raised when the shared production throttle cannot be reached."""
+
+
+class DistributedSlidingWindowRateLimiter:
+    """Atomic Redis throttle with an explicit development-only fallback.
+
+    Redis server time is used so clock skew between ECS tasks cannot alter the
+    decision. Keys contain only a SHA-256 digest of the scope and identity.
+    """
+
+    _SCRIPT = """
+local clock = redis.call('TIME')
+local now = (clock[1] * 1000000) + clock[2]
+local cutoff = now - (ARGV[1] * 1000000)
+redis.call('ZREMRANGEBYSCORE', KEYS[1], 0, cutoff)
+local count = redis.call('ZCARD', KEYS[1])
+local limit = tonumber(ARGV[2])
+if count >= limit then
+  redis.call('EXPIRE', KEYS[1], tonumber(ARGV[1]) + 1)
+  return {0, 0}
+end
+redis.call('ZADD', KEYS[1], now, tostring(now) .. ':' .. ARGV[3])
+redis.call('EXPIRE', KEYS[1], tonumber(ARGV[1]) + 1)
+return {1, limit - count - 1}
+"""
+
+    def __init__(self) -> None:
+        self._fallback = InMemorySlidingWindowRateLimiter()
+        self._client: Any | None = None
+        self._client_url: str | None = None
+        self._script: Any | None = None
+        self._lock = threading.Lock()
+
+    def _redis(self) -> Any | None:
+        redis_url = os.getenv("REDIS_URL", "").strip()
+        if not redis_url:
+            return None
+        with self._lock:
+            if self._client is None or self._client_url != redis_url:
+                from redis import Redis
+
+                self._client = Redis.from_url(
+                    redis_url,
+                    socket_connect_timeout=2,
+                    socket_timeout=2,
+                    health_check_interval=30,
+                    retry_on_timeout=False,
+                )
+                self._script = self._client.register_script(self._SCRIPT)
+                self._client_url = redis_url
+            return self._client
+
+    def healthcheck(self) -> None:
+        client = self._redis()
+        if client is None:
+            if _is_production():
+                raise RateLimiterUnavailable("REDIS_URL is required")
+            return
+        try:
+            if not client.ping():
+                raise RateLimiterUnavailable("Redis ping failed")
+        except Exception as exc:
+            raise RateLimiterUnavailable("Redis unavailable") from exc
+
+    def allow(self, key: str, limit: int, window_seconds: int = 60) -> tuple[bool, int]:
+        client = self._redis()
+        if client is None:
+            if _is_production():
+                raise RateLimiterUnavailable("REDIS_URL is required")
+            return self._fallback.allow(key, limit, window_seconds)
+        digest = hashlib.sha256(key.encode("utf-8")).hexdigest()
+        redis_key = f"ambrosia:rate:{_environment()}:{digest}"
+        try:
+            result = self._script(
+                keys=[redis_key],
+                args=[window_seconds, limit, uuid4().hex],
+                client=client,
+            )
+            return bool(int(result[0])), int(result[1])
+        except Exception as exc:
+            LOGGER.exception("distributed rate limiter unavailable")
+            raise RateLimiterUnavailable("Redis unavailable") from exc
 
 
 class Telemetry:
@@ -350,7 +493,7 @@ class HashChainAuditLog:
 
 telemetry = Telemetry()
 security_audit = HashChainAuditLog()
-rate_limiter = SlidingWindowRateLimiter()
+rate_limiter = DistributedSlidingWindowRateLimiter()
 _readiness_checks: list[tuple[str, Callable[[], None]]] = []
 _audit_sink: Callable[..., None] | None = None
 _audit_sink_error: str | None = None
@@ -423,8 +566,13 @@ class ProductionBoundaryMiddleware:
             await self._json(send, 503, {"detail": "Durable audit path unavailable"}, request_id)
             return
 
-        is_public = path in PUBLIC_PATHS or path.startswith(PUBLIC_PREFIXES)
-        principal = None if is_public else authenticate(request)
+        is_public = method == "OPTIONS" or path in PUBLIC_PATHS or path.startswith(PUBLIC_PREFIXES)
+        has_presented_identity = bool(
+            request.headers.get("authorization")
+            or request.cookies.get(session_cookie_name())
+        )
+        optional_identity = path == "/auth/accept-invite" and has_presented_identity
+        principal = authenticate(request) if (not is_public or optional_identity) else None
         if not is_public and principal is None:
             telemetry.increment("authentication_failure")
             security_audit.append(request_id=request_id, principal=None, action=method,
@@ -434,6 +582,10 @@ class ProductionBoundaryMiddleware:
 
         if principal:
             scope["state"]["principal"] = principal
+            if _is_production() and principal.role != "service" and not principal.organization_id:
+                telemetry.increment("authentication_failure", "missing_tenant")
+                await self._json(send, 401, {"detail": "Tenant-bound identity required"}, request_id)
+                return
             required = _required_level(path, method)
             if ROLE_LEVELS.get(principal.role, -1) < required:
                 telemetry.increment("authorization_failure", principal.role)
@@ -454,11 +606,45 @@ class ProductionBoundaryMiddleware:
                 ]
                 scope["headers"].append((b"x-ambrosia-role", principal.role.encode("ascii")))
 
+            if principal.auth_method == "session" and method in WRITE_METHODS:
+                csrf_token = request.headers.get("x-csrf-token")
+                csrf_cookie = request.cookies.get(CSRF_COOKIE)
+                if (
+                    not csrf_token
+                    or not csrf_cookie
+                    or not hmac.compare_digest(csrf_token, csrf_cookie)
+                    or not get_identity_service().validate_csrf(principal, csrf_token)
+                ):
+                    telemetry.increment("authorization_failure", "csrf")
+                    await self._json(send, 403, {"detail": "Valid CSRF token required"}, request_id)
+                    return
+
         identity = principal.subject if principal else (scope.get("client") or ("unknown",))[0]
-        rate = int(os.getenv("RATE_LIMIT_PER_MINUTE", "300"))
-        enforce_rate_limit = _is_production() or _truthy("ENABLE_RATE_LIMITING")
+        rate = int(
+            os.getenv("AUTH_RATE_LIMIT_PER_MINUTE", "10")
+            if path.startswith("/auth/")
+            else os.getenv("RATE_LIMIT_PER_MINUTE", "300")
+        )
+        # Health endpoints must remain observable when Redis itself is the
+        # failing dependency; /ready reports that degraded state explicitly.
+        enforce_rate_limit = (
+            (_is_production() or _truthy("ENABLE_RATE_LIMITING"))
+            and path not in {"/health", "/live", "/ready"}
+        )
         if enforce_rate_limit:
-            allowed, remaining = rate_limiter.allow(str(identity), rate)
+            rate_scope = "auth" if path.startswith("/auth/") else "api"
+            try:
+                allowed, remaining = rate_limiter.allow(f"{rate_scope}:{identity}", rate)
+            except RateLimiterUnavailable:
+                telemetry.increment("request_rejected", "rate_limiter_unavailable")
+                await self._json(
+                    send,
+                    503,
+                    {"detail": "Request protection temporarily unavailable"},
+                    request_id,
+                    extra_headers=[(b"retry-after", b"5")],
+                )
+                return
             if not allowed:
                 telemetry.increment("request_rejected", "rate_limit")
                 await self._json(send, 429, {"detail": "Rate limit exceeded"}, request_id,
@@ -488,9 +674,13 @@ class ProductionBoundaryMiddleware:
                 message["headers"] = headers
             await send(message)
 
+        tenant_token = set_organization_id(principal.organization_id if principal else None)
+        principal_token = _set_current_principal(principal)
         try:
             await self.app(scope, receive, secure_send)
         finally:
+            _reset_current_principal(principal_token)
+            reset_organization_id(tenant_token)
             elapsed_ms = (time.monotonic() - started) * 1000
             telemetry.record(method, path, status_code, elapsed_ms)
             if method in WRITE_METHODS or status_code >= 400:
@@ -517,6 +707,27 @@ class ProductionBoundaryMiddleware:
         await send({"type": "http.response.body", "body": body})
 
 
+class ApiPrefixMiddleware:
+    """Expose the API behind a same-origin /api CloudFront behavior.
+
+    Root paths remain available to internal probes and existing clients. Only
+    the exact /api segment is stripped; similar paths such as /apiary are not.
+    """
+
+    def __init__(self, app) -> None:
+        self.app = app
+
+    async def __call__(self, scope, receive, send) -> None:
+        if scope["type"] == "http":
+            path = scope.get("path", "")
+            if path == "/api" or path.startswith("/api/"):
+                normalized = path[4:] or "/"
+                scope = dict(scope)
+                scope["path"] = normalized
+                scope["raw_path"] = normalized.encode("utf-8")
+        await self.app(scope, receive, send)
+
+
 @router.get("/live")
 def liveness() -> dict:
     return {"status": "alive", "service": "ambrosia-api", "timestamp": _utc_now()}
@@ -533,8 +744,34 @@ def readiness() -> Response:
         except Exception as exc:  # readiness deliberately collapses secret details
             ready = False
             checks[name] = {"status": "failed", "reason": type(exc).__name__}
+    try:
+        rate_limiter.healthcheck()
+    except Exception as exc:
+        if _is_production():
+            ready = False
+        checks["distributedRateLimit"] = {
+            "status": "failed",
+            "reason": type(exc).__name__,
+        }
+    else:
+        checks["distributedRateLimit"] = {"status": "ok"}
     jwt_ready = len(os.getenv("AMBROSIA_JWT_HS256_SECRET", "").strip()) >= 32
-    if _is_production() and not (_configured_api_keys() or jwt_ready):
+    password_identity_ready = False
+    try:
+        get_identity_service().healthcheck()
+        password_identity_ready = True
+    except Exception as exc:
+        if _is_production():
+            ready = False
+        checks["accountIdentity"] = {
+            "status": "failed",
+            "reason": type(exc).__name__,
+        }
+    else:
+        checks["accountIdentity"] = {"status": "ok"}
+    if _is_production() and not (
+        _configured_api_keys() or jwt_ready or password_identity_ready
+    ):
         ready = False
         checks["identity"] = {"status": "failed", "reason": "identity_not_configured"}
     else:

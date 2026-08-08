@@ -20,7 +20,10 @@ def test_frontend_visibility_matrix_available_for_advanced_role() -> None:
 
 
 def test_frontend_visibility_matrix_requires_role() -> None:
-    response = client.get("/visibility/frontend-matrix")
+    response = client.get(
+        "/visibility/frontend-matrix",
+        headers={"X-Ambrosia-Role": "viewer"},
+    )
     assert response.status_code == 403
 
 

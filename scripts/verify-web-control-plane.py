@@ -65,13 +65,12 @@ def main() -> int:
         errors.append(f"Matrix missing UX terms: {', '.join(missing_ux_terms)}")
 
     baseline_tests = {
-        "dashboard": "dashboard is the default entry point" in spec,
+        "publicPrivateEntry": "public landing and private decision home are distinct" in spec,
         "reviewCreation": "new review creates an archive record" in spec,
         "workbench": "review route uses focused decision workbench" in spec,
         "history": "history" in spec and "Open" in spec,
         "markets": "markets route renders ticker-bound charting workspace" in spec,
-        "commandPalette": "command palette opens" in spec,
-        "index89Routes": "index89 routes are accessible from sidebar navigation" in spec,
+        "sellableNavigation": "signed-in navigation is limited to the six sellable-product areas" in spec,
         "darkMode": "dark mode is the default visual mode" in spec,
     }
     for name, present in baseline_tests.items():

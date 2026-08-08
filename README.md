@@ -1,341 +1,163 @@
 # Ambrosia
 
-## Project Overview
+Ambrosia is a governed investment-decision workspace. It helps an investment
+team challenge a thesis, preserve evidence and disagreement, apply deterministic
+risk gates, record a human decision, and learn from the outcome. Models advise;
+they never hold decision authority or mutate a live brokerage account.
 
-Ambrosia is an agentic investment decision platform. It turns a signal, alert, watchlist move, market question, or trade thesis into a structured, auditable, risk-aware review before capital is put at risk.
+## The first product journey
 
-The product is organized around three connected surfaces:
+1. A visitor understands the product promise on the public landing page.
+2. The user creates an email/password account and private organization.
+3. Email verification opens a tenant-bound workspace and dated guided sample.
+4. The user chooses the guided case or enters a thesis.
+5. Ambrosia builds an adversarial decision packet with provenance, uncertainty,
+   strongest disagreement, missing evidence, and risk/policy gates.
+6. The user records the decision and can later attach the observed outcome.
+7. Organization administrators can inspect minimized activation evidence,
+   sessions, team members, governed artifacts, and catalogued local-model runs.
 
-- Decisions: agentic review workflows for pre-trade investment decisions.
-- Swarm Private: private specialist-agent collaboration for portfolio, risk, market, and thesis analysis.
-- Enterprise Agentic Swarm Marketplace: governed workflows, admin controls, visibility checks, and deployable enterprise modules.
+The signed-in production navigation intentionally exposes only the sellable
+decision loop. Research labs remain available in development or behind
+`NEXT_PUBLIC_ENABLE_LABS=true`.
 
-## Features
+## Implemented repository scope
 
-Implemented features include:
+- Next.js public, authentication, onboarding, decision, team, company-proof,
+  privacy, terms, and administration surfaces.
+- Database-backed signup, Argon2id password hashing, email verification, login,
+  reset, invitations, session rotation/revocation, CSRF protection, and audit
+  events.
+- Server-derived organization context and PostgreSQL row-level security for
+  tenant-owned product, analytics, model, and artifact records.
+- Adversarial review, packet, provenance, deterministic risk, outcome, report,
+  signal, and decision-memory workflows.
+- Privacy-minimized activation telemetry with a fixed taxonomy and idempotency.
+- KMS-encrypted S3 artifact persistence in production, content hashes, a durable
+  database catalogue, and short-lived tenant-scoped download URLs.
+- An outbound-only local Ollama worker protocol with revocable credentials,
+  strict structured output, model/prompt/evidence metadata, human review, and a
+  frozen evaluation suite. Ollama output is advisory.
+- AWS Terraform for CloudFront, WAF, ALB, private ECS/Fargate services, RDS
+  PostgreSQL, TLS Redis, S3/KMS, SES/DKIM/SPF/DMARC, Secrets Manager,
+  autoscaling, logs, alarms, and protected migration tasks.
+- An AWS release workflow that builds once, scans before push, emits SBOMs,
+  signs image digests, deploys immutable digests, and separates migration from
+  runtime credentials.
+- Render-to-AWS inventory, rehearsal, validation, cutover, rollback, and
+  evidence procedures.
 
-- Adversarial review workflow for investment theses, alerts, scanner candidates, and watchlist ideas.
-- Human-controlled decision capture with auditable review, packet, outcome, and signal memory.
-- Market Scanner, Alpha Lab, and signal lifecycle workflows for moving from candidate thesis to measurable alpha.
-- Signal Decision Proposal with finance-native actions, signal writeback, execution readiness, and evidence requirements.
-- Signals cockpit with formulas, universes, horizons, benchmarks, validation state, risk posture, review links, and next actions.
-- Next.js frontend surfaces for dashboard, review workbench, intake, discovery, scanner, alpha, signals, history, calibration, team, reports, governance, admin, relay benchmarks, platform, enterprise, execution intelligence, and CLI design.
-- FastAPI backend routes for reviews, packets, market data, scanner runs, sentiment, retrieval, risk, reports, coordinator runs, signals, backtests, paper trades, execution intelligence, enterprise governance, and readiness evidence.
-- Deterministic local fallback behavior when hosted services or market providers are unavailable.
-- Provider abstraction for deterministic local execution, Ollama, hosted models, and hybrid specialist-agent workflows.
-- PostgreSQL-ready persistence scaffolding for packet, audit, memory, signal lifecycle, and feedback data.
-- Rust hot-path service boundary for deterministic pre-trade checks, order validity, notional limits, and kill-switch behavior.
-- Python SDK and Typer CLI for local and hosted operator workflows.
-- Unit, stack, API, E2E, visibility, evaluation, migration, scorecard, and deployment-readiness checks.
-
-## Current State
-
-Ambrosia is a working monorepo with a Next.js frontend, a FastAPI backend, a Rust hot-path service boundary, a Python CLI/SDK layer, local full-stack scripts, CI validation, and Render deployment wiring.
-
-The current product loop is no longer just review generation. The repository now supports a finance-native decision path:
-
-1. Scanner, Alpha Lab, Signals, or review intake creates a candidate thesis.
-2. The candidate can become a measurable alpha hypothesis and signal.
-3. Adversarial Review evaluates the thesis, records evidence, and captures a human decision.
-4. Signal Decision Proposal translates the review into a finance action.
-5. The signal records `BUY`, `SELL`, `HOLD`, `HEDGE`, `RISK_ADJUST`, `BLOCK`, or `RETIRE` plus execution readiness.
-6. Signals, outcomes, scorecards, execution intelligence, and history carry the decision forward.
-
-The Index84 closure chain remains wired in repository scope:
-
-- Roadmap completion evidence gate.
-- Literal feature coverage gate.
-- Hot-path design/readiness gate.
-- Phase 7 hot-path governance go/no-go gate.
-- Index86 closure gate.
-
-Current July 2026 implementation developments:
-
-- Index97 seeded signal lifecycle inventory exists for demo and validation flows.
-- A dedicated Signals cockpit at `/signals` shows formulas, universes, horizons, benchmarks, validation state, risk posture, stack links, review links, latest signal action, execution readiness, and next action.
-- Review workbench now includes Signal Decision Proposal, an explicit final handoff that writes adversarial review decisions back into signal memory.
-- Signal Decision Proposal can create a linked alpha hypothesis and signal when a review has no valid signal link, then write the selected finance action.
-- Backend signal decision writeback accepts finance-native actions, records execution readiness, enforces evidence/verifier/date requirements for promotion-style decisions, and persists lifecycle snapshots.
-- Market Scanner supports natural alpha formation with `Promote to Alpha`, candidate lifecycle controls, and promotion records.
-- `POST /scanner/candidates/promote-alpha` creates hypothesis + signal + link in one call.
-- `GET /scanner/candidates/promotions` exposes scanner promotion lifecycle visibility.
-- Review intake supports an optional `Create Alpha from Review` path for intentional thesis-origin alpha creation.
-- CLI and SDK packages cover hosted/local status, review, packet, market, relay, signal, backtest, paper-trade, and enterprise operations.
-
-The frontend includes:
-
-- Dashboard and review workbench
-- New Review flow with review creation and re-access paths
-- Review detail pages at `/review/[id]`
-- Discovery / market intelligence surface
-- Market Scanner lifecycle actions including `Promote to Alpha`, `Create Review`, and validation queueing
-- Alpha Lab origin visibility for scanner-promoted objects (origin, source ticker/signal, promotion metadata)
-- Signals cockpit at `/signals`
-- Signal Decision Proposal in the review workbench, including editable finance actions and signal writeback confirmation
-- History, calibration, team, reports, governance, admin, and advanced operations pages
-- Relay Benchmarks, Platform, Enterprise, Execution Intelligence, and CLI Design pages
-- Global navigation with the Operating Model panel visible beneath the Admin pressable banner
-- API-first behavior with deterministic local fallback when services are unavailable
-- Visible paragraphs describing Agentic AI for Investments, Investment Trading Decisions, Swarm Intelligence, and Agentic Swarm
-
-The backend includes:
-
-- Review creation, retrieval, and packet workflow routes
-- Market data, scanner, sentiment, retrieval, risk, report, and coordinator modules
-- Provider abstraction for deterministic, Ollama, hosted, and hybrid specialist runs
-- Stateful sandbox routes for advanced operating functions such as orders, positions, attribution, alerts, admin audit, and guardrail policy updates
-- PostgreSQL-ready schema and migration scaffolding for durable packet, audit, and memory storage
-- Index84 platform routes for relay, feature store MVP, signals, backtests, paper trades, execution intelligence, enterprise governance, and readiness/evidence flows
-- Extended alpha and execution intelligence surfaces including alpha hypothesis, alpha decay analytics, warm-path event processing, and enterprise security packet endpoints
-- Scanner-to-alpha promotion routes with durable lifecycle snapshots and promotion record persistence
-- Expanded signal writeback and lifecycle endpoints for validation, policy transitions, review links, decision writeback, outcome writeback, and outcome rollups
-- Index97 signal/review seed routes for lifecycle demonstrations and regression checks
-- CLI/SDK-facing contracts for hosted and local operations
-
-The hot-path service includes:
-
-- Separate Rust service boundary at `services/hotpath-rs/`
-- Deterministic pre-trade checks for order validity and notional limits
-- Kill-switch command path for immediate local reject behavior
-- Explicit no-LLM-in-live-order-loop boundary
-
-## Product Thesis
-
-Ambrosia is Agentic AI for Investments because it decomposes an investment question into coordinated specialist tasks, generates review packets, records evidence, exposes uncertainty, and keeps the human decision maker in control.
-
-Ambrosia supports Investment Trading Decisions by converting thesis intake into a repeatable path: market context, specialist critique, risk evaluation, confidence synthesis, decision memory, and follow-up reporting.
-
-Ambrosia is Swarm Intelligence because specialist outputs are routed through a coordinator instead of being shown as isolated summaries. The system compares perspectives, preserves disagreement, and produces a more disciplined final packet.
-
-Ambrosia is an Agentic Swarm because the workflow is not a static dashboard. Agents can be assigned roles, called through provider modes, evaluated through gates, and surfaced through UI modules that map to operating decisions.
+Infrastructure code is not evidence that AWS is deployed. Repository code is
+not evidence of model quality, legal approval, security certification, customer
+traction, or investment performance. The machine-readable readiness result
+stays `NO_GO` until the external gates have approved evidence.
 
 ## Architecture
 
-- Monorepo root with pnpm workspaces
-- Next.js 15.1.0 frontend with React 19
-- FastAPI backend with Python 3.12
-- Rust hot-path execution service scaffold for deterministic low-latency order gating
-- SQLAlchemy and PostgreSQL-oriented schema patterns
-- Provider modes for deterministic local execution, Ollama, hosted models, and hybrid operation
-- Python SDK and Typer-based CLI for operator workflows and automation
-- Playwright, pytest, Ruff, visibility checks, eval scripts, and stack contract tests
-- Render deployment entrypoints through root `index.js` and `render.yaml`
-
-## Technologies Used
-
-- Frontend: Next.js 15.1.0, React 19, TypeScript, Playwright, and pnpm workspaces.
-- Backend: Python 3.12, FastAPI, Pydantic, pytest, Ruff, and uv.
-- Persistence and infrastructure: PostgreSQL-oriented schema patterns, SQLAlchemy-ready migrations, and Render deployment wiring.
-- Execution hot path: Rust service scaffold for deterministic pre-trade gating and kill-switch behavior.
-- CLI and SDK: Python SDK package and Typer-based Ambrosia CLI.
-- AI/provider layer: deterministic local engine, Ollama mode, hosted model mode, and hybrid provider resolution.
-- Quality and validation: unit tests, stack contract tests, API tests, Playwright E2E tests, visibility checks, eval scripts, retrieval benchmarks, provider ablation checks, scorecard checks, and migration checks.
-
-## Repository Layout
-
-The root is intentionally kept small. Configuration and entrypoint files stay at the top level; operational notes, archives, helper scripts, and logs live in focused subfolders.
-
-- `apps/web/` - Next.js frontend
-- `services/api/` - FastAPI backend
-- `services/hotpath-rs/` - Rust deterministic hot-path service (kill switch + pre-trade risk checks)
-- `packages/cli/` - Ambrosia CLI package and command contracts
-- `packages/sdk-python/` - Python SDK package
-- `packages/evals/` - evaluation and ablation runners
-- `packages/schemas/` - shared schema contracts
-- `scripts/` - deployment, validation, local stack, and automation scripts
-- `scripts/dev/` - lower-level development helper scripts moved out of the root
-- `docs/` - implementation notes, deployment notes, roadmap documents, and verification records
-- `docs/session-archives/` - historical index artifacts, including `index69.txt`
-- `infra/` - database schema and migration scaffolding
-- `tests/` - stack and integration tests
-- `artifacts/` - ignored local logs and generated artifacts
-
-## Installation Instructions
-
-Requirements:
-
-- Node.js 20+
-- pnpm 9.x
-- Python 3.12
-- uv
-
-Install dependencies:
-
-```powershell
-pnpm install
+```text
+Browser -> CloudFront/WAF -> /api/* -> ALB -> private FastAPI ECS tasks
+                         -> /*      -> ALB -> private Next.js ECS tasks
+FastAPI -> RDS PostgreSQL (tenant RLS)
+        -> TLS Redis (distributed rate limits/coordination)
+        -> S3 + KMS (governed artifacts)
+        -> SES (verification, recovery, invitations)
+Local worker -> outbound TLS -> Ambrosia job API -> loopback Ollama
 ```
 
-## Usage
+The deterministic Rust hot-path boundary remains separate from advisory model
+processing. No LLM belongs in a live order-validity or kill-switch loop.
 
-Run the full local stack:
+## Repository layout
+
+- `apps/web/` — Next.js product
+- `services/api/` — FastAPI service and tests
+- `services/hotpath-rs/` — deterministic Rust safety boundary
+- `packages/local-worker/` — outbound local Ollama worker
+- `packages/evals/` — model and workflow evaluation protocols
+- `packages/cli/`, `packages/sdk-python/` — operator interfaces
+- `infra/aws/` — AWS infrastructure as code
+- `infra/db/` — schema and ordered migrations
+- `scripts/` — migration, validation, evidence, and local-stack automation
+- `docs/operations/` — current operational and release authority
+- `docs/session-archives/` — historical planning material, not current proof
+
+Older percent-complete documents and historical deployment notes are not
+release evidence. Current claims are governed by
+`docs/operations/RELEASE_CLAIMS_REGISTER.md` and
+`docs/operations/INDEX132_IMPLEMENTATION_LEDGER.md`.
+
+## Local development
+
+Requirements: Node.js 20+, pnpm 9.12, Python 3.12, and uv.
 
 ```powershell
+pnpm install --frozen-lockfile
 pnpm local:serve
 ```
 
-Useful local commands:
+The web and API can also be started independently:
 
-- `pnpm local:start` launches the stack in detached mode
-- `pnpm local:stop` stops the local stack
-- `pnpm local:status` checks whether web and API are responding
-- `pnpm local:logs` tails local stack logs from `.local/`
-- `pnpm local:web:serve` runs only the web app
-- `pnpm local:api:serve` runs only the API
+```powershell
+pnpm local:web:serve
+pnpm local:api:serve
+```
 
-Primary user flow:
-
-1. Open the web app and start from review intake, scanner, alpha lab, or signals.
-2. Create or promote a candidate thesis.
-3. Run adversarial review to inspect evidence, critique, validation hygiene, and tradeability.
-4. Capture a human decision such as pursue, watch, reject, or needs more data.
-5. Use Signal Decision Proposal to write the decision back to signal memory when a linked signal exists or is created.
-6. Monitor outcomes, scorecards, signal lifecycle state, execution readiness, and follow-up actions.
+Development may use an in-memory identity/persistence adapter and deterministic
+fallback data. Staging and production fail closed when PostgreSQL, Redis,
+artifact storage, or required secrets are unavailable.
 
 ## Verification
 
-Common checks from the repository root:
+Primary repository gates:
 
 ```powershell
-pnpm build:web
 pnpm lint:web
+pnpm build:web
 pnpm test:e2e
-pnpm test:api
 pnpm lint:api
-pnpm visibility:check
-pnpm evals
-pnpm evals:ablation
-pnpm evals:retrieval
-pnpm evals:scanner
-pnpm db:migrations:check
-pnpm scorecard:check
-pnpm m1:readiness
-pnpm test:stack
-pnpm signals:index97:check
-pnpm docs:consistency:check
+pnpm test:api
+pnpm test:unit
+python scripts/verify-migrations.py
+python scripts/verify-index119-readiness.py
+python packages/evals/run_ollama_disconfirmation_eval.py
+python scripts/generate-index132-readiness.py
 ```
 
-Index84 and closure checks:
+Terraform validation:
 
 ```powershell
-pnpm roadmap:completion:check
-pnpm index84:literal:check
-pnpm hotpath:design:check
-python scripts/verify-index86-closure.py
+terraform -chdir=infra/aws fmt -check -recursive
+terraform -chdir=infra/aws init -backend=false
+terraform -chdir=infra/aws validate
 ```
 
-Synthetic monitoring:
+PostgreSQL integration tests require `RUNTIME_DATABASE_URL`. Migration
+comparison requires read-only `RENDER_DATABASE_URL` and `AWS_DATABASE_URL`.
+No credential values belong in logs or evidence JSON.
+
+## AWS migration and release
+
+Follow `docs/operations/AWS_MIGRATION_RUNBOOK.md`. The sequence is inventory,
+AWS staging, two isolated data rehearsals, restore and rollback rehearsals,
+approved production cutover, and a minimum 72-hour bake. Render remains a
+deploy-frozen recovery target until the bake and formal go decision complete.
+
+The current external-evidence template is
+`docs/operations/index132-external-evidence.template.json`. Run:
 
 ```powershell
-python scripts/synthetic-monitor.py --base-url https://ambrosia-api-69t6.onrender.com
+python scripts/generate-index132-readiness.py `
+  --external-evidence <approved-evidence.json> `
+  --require-release-ready
 ```
 
-Recent verification status:
+The command must fail until every external gate is passed and linked to real
+evidence. That failure is a safety property, not missing repository work.
 
-- Web build and lint were brought back to green locally.
-- API test suite was brought to green locally.
-- Scanner promotion endpoint and promotion listing tests are passing locally.
-- Signal decision writeback API coverage verifies `decisionAction` and `executionReadiness` updates.
-- Playwright workbench coverage verifies Signal Decision Proposal visibility, stale-link recovery, and sanitized signal creation.
-- Signals cockpit coverage verifies stack links, risk posture, and next-action visibility.
-- Visibility and provider workflow gates are green in GitHub Actions.
-- The production web surface is live at `https://ambrosia-5aec.onrender.com/`.
-- The split production web/API stack is live at `https://ambrosia-web-c3ax.onrender.com/` and `https://ambrosia-api-69t6.onrender.com/health`.
-- The existing production web URL is also configured with `NEXT_PUBLIC_API_URL=https://ambrosia-api-69t6.onrender.com`.
+## Claims boundary
 
-## Render
-
-Current Render settings:
-
-- Repo: `https://github.com/k0jir0/Ambrosia`
-- Branch: `main`
-- Root Directory: `.`
-- Build Command: `pnpm build`
-- Start Command: `node index.js`
-
-Live product:
-
-- Existing web: `https://ambrosia-5aec.onrender.com/`
-- Split-stack web: `https://ambrosia-web-c3ax.onrender.com/`
-- API health target: `https://ambrosia-api-69t6.onrender.com/health`
-- Staging web: `https://ambrosia-web-staging.onrender.com/`
-- Staging API service is configured with required database mode enabled.
-
-GitHub production deploy wiring exists, but Render deploy hook secrets must be populated for automated hook-triggered deployment. When the hook variables are empty, the GitHub deploy workflow can pass while skipping the Render trigger steps.
-
-## Selective Integration Governance
-
-Ambrosia now includes the hardened selective-integration lifecycle described in `docs/SELECTIVE_INTEGRATION_IMPLEMENTATION.md`. It adds typed packet provenance, non-skippable disconfirmation and deterministic risk stages, guarded human packet decisions, version invalidation, durable outcome memory, and a chain-head-anchored audit ledger. Run `python scripts/verify-selective-integration.py` for the deterministic readiness gate.
-
-Production rollout is controlled by `SELECTIVE_INTEGRATION_ENABLED` and `SELECTIVE_INTEGRATION_ENFORCED`. Apply database migration `v0007` and complete staging certification before enabling enforcement.
-
-## Future Improvements
-
-Areas for potential enhancement and additional features:
-
-1. Continuously verify production and staging API health on Render, including cold-start behavior.
-2. Move remaining advanced sandbox and lifecycle fallback state into durable PostgreSQL-backed storage.
-3. Expand review and signal lifecycle persistence across accounts, teams, historical search, and outcome cohorts.
-4. Tighten the Signal Decision Proposal path with richer risk-budget, liquidity, cost, approval, and outcome requirements.
-5. Connect more frontend operating panels directly to live advanced backend endpoints.
-6. Expand provider ablations, evaluation reporting, regression gates, and benchmark provenance.
-7. Harden enterprise governance, marketplace packaging, service-account lifecycle, SSO, and permission boundaries.
-8. Add broker-sandbox workflows, advanced attribution, mobile alerting, and portfolio-level action loops.
-
-## Patch Notes
-
-### Signal Decision Loop Upgrade (Current Baseline)
-
-This release closes the previously missing handoff between adversarial review and signal state.
-
-What shipped:
-
-- Signal Decision Proposal panel in the review workbench
-- Editable finance action vocabulary: `BUY`, `SELL`, `HOLD`, `HEDGE`, `RISK_ADJUST`, `BLOCK`, `RETIRE`
-- Automatic alpha hypothesis and signal creation for review-derived decisions when no valid signal link exists
-- Stale signal-link retry path that creates a replacement signal before writeback
-- Signal decision writeback to `/signals/{signal_id}/writeback-decision`
-- Execution readiness writeback (`not_executable`, `paper_trade_ready`, `execution_candidate`, `execution_blocked`)
-- Evidence, verifier, review-date, decision-quality, and outcome-writeback fields in the backend contract
-- Signals cockpit rendering for latest action, execution readiness, linked reviews, validation state, and next action
-- Playwright coverage for proposal visibility, stale-link recovery, and sanitized generated signal fields
-- API coverage for decision action and execution readiness persistence
-
-Current constraints:
-
-- Signal memory can persist through PostgreSQL when `DATABASE_URL` is configured; otherwise it uses the local lifecycle snapshot artifact.
-- Advanced execution remains sandboxed and gated; Signal Decision Proposal records state and does not execute trades.
-- Production deploy automation still depends on Render hook secrets being populated in GitHub.
-
-### Index84 Upgrade (Current Baseline)
-
-This release consolidates the Index84 roadmap into executable code and evidence gates.
-
-What shipped:
-
-- Route/OpenAPI contract hardening and exposure-filtered artifacts
-- SDK/CLI expansion with enterprise and execution operations
-- Feature store MVP, signal workflows, and structured backtest path
-- Relay and benchmark chain with FinanceBench, FinQA, and TAT-QA fixtures
-- Open FinLLM routing map artifact generation and validation
-- Decision-memory attribution and alpha-decay evidence fixtures
-- Enterprise lifecycle controls (service account create/rotate/revoke), SSO configuration, audit export, offline bundle manifest, and support/security packet
-- Release provenance and packaging evidence (checksums, release evidence, rollout packet)
-- Frontend control-plane matrix and frontend quality evidence generation
-- Rust hot-path service boundary scaffold with deterministic order gating and kill switch
-
-Key verification artifacts:
-
-- `artifacts/index84-completion.json`
-- `artifacts/index84-literal-completion.json`
-- `artifacts/hotpath-readiness.json`
-- `artifacts/hotpath-phase7-governance.json`
-- `artifacts/rollout-evidence-packet.json`
-- `artifacts/enterprise-execution-readiness.json`
-
-## Repository
-
-Private repository: `https://github.com/k0jir0/Ambrosia`
-
-Application: `https://ambrosia-5aec.onrender.com/`
-
-Production API: `https://ambrosia-api-69t6.onrender.com/`
+Do not claim returns, alpha, enterprise-grade security, compliance, model
+improvement, AWS production hosting, paid customers, retention, or revenue
+without the scoped evidence and approvals named in the release claims register.
+Guided data is a dated illustrative sample, not live market data or a customer
+result.

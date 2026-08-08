@@ -28,15 +28,38 @@ OPENAPI_EXPOSURES = {
     "internal": {"public", "advanced", "team", "admin", "internal-only"},
 }
 MUTATING_METHODS = {"POST", "PATCH", "PUT", "DELETE"}
+PUBLIC_BOOTSTRAP_PATHS = {
+    "/",
+    "/health",
+    "/live",
+    "/ready",
+    "/auth/signup",
+    "/auth/login",
+    "/auth/verify-email",
+    "/auth/resend-verification",
+    "/auth/accept-invite",
+    "/auth/forgot-password",
+    "/auth/reset-password",
+}
 
 
 def classify_path(path: str) -> str:
     if path.startswith("/webhooks/"):
         return "internal-only"
+    if path.startswith("/local-worker/"):
+        return "internal-only"
+    if path in PUBLIC_BOOTSTRAP_PATHS:
+        return "public"
     if path.startswith("/admin/"):
         return "admin"
+    if path == "/analytics/activation" or path.startswith("/llm/workers"):
+        return "admin"
+    if path.startswith(("/analytics/", "/artifacts", "/llm/")):
+        return "team"
     if path.startswith("/governance/") or path.startswith("/ci-cd/"):
         return "admin"
+    if path.startswith(("/auth/", "/team")):
+        return "team"
     if path.startswith("/workspaces") or path.endswith("/comments") or path.endswith("/approval"):
         return "team"
     if path.startswith("/alerts/") or path.startswith("/workflow") or path.startswith("/workflows/"):
@@ -51,7 +74,11 @@ def classify_path(path: str) -> str:
         return "advanced"
     if path in {"/health/detailed", "/metrics", "/scorecard", "/market/providers/status"}:
         return "advanced"
-    return "public"
+    # The production request boundary authenticates every route that is not in
+    # the exact bootstrap allowlist above. Keep generated OpenAPI exposure in
+    # sync: product routes are tenant-scoped, never anonymously public merely
+    # because they do not belong to an advanced module.
+    return "team"
 
 
 def frontend_route_for(path: str, exposure: str) -> str:

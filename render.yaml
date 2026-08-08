@@ -109,10 +109,6 @@ services:
         value: "true"
       - key: ALLOW_INSECURE_DEV_IDENTITY
         value: "false"
-      - key: ALLOW_STAGING_WEB_IDENTITY
-        value: "true"
-      - key: STAGING_WEB_ORIGIN
-        value: https://ambrosia-web-staging.onrender.com
       - key: AMBROSIA_API_KEYS_JSON
         sync: false
       - key: AMBROSIA_JWT_HS256_SECRET

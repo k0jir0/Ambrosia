@@ -431,3 +431,7 @@ CREATE INDEX IF NOT EXISTS idx_durable_job_lease ON durable_job(lease_expires_at
 CREATE INDEX IF NOT EXISTS idx_security_audit_actor_time ON security_audit_event(actor_id, event_time DESC);
 CREATE INDEX IF NOT EXISTS idx_security_audit_request ON security_audit_event(request_id);
 CREATE INDEX IF NOT EXISTS idx_execution_replay_expiry ON execution_replay_guard(expires_at);
+
+-- Keep fresh local/bootstrap databases aligned with the latest additive schema.
+-- Existing databases apply this file through the migration runner instead.
+\ir migrations/V0008__identity_tenancy_and_llm_catalog.sql

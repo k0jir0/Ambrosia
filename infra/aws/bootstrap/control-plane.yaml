@@ -1,0 +1,326 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  One-time Ambrosia staging control plane: encrypted Terraform state, GitHub
+  OIDC deployment role, regional ALB certificate, and monthly cost budget.
+
+Parameters:
+  StateBucketName:
+    Type: String
+    AllowedPattern: "^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$"
+    Description: Globally unique S3 bucket name for protected Terraform state.
+  DomainName:
+    Type: String
+    AllowedPattern: "^[a-z0-9][a-z0-9.-]+[a-z0-9]$"
+    Description: Route53-managed apex domain.
+  HostedZoneId:
+    Type: AWS::Route53::HostedZone::Id
+  BudgetEmail:
+    Type: String
+    AllowedPattern: "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$"
+  MonthlyBudgetUsd:
+    Type: Number
+    MinValue: 1
+    Description: Approved maximum monthly staging spend in USD.
+  Owner:
+    Type: String
+    MinLength: 2
+  CostCenter:
+    Type: String
+    MinLength: 2
+  DataClassification:
+    Type: String
+    Default: synthetic
+    AllowedValues: [synthetic, approved-staging]
+
+Resources:
+  StateKey:
+    Type: AWS::KMS::Key
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      Description: Ambrosia staging Terraform state encryption
+      EnableKeyRotation: true
+      PendingWindowInDays: 30
+      KeyPolicy:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: EnableAccountIAMPolicies
+            Effect: Allow
+            Principal:
+              AWS: !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:root
+            Action: kms:*
+            Resource: "*"
+      Tags:
+        - { Key: Project, Value: ambrosia }
+        - { Key: Environment, Value: staging }
+        - { Key: ManagedBy, Value: cloudformation }
+        - { Key: Roadmap, Value: index133 }
+        - { Key: Owner, Value: !Ref Owner }
+        - { Key: CostCenter, Value: !Ref CostCenter }
+        - { Key: DataClassification, Value: !Ref DataClassification }
+
+  StateKeyAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: alias/ambrosia-staging-terraform-state
+      TargetKeyId: !Ref StateKey
+
+  StateBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: !Ref StateBucketName
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - BucketKeyEnabled: true
+            ServerSideEncryptionByDefault:
+              KMSMasterKeyID: !GetAtt StateKey.Arn
+              SSEAlgorithm: aws:kms
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireReleasePlans
+            Prefix: ambrosia/staging/plans/
+            Status: Enabled
+            ExpirationInDays: 7
+            NoncurrentVersionExpiration:
+              NoncurrentDays: 7
+          - Id: AbortIncompleteUploads
+            Status: Enabled
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 1
+      Tags:
+        - { Key: Project, Value: ambrosia }
+        - { Key: Environment, Value: staging }
+        - { Key: ManagedBy, Value: cloudformation }
+        - { Key: Roadmap, Value: index133 }
+        - { Key: Owner, Value: !Ref Owner }
+        - { Key: CostCenter, Value: !Ref CostCenter }
+        - { Key: DataClassification, Value: !Ref DataClassification }
+
+  StateBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref StateBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: "*"
+            Action: s3:*
+            Resource:
+              - !GetAtt StateBucket.Arn
+              - !Sub ${StateBucket.Arn}/*
+            Condition:
+              Bool:
+                aws:SecureTransport: false
+
+  GitHubOidcProvider:
+    Type: AWS::IAM::OIDCProvider
+    Properties:
+      Url: https://token.actions.githubusercontent.com
+      ClientIdList: [sts.amazonaws.com]
+      Tags:
+        - { Key: Project, Value: ambrosia }
+        - { Key: Environment, Value: staging }
+        - { Key: ManagedBy, Value: cloudformation }
+        - { Key: Owner, Value: !Ref Owner }
+        - { Key: CostCenter, Value: !Ref CostCenter }
+
+  GitHubDeployRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: AmbrosiaGitHubStagingDeploy
+      MaxSessionDuration: 7200
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !Ref GitHubOidcProvider
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+                token.actions.githubusercontent.com:sub: repo:k0jir0/Ambrosia:environment:staging
+      Policies:
+        - PolicyName: AmbrosiaStagingTerraformAndRelease
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: TerraformStateBucket
+                Effect: Allow
+                Action: [s3:GetBucketLocation, s3:GetBucketVersioning, s3:GetEncryptionConfiguration, s3:GetBucketPublicAccessBlock, s3:ListBucket]
+                Resource: !GetAtt StateBucket.Arn
+                Condition:
+                  StringLike:
+                    s3:prefix: [ambrosia/staging/*]
+              - Sid: TerraformStateObjects
+                Effect: Allow
+                Action: [s3:GetObject, s3:PutObject, s3:DeleteObject]
+                Resource:
+                  - !Sub ${StateBucket.Arn}/ambrosia/staging/terraform.tfstate
+                  - !Sub ${StateBucket.Arn}/ambrosia/staging/terraform.tfstate.tflock
+                  - !Sub ${StateBucket.Arn}/ambrosia/staging/plans/*
+              - Sid: TerraformStateKms
+                Effect: Allow
+                Action: [kms:Decrypt, kms:Encrypt, kms:GenerateDataKey, kms:DescribeKey]
+                Resource: !GetAtt StateKey.Arn
+              - Sid: Route53StagingZone
+                Effect: Allow
+                Action: [route53:GetHostedZone, route53:GetChange, route53:ListResourceRecordSets, route53:ChangeResourceRecordSets]
+                Resource:
+                  - !Sub arn:${AWS::Partition}:route53:::hostedzone/${HostedZoneId}
+                  - !Sub arn:${AWS::Partition}:route53:::change/*
+              - Sid: CertificateAndBudgetRead
+                Effect: Allow
+                Action: [acm:DescribeCertificate, acm:ListCertificates, budgets:ViewBudget]
+                Resource: "*"
+              - Sid: AmbrosiaIamRoles
+                Effect: Allow
+                Action:
+                  - iam:CreateRole
+                  - iam:DeleteRole
+                  - iam:GetRole
+                  - iam:TagRole
+                  - iam:UntagRole
+                  - iam:UpdateAssumeRolePolicy
+                  - iam:PutRolePolicy
+                  - iam:GetRolePolicy
+                  - iam:DeleteRolePolicy
+                  - iam:AttachRolePolicy
+                  - iam:DetachRolePolicy
+                  - iam:ListRolePolicies
+                  - iam:ListAttachedRolePolicies
+                  - iam:PassRole
+                Resource: !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:role/ambrosia-staging-*
+              - Sid: AmbrosiaApplicationInfrastructure
+                Effect: Allow
+                Action:
+                  - application-autoscaling:*
+                  - cloudfront:*
+                  - cloudwatch:*
+                  - ec2:*
+                  - ecr:*
+                  - ecs:*
+                  - elasticache:*
+                  - elasticloadbalancing:*
+                  - kms:CreateAlias
+                  - kms:CreateKey
+                  - kms:DescribeKey
+                  - kms:DisableKey
+                  - kms:EnableKeyRotation
+                  - kms:GetKeyPolicy
+                  - kms:GetKeyRotationStatus
+                  - kms:ListAliases
+                  - kms:ListResourceTags
+                  - kms:PutKeyPolicy
+                  - kms:ScheduleKeyDeletion
+                  - kms:TagResource
+                  - kms:UntagResource
+                  - logs:*
+                  - rds:*
+                  - secretsmanager:*
+                  - ses:*
+                  - sns:*
+                  - wafv2:*
+                Resource: "*"
+              - Sid: AmbrosiaArtifactBuckets
+                Effect: Allow
+                Action: s3:*
+                Resource:
+                  - !Sub arn:${AWS::Partition}:s3:::ambrosia-staging-artifacts-*
+                  - !Sub arn:${AWS::Partition}:s3:::ambrosia-staging-artifacts-*/*
+      Tags:
+        - { Key: Project, Value: ambrosia }
+        - { Key: Environment, Value: staging }
+        - { Key: ManagedBy, Value: cloudformation }
+        - { Key: Roadmap, Value: index133 }
+        - { Key: Owner, Value: !Ref Owner }
+        - { Key: CostCenter, Value: !Ref CostCenter }
+        - { Key: DataClassification, Value: !Ref DataClassification }
+
+  RegionalCertificate:
+    Type: AWS::CertificateManager::Certificate
+    Properties:
+      DomainName: !Sub api-staging.${DomainName}
+      SubjectAlternativeNames:
+        - !Sub origin-staging.${DomainName}
+      ValidationMethod: DNS
+      DomainValidationOptions:
+        - DomainName: !Sub api-staging.${DomainName}
+          HostedZoneId: !Ref HostedZoneId
+        - DomainName: !Sub origin-staging.${DomainName}
+          HostedZoneId: !Ref HostedZoneId
+      Tags:
+        - { Key: Project, Value: ambrosia }
+        - { Key: Environment, Value: staging }
+        - { Key: ManagedBy, Value: cloudformation }
+        - { Key: Owner, Value: !Ref Owner }
+        - { Key: CostCenter, Value: !Ref CostCenter }
+
+  StagingBudget:
+    Type: AWS::Budgets::Budget
+    Properties:
+      Budget:
+        BudgetName: ambrosia-staging-monthly
+        BudgetLimit:
+          Amount: !Ref MonthlyBudgetUsd
+          Unit: USD
+        BudgetType: COST
+        CostFilters:
+          TagKeyValue:
+            - user:Environment$staging
+        TimeUnit: MONTHLY
+      NotificationsWithSubscribers:
+        - Notification:
+            ComparisonOperator: GREATER_THAN
+            NotificationType: ACTUAL
+            Threshold: 50
+            ThresholdType: PERCENTAGE
+          Subscribers:
+            - Address: !Ref BudgetEmail
+              SubscriptionType: EMAIL
+        - Notification:
+            ComparisonOperator: GREATER_THAN
+            NotificationType: ACTUAL
+            Threshold: 80
+            ThresholdType: PERCENTAGE
+          Subscribers:
+            - Address: !Ref BudgetEmail
+              SubscriptionType: EMAIL
+        - Notification:
+            ComparisonOperator: GREATER_THAN
+            NotificationType: FORECASTED
+            Threshold: 100
+            ThresholdType: PERCENTAGE
+          Subscribers:
+            - Address: !Ref BudgetEmail
+              SubscriptionType: EMAIL
+
+Outputs:
+  AwsAccountId:
+    Value: !Ref AWS::AccountId
+  AwsRegion:
+    Value: !Ref AWS::Region
+  StateBucketName:
+    Value: !Ref StateBucket
+  StateKmsKeyArn:
+    Value: !GetAtt StateKey.Arn
+  GitHubDeployRoleArn:
+    Value: !GetAtt GitHubDeployRole.Arn
+  AlbCertificateArn:
+    Value: !Ref RegionalCertificate
+  BudgetName:
+    Value: !Ref StagingBudget

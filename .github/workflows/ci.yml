@@ -1,11 +1,12 @@
 name: CI
 
-# Branch strategy:
-#   main     = production  → auto-deploys to Render production services
-#   staging  = staging     → auto-deploys to Render staging services
-#   feat/*   = feature dev → CI only, no Render deploy
-#   fix/*    = hotfix dev  → CI only, no Render deploy
-#   chore/*  = maintenance → CI only, no Render deploy
+# AWS releases are manual, environment-protected operations in aws-release.yml.
+# Legacy Render hooks below are disabled unless an operator explicitly enables
+# RENDER_ROLLBACK_DEPLOY_ENABLED during the time-bounded rollback window.
+
+# Branch strategy: all branches run CI only. AWS release is a protected manual
+# workflow. The two jobs at the bottom are time-bounded Render rollback hooks
+# and remain inert unless RENDER_ROLLBACK_DEPLOY_ENABLED is explicitly enabled.
 
 on:
   push:
@@ -34,15 +35,15 @@ jobs:
         working-directory: services/api
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v3
+        uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39 # v3
         with:
-          version: "latest"
+          version: "0.11.32"
 
       - name: Install dependencies
-        run: uv sync
+        run: uv sync --frozen
 
       - name: Run lint (ruff)
         run: uv run ruff check app tests
@@ -58,17 +59,17 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "20"
           cache: "pnpm"
 
       - name: Install dependencies
-        run: pnpm install
+        run: pnpm install --frozen-lockfile
 
       - name: Lint web
         run: pnpm lint:web
@@ -85,17 +86,17 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "20"
           cache: "pnpm"
 
       - name: Install dependencies
-        run: pnpm install
+        run: pnpm install --frozen-lockfile
 
       - name: Typecheck mobile
         run: pnpm typecheck:mobile
@@ -127,21 +128,20 @@ jobs:
     needs: [api-tests]
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v3
+        uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39 # v3
         with:
-          version: "latest"
+          version: "0.11.32"
 
       - name: Install root dependencies
-        run: uv sync --project services/api
+        run: uv sync --project services/api --frozen
 
       - name: Run stack contract tests
         run: |
           cd services/api
-          uv run pytest ../../tests/test_stack_contract.py --tb=short -q
-        continue-on-error: true
+          uv run --frozen pytest ../../tests/test_stack_contract.py --tb=short -q
 
   # -------------------------------------------------------------------------
   # Gate 4: Function registry + frontend visibility matrix
@@ -152,7 +152,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Verify function registry and visibility matrix
         run: python scripts/verify-visibility-matrix.py
@@ -166,7 +166,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Verify hot-path service design scaffold
         run: python scripts/verify-hotpath-design.py
@@ -187,15 +187,15 @@ jobs:
         working-directory: services/api
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v3
+        uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39 # v3
         with:
-          version: "latest"
+          version: "0.11.32"
 
       - name: Install dependencies
-        run: uv sync
+        run: uv sync --frozen
 
       - name: Generate Index84 route inventory artifact
         run: uv run python ../../scripts/generate-index84-route-inventory.py --write
@@ -210,7 +210,7 @@ jobs:
         run: uv run python ../../scripts/generate-index84-route-inventory.py --check-openapi
 
       - name: Upload Index84 route artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: index84-route-contract
           path: |
@@ -227,13 +227,13 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Verify SDK and CLI skeleton
         run: python scripts/verify-sdk-cli.py
 
       - name: Upload SDK/CLI transcript
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: index84-sdk-cli-transcript
           path: artifacts/sdk-cli-transcript.json
@@ -248,7 +248,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Run FinanceBench relay fixture
         run: python packages/evals/run_financebench_relay.py
@@ -278,7 +278,7 @@ jobs:
         run: python scripts/verify-enterprise-execution.py
 
       - name: Upload Index84 benchmark trace
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: index84-financebench-relay-trace
           path: |
@@ -300,7 +300,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Generate release evidence
         run: python scripts/generate-release-evidence.py
@@ -309,7 +309,7 @@ jobs:
         run: python scripts/verify-release-readiness.py
 
       - name: Upload release readiness artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: index85-release-readiness
           path: |
@@ -326,7 +326,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Verify docs consistency
         run: python scripts/verify-docs-consistency.py
@@ -340,7 +340,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Verify web control-plane matrix
         run: python scripts/verify-web-control-plane.py
@@ -349,14 +349,14 @@ jobs:
         run: python scripts/generate-frontend-quality-evidence.py
 
       - name: Upload web control-plane evidence
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: index84-web-control-plane-evidence
           path: artifacts/web-control-plane-evidence.json
           if-no-files-found: error
 
       - name: Upload frontend quality evidence
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: index86-frontend-quality-evidence
           path: artifacts/frontend-quality-evidence.json
@@ -372,17 +372,17 @@ jobs:
     needs: [index84-route-contract, index84-sdk-cli, index84-schemas-benchmark, index84-web-control-plane, index85-release-readiness, index85-docs-consistency, migration-check]
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v3
+        uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39 # v3
         with:
-          version: "latest"
+          version: "0.11.32"
 
       - name: Install API dependencies
         run: |
           cd services/api
-          uv sync
+          uv sync --frozen
 
       - name: Regenerate Index84 evidence artifacts
         run: |
@@ -417,7 +417,7 @@ jobs:
         run: python scripts/verify-index84-completion.py
 
       - name: Upload Index84 completion packet
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: index84-completion-packet
           path: |
@@ -439,21 +439,21 @@ jobs:
         working-directory: services/api
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v3
+        uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39 # v3
         with:
-          version: "latest"
+          version: "0.11.32"
 
       - name: Install dependencies
-        run: uv sync
+        run: uv sync --frozen
 
       - name: Generate provider ablation artifacts
         run: uv run python ../../packages/evals/run_provider_ablation.py
 
       - name: Upload provider ablation artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: provider-ablation-report
           path: artifacts/provider-ablation.*
@@ -472,21 +472,21 @@ jobs:
         working-directory: services/api
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v3
+        uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39 # v3
         with:
-          version: "latest"
+          version: "0.11.32"
 
       - name: Install dependencies
-        run: uv sync
+        run: uv sync --frozen
 
       - name: Generate retrieval benchmark artifacts
         run: uv run python ../../packages/evals/run_retrieval_benchmark.py
 
       - name: Upload retrieval benchmark artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: retrieval-benchmark-report
           path: artifacts/retrieval-benchmark.*
@@ -501,10 +501,45 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Verify migration/versioning contracts
         run: python scripts/verify-migrations.py
+
+  postgres-tenant-integration:
+    name: PostgreSQL migration and tenant isolation
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: ambrosia
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d ambrosia"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/ambrosia
+      RUNTIME_DATABASE_URL: postgresql://ambrosia_app:integration-runtime-password-2026@127.0.0.1:5432/ambrosia
+      RUNTIME_DATABASE_USER: ambrosia_app
+      RUNTIME_DATABASE_PASSWORD: integration-runtime-password-2026
+      AUTH_TOKEN_PEPPER: integration-test-pepper-value-32-characters
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39 # v3
+        with:
+          version: "0.11.32"
+      - name: Install locked API dependencies
+        run: uv sync --project services/api --frozen
+      - name: Bootstrap and migrate PostgreSQL
+        run: uv run --project services/api --frozen python scripts/migrate_database.py --bootstrap-if-empty
+      - name: Verify runtime RLS and identity transaction
+        run: uv run --project services/api --frozen pytest -q services/api/tests/test_postgres_tenant_integration.py
 
   # -------------------------------------------------------------------------
   # Gate 8: Scorecard runtime verification
@@ -519,21 +554,21 @@ jobs:
         working-directory: services/api
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v3
+        uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39 # v3
         with:
-          version: "latest"
+          version: "0.11.32"
 
       - name: Install dependencies
-        run: uv sync
+        run: uv sync --frozen
 
       - name: Verify scorecard runtime contracts
         run: uv run python ../../scripts/verify-scorecard-runtime.py
 
       - name: Upload scorecard runtime artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: scorecard-runtime-report
           path: artifacts/scorecard-runtime.*
@@ -549,23 +584,23 @@ jobs:
     needs: [migration-check, retrieval-benchmark, scorecard-runtime]
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v3
+        uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39 # v3
         with:
-          version: "latest"
+          version: "0.11.32"
 
       - name: Install API dependencies
         run: |
           cd services/api
-          uv sync
+          uv sync --frozen
 
       - name: Generate Milestone M1 readiness artifacts
-        run: python scripts/generate-m1-readiness.py
+        run: uv run --project services/api --frozen python scripts/generate-m1-readiness.py
 
       - name: Upload M1 readiness artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: m1-readiness-report
           path: artifacts/m1-readiness.*
@@ -584,83 +619,102 @@ jobs:
         working-directory: services/api
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v3
+        uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39 # v3
         with:
-          version: "latest"
+          version: "0.11.32"
 
       - name: Install dependencies
-        run: uv sync
+        run: uv sync --frozen
 
       - name: Generate scanner benchmark artifacts
         run: uv run python ../../packages/evals/run_scanner_benchmark.py
 
       - name: Upload scanner benchmark artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: scanner-benchmark-report
           path: artifacts/scanner-benchmark.*
           if-no-files-found: error
 
+  # Repository readiness and the frozen Ollama protocol are machine-readable.
+  # The report intentionally remains NO_GO while deployment/customer/legal
+  # evidence in the external template is pending.
+  index132-evidence:
+    name: Index132 repository and external-gate ledger
+    runs-on: ubuntu-latest
+    needs: [api-tests, web-build, postgres-tenant-integration, migration-check]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Validate frozen Ollama protocol without claiming model performance
+        run: python packages/evals/run_ollama_disconfirmation_eval.py
+      - name: Generate honest Index132 readiness decision
+        run: python scripts/generate-index132-readiness.py
+      - name: Upload Index132 evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: index132-readiness
+          path: |
+            artifacts/index132-readiness.json
+            artifacts/ollama-evaluation.json
+          if-no-files-found: error
+
   # -------------------------------------------------------------------------
-  # Deploy to STAGING (branch: staging only)
-  # Triggers after all gates pass. Uses Render deploy hooks stored as secrets.
+  # Legacy rollback deploy to STAGING (branch: staging only)
   # -------------------------------------------------------------------------
   deploy-staging:
-    name: Deploy → Staging
+    name: Rollback deploy → Render staging
     runs-on: ubuntu-latest
     needs: [api-tests, web-build, stack-contract, visibility-proof, provider-ablation, retrieval-benchmark, migration-check, scorecard-runtime, m1-readiness, scanner-benchmark]
-    if: github.ref == 'refs/heads/staging' && github.event_name == 'push'
+    if: github.ref == 'refs/heads/staging' && github.event_name == 'push' && vars.RENDER_ROLLBACK_DEPLOY_ENABLED == 'true'
 
     steps:
       - name: Trigger staging API deploy
-        if: vars.RENDER_HOOK_STAGING_API != ''
+        env:
+          RENDER_HOOK: ${{ secrets.RENDER_HOOK_STAGING_API }}
         run: |
-          curl -s -X POST "${{ vars.RENDER_HOOK_STAGING_API }}" \
+          curl -s -X POST "$RENDER_HOOK" \
             -H "Content-Type: application/json" \
             --fail-with-body
-        continue-on-error: true
 
       - name: Trigger staging Web deploy
-        if: vars.RENDER_HOOK_STAGING_WEB != ''
+        env:
+          RENDER_HOOK: ${{ secrets.RENDER_HOOK_STAGING_WEB }}
         run: |
-          curl -s -X POST "${{ vars.RENDER_HOOK_STAGING_WEB }}" \
+          curl -s -X POST "$RENDER_HOOK" \
             -H "Content-Type: application/json" \
             --fail-with-body
-        continue-on-error: true
 
       - name: Staging deploy triggered
         run: echo "Staging deploy hooks fired. Monitor at https://dashboard.render.com"
 
   # -------------------------------------------------------------------------
-  # Deploy to PRODUCTION (branch: main only)
-  # Only runs on main after all gates pass. Production deploys are gated by
-  # the same CI suite + Render health checks before traffic cutover.
+  # Legacy rollback deploy to PRODUCTION (branch: main only)
   # -------------------------------------------------------------------------
   deploy-production:
-    name: Deploy → Production
+    name: Rollback deploy → Render production
     runs-on: ubuntu-latest
     needs: [api-tests, web-build, stack-contract, visibility-proof, provider-ablation, retrieval-benchmark, migration-check, scorecard-runtime, m1-readiness, scanner-benchmark]
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push' && vars.RENDER_ROLLBACK_DEPLOY_ENABLED == 'true'
 
     steps:
       - name: Trigger production API deploy
-        if: vars.RENDER_HOOK_PROD_API != ''
+        env:
+          RENDER_HOOK: ${{ secrets.RENDER_HOOK_PROD_API }}
         run: |
-          curl -s -X POST "${{ vars.RENDER_HOOK_PROD_API }}" \
+          curl -s -X POST "$RENDER_HOOK" \
             -H "Content-Type: application/json" \
             --fail-with-body
-        continue-on-error: true
 
       - name: Trigger production Web deploy
-        if: vars.RENDER_HOOK_PROD_WEB != ''
+        env:
+          RENDER_HOOK: ${{ secrets.RENDER_HOOK_PROD_WEB }}
         run: |
-          curl -s -X POST "${{ vars.RENDER_HOOK_PROD_WEB }}" \
+          curl -s -X POST "$RENDER_HOOK" \
             -H "Content-Type: application/json" \
             --fail-with-body
-        continue-on-error: true
 
       - name: Production deploy triggered
         run: echo "Production deploy hooks fired. Monitor at https://dashboard.render.com"

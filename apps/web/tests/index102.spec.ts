@@ -1,6 +1,5 @@
 import { expect, test } from "@playwright/test";
-
-const LOCAL_API_ROUTE = "http://localhost:8000/**";
+import { fulfillAuthenticatedAccount, LOCAL_API_ROUTE } from "./helpers";
 
 const teamMembers = [
   { user_id: "usr-001", name: "Owner", role: "owner", active: true },
@@ -9,7 +8,10 @@ const teamMembers = [
 ];
 
 test.beforeEach(async ({ page }) => {
-  await page.route(LOCAL_API_ROUTE, (route) => route.abort());
+  await page.route(LOCAL_API_ROUTE, async (route) => {
+    if (await fulfillAuthenticatedAccount(route)) return;
+    await route.abort();
+  });
 });
 
 test("reports export uses query review id and email recipient contract", async ({ page }) => {
@@ -20,6 +22,7 @@ test("reports export uses query review id and email recipient contract", async (
   const requests: string[] = [];
 
   await page.route(LOCAL_API_ROUTE, async (route) => {
+    if (await fulfillAuthenticatedAccount(route)) return;
     const request = route.request();
     const url = new URL(request.url());
     requests.push(`${request.method()} ${url.pathname}${url.search}`);
@@ -66,40 +69,26 @@ test.describe("mobile navigation", () => {
   test.use({ viewport: { width: 390, height: 844 } });
 
   test("More opens the full module drawer", async ({ page }) => {
-    await page.goto("/");
+    await page.goto("/app");
     await page.getByRole("button", { name: /More/i }).click();
 
-    for (const label of [
-      "Market Scanner",
-      "Signals",
-      "Alpha Lab",
-      "Team",
-      "Enterprise",
-      "CLI Design",
-      "Admin",
-      "Advanced",
-      "Platform",
-    ]) {
-      await expect(page.getByRole("link", { name: label, exact: true })).toBeVisible();
+    for (const label of ["Intake", "Decision Packets", "Review Queue", "Outcomes & Memory", "Team", "Admin"]) {
+      await expect(page.getByRole("link", { name: label, exact: true }).last()).toBeVisible();
     }
   });
 });
 
-test("command palette covers secondary modules", async ({ page }) => {
+test("public landing keeps internal modules out of the product promise", async ({ page }) => {
   await page.goto("/");
-  await page.keyboard.press("Control+k");
-  const input = page.getByPlaceholder("Search actions or type ticker (AAPL)");
-  await expect(input).toBeVisible();
-
-  for (const label of ["Signals", "Team", "Admin", "Advanced", "Reports Export", "Discovery", "Governance Team Management"]) {
-    await input.fill(label);
-    await expect(page.getByRole("button").filter({ hasText: new RegExp(`^${escapeRegExp(label)}`) }).first()).toBeVisible();
-  }
+  await expect(page.getByRole("heading", { name: /Turn an investment thesis into a decision/i })).toBeVisible();
+  await expect(page.getByText("Alpha Lab")).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "Company proof" }).first()).toBeVisible();
 });
 
 test("market scanner presents Alpha as a hypothesis workflow", async ({ page }) => {
   await page.unroute(LOCAL_API_ROUTE);
   await page.route(LOCAL_API_ROUTE, async (route) => {
+    if (await fulfillAuthenticatedAccount(route)) return;
     const request = route.request();
     const url = new URL(request.url());
 
@@ -165,6 +154,7 @@ test("history can seed demo archive records", async ({ page }) => {
   let seeded = false;
 
   await page.route(LOCAL_API_ROUTE, async (route) => {
+    if (await fulfillAuthenticatedAccount(route)) return;
     const request = route.request();
     const url = new URL(request.url());
 
@@ -232,6 +222,7 @@ test("discovery create thesis opens real review intake prefill", async ({ page }
   await page.unroute(LOCAL_API_ROUTE);
 
   await page.route(LOCAL_API_ROUTE, async (route) => {
+    if (await fulfillAuthenticatedAccount(route)) return;
     const request = route.request();
     const url = new URL(request.url());
 
@@ -279,6 +270,7 @@ test("governance team management edits and removes members", async ({ page }) =>
   await page.unroute(LOCAL_API_ROUTE);
 
   await page.route(LOCAL_API_ROUTE, async (route) => {
+    if (await fulfillAuthenticatedAccount(route)) return;
     const request = route.request();
     const url = new URL(request.url());
 
@@ -326,6 +318,7 @@ test("signals cockpit exposes stack links, risk posture, and next action", async
   await page.unroute(LOCAL_API_ROUTE);
 
   await page.route(LOCAL_API_ROUTE, async (route) => {
+    if (await fulfillAuthenticatedAccount(route)) return;
     const request = route.request();
     const url = new URL(request.url());
 
@@ -445,7 +438,3 @@ test("signals cockpit exposes stack links, risk posture, and next action", async
   await expect(page.getByText("v1 · close / close_20d - 1 > 0")).toBeVisible();
   await expect(page.getByText("Every visible signal", { exact: false })).toHaveCount(0);
 });
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}

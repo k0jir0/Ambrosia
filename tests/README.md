@@ -56,7 +56,7 @@ Run it explicitly:
 
 ```powershell
 $env:RUN_CLI_LIVE_E2E="true"
-$env:CLI_LIVE_API_URL="https://ambrosia-api-staging.onrender.com"
+$env:CLI_LIVE_API_URL="https://api.example.com"
 pnpm test:cli:live
 ```
 

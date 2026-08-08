@@ -1,5 +1,9 @@
 # AMBROSIA TRADE REVIEW PLATFORM: 100% COMPLETION REPORT
 
+> [!WARNING]
+> Superseded historical record. “100%” and deployment statements below are not
+> current release evidence. The Index132 readiness decision remains authoritative.
+
 **Date:** 2026-06-26
 **Project Status:** ✅ 100% PRODUCTION READY
 **Overall Completion:** 100.0%

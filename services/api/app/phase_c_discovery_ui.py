@@ -13,7 +13,7 @@ router = APIRouter(prefix="/discovery", tags=["discovery"])
 
 
 def public_api_base_url() -> str:
-    return (os.getenv("PUBLIC_API_BASE_URL") or os.getenv("RENDER_EXTERNAL_URL") or "https://ambrosia-api-69t6.onrender.com").rstrip("/")
+    return os.getenv("PUBLIC_API_BASE_URL", "http://127.0.0.1:8000").rstrip("/")
 
 class SignalResult(BaseModel):
     id: str

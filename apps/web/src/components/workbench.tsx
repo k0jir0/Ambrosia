@@ -22,6 +22,7 @@ import {
   recordDecision,
   recordPacketDecision,
   recordPacketOutcome,
+  recordProductEvent,
   refreshPacketMetrics,
   runPacketAgents,
   writebackSignalDecision,
@@ -292,6 +293,10 @@ export function Workbench({ initialReviewId }: { initialReviewId?: string } = {}
       syncReviewFromPacket(reviewId, packet);
       await recordDecision(reviewId, decisionState).catch(() => {
         // The packet is the governed source of truth; legacy review writeback is best effort.
+      });
+      void recordProductEvent("review_completed", "workbench", {
+        objectReference: reviewId,
+        properties: { mode: "governed" },
       });
       setActionFeedback({ tone: "good", message: `Governed decision recorded: ${decisionLabels[decisionState]}.` });
     } catch (error) {
@@ -772,6 +777,10 @@ export function Workbench({ initialReviewId }: { initialReviewId?: string } = {}
       });
       syncReviewFromPacket(reviewId, packet);
       appendAuditEvent("outcome.recorded", `Outcome attribution recorded for ${activeReview.ticker}.`);
+      void recordProductEvent("outcome_recorded", "workbench", {
+        objectReference: reviewId,
+        properties: { mode: "governed" },
+      });
 
       if (activeAlphaLink) {
         const quality = packet.decisionState ? `decision_${packet.decisionState}` : "decision_unset";

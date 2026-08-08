@@ -1,382 +1,174 @@
 "use client";
 
-import Link from "next/link";
+import { FormEvent, useCallback, useEffect, useState } from "react";
+import { CheckCircle2, Loader2, MailPlus, ShieldCheck, Trash2, Users } from "lucide-react";
+
 import {
-  CheckCircle2,
-  Clock3,
-  FileText,
-  LayoutTemplate,
-  MessageSquare,
-  MoreHorizontal,
-  Plus,
-  Search,
-  Send,
-  ShieldCheck,
-  UserPlus,
-  Users
-} from "lucide-react";
-import { Badge, Panel, SectionTitle, cn } from "@/components/ui";
+  getAccountSession,
+  getTeam,
+  inviteTeamMember,
+  revokeTeamInvitation,
+  updateTeamMember,
+  type AccountSession,
+  type InvitationRecord,
+  type TeamMemberRecord,
+} from "@/lib/api";
 
-type Workspace = {
-  name: string;
-  focus: string;
-  members: number;
-  openReviews: number;
-  approvalsDue: number;
-};
-
-type ReviewItem = {
-  ticker: string;
-  title: string;
-  owner: string;
-  state: "Ready" | "Needs risk" | "In review";
-  confidence: number;
-  approvals: string;
-  updated: string;
-  tone: "good" | "warn" | "info";
-};
-
-type ApprovalStep = {
-  name: string;
-  role: string;
-  state: "approved" | "pending" | "waiting";
-  timestamp: string;
-};
-
-type Member = {
-  name: string;
-  role: string;
-  load: number;
-  status: "active" | "reviewing" | "away";
-};
-
-type Message = {
-  author: string;
-  role: string;
-  body: string;
-  time: string;
-};
-
-type Template = {
-  name: string;
-  scope: string;
-  used: string;
-  owner: string;
-};
-
-const WORKSPACES: Workspace[] = [
-  { name: "Risk Committee", focus: "Trades awaiting sign-off", members: 4, openReviews: 6, approvalsDue: 3 },
-  { name: "PM Desk", focus: "Portfolio sizing and follow-ups", members: 5, openReviews: 8, approvalsDue: 2 },
-  { name: "Q3 Strategy", focus: "Macro and sector theses", members: 3, openReviews: 4, approvalsDue: 1 }
-];
-
-const REVIEW_QUEUE: ReviewItem[] = [
-  {
-    ticker: "SPY",
-    title: "Breadth confirmation after pullback",
-    owner: "Alice Smith",
-    state: "Ready",
-    confidence: 72,
-    approvals: "2/3",
-    updated: "8m ago",
-    tone: "good"
-  },
-  {
-    ticker: "NVDA",
-    title: "Semis momentum after valuation reset",
-    owner: "Bob Jones",
-    state: "Needs risk",
-    confidence: 64,
-    approvals: "1/3",
-    updated: "24m ago",
-    tone: "warn"
-  },
-  {
-    ticker: "TLT",
-    title: "Duration hedge into softer growth tape",
-    owner: "Maya Patel",
-    state: "In review",
-    confidence: 58,
-    approvals: "0/2",
-    updated: "51m ago",
-    tone: "info"
-  },
-  {
-    ticker: "XLF",
-    title: "Financials rotation on curve steepening",
-    owner: "Charlie Lee",
-    state: "Ready",
-    confidence: 69,
-    approvals: "2/2",
-    updated: "1h ago",
-    tone: "good"
-  }
-];
-
-const APPROVAL_STEPS: ApprovalStep[] = [
-  { name: "Alice Smith", role: "Portfolio Manager", state: "approved", timestamp: "14:23" },
-  { name: "Bob Jones", role: "Risk Committee", state: "pending", timestamp: "Due 15:30" },
-  { name: "Charlie Lee", role: "Execution", state: "waiting", timestamp: "Queued" }
-];
-
-const MEMBERS: Member[] = [
-  { name: "Alice Smith", role: "PM", load: 3, status: "reviewing" },
-  { name: "Bob Jones", role: "Risk", load: 2, status: "active" },
-  { name: "Maya Patel", role: "Analyst", load: 4, status: "active" },
-  { name: "Charlie Lee", role: "Trader", load: 1, status: "away" }
-];
-
-const MESSAGES: Message[] = [
-  {
-    author: "Alice Smith",
-    role: "PM",
-    body: "SPY packet is ready once the risk note lands. Keep the approval open.",
-    time: "8m"
-  },
-  {
-    author: "Bob Jones",
-    role: "Risk",
-    body: "NVDA needs updated factor overlap before I sign off.",
-    time: "18m"
-  },
-  {
-    author: "Maya Patel",
-    role: "Analyst",
-    body: "I added the breadth table and linked the source packet.",
-    time: "32m"
-  }
-];
-
-const TEMPLATES: Template[] = [
-  { name: "Swing Setup", scope: "Team", used: "Today", owner: "Alice" },
-  { name: "Risk Committee Packet", scope: "Committee", used: "2d ago", owner: "Bob" },
-  { name: "Macro Watch", scope: "Shared", used: "4d ago", owner: "Maya" }
-];
+const card = "rounded-xl border border-line bg-paper p-5";
 
 export default function TeamPage() {
-  const activeWorkspace = WORKSPACES[0];
+  const [profile, setProfile] = useState<AccountSession | null>(null);
+  const [members, setMembers] = useState<TeamMemberRecord[]>([]);
+  const [invitations, setInvitations] = useState<InvitationRecord[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [pending, setPending] = useState(false);
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+
+  const refresh = useCallback(async () => {
+    const [account, team] = await Promise.all([getAccountSession(), getTeam()]);
+    setProfile(account);
+    setMembers(team.members);
+    setInvitations(team.invitations);
+  }, []);
+
+  useEffect(() => {
+    refresh()
+      .catch(() => setError("Team membership could not be loaded."))
+      .finally(() => setLoading(false));
+  }, [refresh]);
+
+  async function invite(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setPending(true);
+    setError("");
+    setMessage("");
+    const form = event.currentTarget;
+    const data = new FormData(form);
+    try {
+      const result = await inviteTeamMember(String(data.get("email")), String(data.get("role")));
+      setMessage(
+        result.developmentInvitationToken
+          ? `Development invite: ${window.location.origin}/accept-invite?token=${encodeURIComponent(result.developmentInvitationToken)}`
+          : result.deliveryStatus === "retry_required"
+            ? `Invitation saved, but email delivery failed for ${result.email}. Revoke it and retry after checking SES.`
+            : `Invitation sent to ${result.email}.`,
+      );
+      form.reset();
+      await refresh();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Invitation failed.");
+    } finally {
+      setPending(false);
+    }
+  }
+
+  async function revoke(invitation: InvitationRecord) {
+    setError("");
+    try {
+      await revokeTeamInvitation(invitation.id);
+      await refresh();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Unable to revoke invitation.");
+    }
+  }
+
+  async function changeMember(
+    member: TeamMemberRecord,
+    role: "viewer" | "analyst" | "reviewer" | "admin",
+    status: "active" | "suspended",
+  ) {
+    setError("");
+    try {
+      await updateTeamMember(member.id, role, status);
+      setMessage(status === "suspended" ? `${member.email} was suspended and signed out.` : `${member.email} was updated.`);
+      await refresh();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Unable to update member.");
+    }
+  }
+
+  const canManage = profile?.organization.role === "owner" || profile?.organization.role === "admin";
+  const activeCount = members.filter((member) => member.status === "active").length;
+  if (loading) {
+    return <div className="flex items-center gap-3 py-12 text-sm text-ink/60"><Loader2 className="h-5 w-5 animate-spin text-teal" /> Loading private team…</div>;
+  }
 
   return (
-    <div className="space-y-4">
-      <Panel className="p-5">
-        <div className="flex flex-wrap items-start justify-between gap-4">
+    <div className="mx-auto max-w-6xl space-y-5">
+      <header className={`${card} sm:p-7`}>
+        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-teal">Team</p>
+        <div className="mt-3 flex flex-wrap items-end justify-between gap-4">
           <div>
-            <SectionTitle eyebrow="Team" title="Risk Committee workspace" />
-            <p className="mt-3 max-w-4xl text-sm leading-6 text-ink/75">
-              {activeWorkspace.focus} across {activeWorkspace.members} members.
-            </p>
-            <div className="mt-3 flex flex-wrap gap-2">
-              <Badge tone="info">Live membership admin</Badge>
-              <Badge tone="warn">Workspace workflow demo</Badge>
-            </div>
+            <h1 className="text-3xl font-semibold tracking-tight">{profile?.organization.name}</h1>
+            <p className="mt-2 max-w-2xl text-sm leading-6 text-ink/60">Membership and invitation authority comes from the database. Every person shares this organization’s governed workspace without sharing credentials.</p>
           </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <Link href="/governance/team-management" className="focus-ring inline-flex items-center gap-2 rounded-md border border-line bg-fog/70 px-3 py-2 text-sm font-semibold text-teal">
-              <Users className="h-4 w-4" />
-              Team admin
-            </Link>
-            <button type="button" disabled className="focus-ring inline-flex items-center gap-2 rounded-md bg-teal px-3 py-2 text-sm font-semibold text-fog opacity-60">
-              <Plus className="h-4 w-4" />
-              New workspace
-            </button>
-          </div>
+          <span className="rounded-full border border-teal/25 bg-teal/5 px-3 py-1.5 text-xs font-semibold text-teal">{activeCount} active member{activeCount === 1 ? "" : "s"}</span>
         </div>
-      </Panel>
+      </header>
 
-      <section className="grid gap-3 xl:grid-cols-[1.2fr_1fr]">
-        <Panel className="p-2">
-          <div className="grid gap-2 md:grid-cols-3">
-            {WORKSPACES.map((workspace, index) => (
-              <button
-                key={workspace.name}
-                type="button"
-                disabled={index !== 0}
-                className={cn(
-                  "focus-ring rounded-md border p-3 text-left transition",
-                  index === 0 ? "border-teal/40 bg-teal/10" : "border-line bg-fog/60 opacity-60"
-                )}
-              >
-                <div className="flex items-start justify-between gap-2">
-                  <div>
-                    <p className="text-sm font-semibold text-ink">{workspace.name}</p>
-                    <p className="mt-1 min-h-8 text-xs leading-4 text-ink/65">{workspace.focus}</p>
-                  </div>
-                  <Badge tone={index === 0 ? workspace.approvalsDue > 2 ? "warn" : "neutral" : "warn"}>{index === 0 ? `${workspace.approvalsDue} due` : "demo"}</Badge>
+      {error ? <p role="alert" className="rounded-md border border-rose-300/25 bg-rose-300/10 p-3 text-sm text-rose-100">{error}</p> : null}
+      {message ? <p className="break-all rounded-md border border-teal/25 bg-teal/5 p-3 text-sm text-ink/72"><CheckCircle2 className="mr-2 inline h-4 w-4 text-teal" />{message}</p> : null}
+
+      <div className="grid gap-5 lg:grid-cols-[1.4fr_0.8fr]">
+        <section className={card}>
+          <div className="flex items-center gap-3"><Users className="h-5 w-5 text-teal" /><div><h2 className="font-semibold">Membership</h2><p className="text-xs text-ink/48">Server-derived roles; browser role headers are ignored.</p></div></div>
+          <div className="mt-5 divide-y divide-line">
+            {members.map((member) => {
+              const editable = canManage && member.role !== "owner" && member.id !== profile?.user.id;
+              return (
+                <div key={member.id} className="flex flex-wrap items-center justify-between gap-3 py-4">
+                  <div><p className="text-sm font-semibold">{member.display_name || member.email}</p><p className="mt-1 text-xs text-ink/48">{member.email} · {member.professional_role.replaceAll("_", " ")}</p></div>
+                  {editable ? (
+                    <div className="flex items-center gap-2">
+                      <select
+                        aria-label={`Role for ${member.email}`}
+                        value={member.role}
+                        onChange={(event) => void changeMember(member, event.target.value as "viewer" | "analyst" | "reviewer" | "admin", member.status as "active" | "suspended")}
+                        className="focus-ring rounded-md border border-line bg-fog px-2 py-1.5 text-xs capitalize"
+                      >
+                        <option value="viewer">Viewer</option><option value="analyst">Analyst</option><option value="reviewer">Reviewer</option><option value="admin">Admin</option>
+                      </select>
+                      <button
+                        type="button"
+                        onClick={() => void changeMember(member, member.role as "viewer" | "analyst" | "reviewer" | "admin", member.status === "active" ? "suspended" : "active")}
+                        className="focus-ring rounded-md border border-line px-2.5 py-1.5 text-xs font-semibold text-ink/65"
+                      >{member.status === "active" ? "Suspend" : "Reactivate"}</button>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-2"><ShieldCheck className="h-4 w-4 text-teal" /><span className="rounded-full bg-teal/10 px-2.5 py-1 text-xs font-semibold capitalize text-teal">{member.role}</span></div>
+                  )}
                 </div>
-                <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-ink/65">
-                  <span>{workspace.members} members</span>
-                  <span>{workspace.openReviews} reviews</span>
-                </div>
-              </button>
-            ))}
+              );
+            })}
           </div>
-        </Panel>
-
-        <section className="grid gap-3 md:grid-cols-3 xl:grid-cols-3">
-          <Kpi label="Open reviews" value={String(activeWorkspace.openReviews)} />
-          <Kpi label="Approvals due" value={String(activeWorkspace.approvalsDue)} tone="warn" />
-          <Kpi label="Members online" value="3/4" tone="good" />
         </section>
-      </section>
 
-      <section className="grid gap-4 xl:grid-cols-[minmax(0,1.55fr)_minmax(320px,0.9fr)]">
-        <Panel className="p-5">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <SectionTitle eyebrow="Review Queue" title="Shared packet queue" />
-            <div className="flex min-w-0 flex-wrap items-center gap-2">
-              <div className="flex min-w-60 items-center gap-2 rounded-md border border-line bg-fog/70 px-3 py-2">
-                <Search className="h-4 w-4 shrink-0 text-ink/60" />
-                <input className="focus-ring w-full bg-transparent text-sm" placeholder="Search packets..." />
-              </div>
-              <button type="button" className="focus-ring rounded-md border border-line bg-fog/70 p-2 text-ink/70" aria-label="Queue options">
-                <MoreHorizontal className="h-4 w-4" />
-              </button>
-            </div>
-          </div>
+        <section className={card}>
+          <div className="flex items-center gap-3"><MailPlus className="h-5 w-5 text-teal" /><div><h2 className="font-semibold">Invite a collaborator</h2><p className="text-xs text-ink/48">Single-use link, seven-day expiry.</p></div></div>
+          {canManage ? (
+            <form onSubmit={invite} className="mt-5 space-y-4">
+              <label className="block text-xs font-semibold">Work email<input name="email" type="email" required className="focus-ring mt-2 w-full rounded-md border border-line bg-fog px-3 py-2.5 text-sm" /></label>
+              <label className="block text-xs font-semibold">Access role<select name="role" defaultValue="analyst" className="focus-ring mt-2 w-full rounded-md border border-line bg-fog px-3 py-2.5 text-sm"><option value="viewer">Viewer</option><option value="analyst">Analyst</option><option value="reviewer">Reviewer</option><option value="admin">Admin</option></select></label>
+              <button disabled={pending} className="focus-ring flex w-full items-center justify-center gap-2 rounded-md bg-teal px-4 py-3 text-sm font-bold text-[#071411] disabled:opacity-50">{pending ? <Loader2 className="h-4 w-4 animate-spin" /> : <MailPlus className="h-4 w-4" />} Send invitation</button>
+            </form>
+          ) : <p className="mt-5 rounded-md border border-line bg-fog p-3 text-sm text-ink/55">Only owners and administrators can invite members.</p>}
+        </section>
+      </div>
 
-          <div className="mt-4 space-y-2">
-            {REVIEW_QUEUE.map((item) => (
-              <div key={`${item.ticker}-${item.title}`} className="rounded-md border border-line bg-fog/70 p-3">
-                <div className="grid gap-3 md:grid-cols-[80px_minmax(0,1fr)_140px_120px_80px] md:items-center">
-                  <Badge tone="info">{item.ticker}</Badge>
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-semibold text-ink">{item.title}</p>
-                    <p className="mt-1 text-xs text-ink/60">{item.owner} - updated {item.updated}</p>
-                  </div>
-                  <Badge tone={item.tone}>{item.state}</Badge>
-                  <div className="text-sm text-ink/75">
-                    <span className="font-semibold text-ink">{item.confidence}%</span> confidence
-                  </div>
-                  <div className="text-sm font-semibold text-ink/75">{item.approvals}</div>
-                </div>
+      <section className={card}>
+        <h2 className="font-semibold">Pending invitations</h2>
+        {invitations.length ? (
+          <div className="mt-4 divide-y divide-line">
+            {invitations.map((invitation) => (
+              <div key={invitation.id} className="flex flex-wrap items-center justify-between gap-3 py-3">
+                <div><p className="text-sm font-medium">{invitation.email}</p><p className="mt-1 text-xs capitalize text-ink/48">{invitation.role} · awaiting acceptance</p></div>
+                {canManage ? <button onClick={() => revoke(invitation)} className="focus-ring rounded-md border border-line p-2 text-ink/55 hover:text-rose-200" aria-label={`Revoke invitation for ${invitation.email}`}><Trash2 className="h-4 w-4" /></button> : null}
               </div>
             ))}
           </div>
-        </Panel>
-
-        <div className="space-y-4">
-          <Panel className="p-5">
-            <SectionTitle eyebrow="Approval Lane" title="SPY sign-off" />
-            <div className="mt-4 space-y-2">
-              {APPROVAL_STEPS.map((step) => (
-                <div key={step.name} className="flex items-center justify-between gap-3 rounded-md border border-line bg-fog/70 p-3">
-                  <div className="flex min-w-0 items-center gap-3">
-                    <ApprovalIcon state={step.state} />
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-semibold text-ink">{step.name}</p>
-                      <p className="text-xs text-ink/60">{step.role}</p>
-                    </div>
-                  </div>
-                  <span className="shrink-0 text-xs text-ink/60">{step.timestamp}</span>
-                </div>
-              ))}
-            </div>
-            <button type="button" disabled className="focus-ring mt-4 inline-flex w-full items-center justify-center gap-2 rounded-md bg-teal px-3 py-2 text-sm font-semibold text-fog opacity-60">
-              <ShieldCheck className="h-4 w-4" />
-              Request sign-off
-            </button>
-          </Panel>
-
-          <Panel className="p-5">
-            <div className="flex items-center justify-between gap-3">
-              <SectionTitle eyebrow="Members" title="Coverage" />
-              <Link href="/governance/team-management" className="focus-ring rounded-md border border-line bg-fog/70 p-2 text-ink/70" aria-label="Invite member">
-                <UserPlus className="h-4 w-4" />
-              </Link>
-            </div>
-            <div className="mt-4 grid gap-2">
-              {MEMBERS.map((member) => (
-                <div key={member.name} className="flex items-center justify-between gap-3 rounded-md border border-line bg-fog/70 px-3 py-2">
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-semibold text-ink">{member.name}</p>
-                    <p className="text-xs text-ink/60">{member.role}</p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Badge tone={member.status === "active" ? "good" : member.status === "reviewing" ? "info" : "neutral"}>{member.status}</Badge>
-                    <span className="w-14 text-right text-xs text-ink/60">{member.load} open</span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </Panel>
-        </div>
-      </section>
-
-      <section className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(360px,0.75fr)]">
-        <Panel className="p-5">
-          <div className="flex items-center justify-between gap-3">
-            <SectionTitle eyebrow="Discussion" title="Packet thread" />
-            <Badge tone="info">SPY</Badge>
-          </div>
-          <div className="mt-4 grid gap-3">
-            {MESSAGES.map((message) => (
-              <div key={`${message.author}-${message.time}`} className="rounded-md border border-line bg-fog/70 p-3">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div>
-                    <p className="text-sm font-semibold text-ink">{message.author}</p>
-                    <p className="text-xs text-ink/60">{message.role}</p>
-                  </div>
-                  <span className="text-xs text-ink/55">{message.time}</span>
-                </div>
-                <p className="mt-2 text-sm leading-6 text-ink/75">{message.body}</p>
-              </div>
-            ))}
-          </div>
-          <div className="mt-4 flex gap-2">
-            <input disabled className="focus-ring min-w-0 flex-1 rounded-md border border-line bg-fog/70 px-3 py-2 text-sm opacity-60" placeholder="Thread demo is read-only" />
-            <button type="button" disabled className="focus-ring inline-flex shrink-0 items-center gap-2 rounded-md bg-teal px-3 py-2 text-sm font-semibold text-fog opacity-60">
-              <Send className="h-4 w-4" />
-              Send
-            </button>
-          </div>
-        </Panel>
-
-        <Panel className="p-5">
-          <div className="flex items-center justify-between gap-3">
-            <SectionTitle eyebrow="Templates" title="Reusable workflows" />
-            <button type="button" disabled className="focus-ring rounded-md border border-line bg-fog/70 p-2 text-ink/70 opacity-60" aria-label="Create template">
-              <Plus className="h-4 w-4" />
-            </button>
-          </div>
-          <div className="mt-4 space-y-2">
-            {TEMPLATES.map((template) => (
-              <div key={template.name} className="rounded-md border border-line bg-fog/70 p-3">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="flex min-w-0 gap-3">
-                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-line bg-paper">
-                      <LayoutTemplate className="h-4 w-4 text-teal" />
-                    </div>
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-semibold text-ink">{template.name}</p>
-                      <p className="text-xs text-ink/60">{template.scope} - {template.owner}</p>
-                    </div>
-                  </div>
-                  <span className="shrink-0 text-xs text-ink/55">{template.used}</span>
-                </div>
-              </div>
-            ))}
-          </div>
-          <button type="button" disabled className="focus-ring mt-4 inline-flex w-full items-center justify-center gap-2 rounded-md border border-line bg-fog/70 px-3 py-2 text-sm font-semibold text-ink/80 opacity-60">
-            <FileText className="h-4 w-4" />
-            Save current packet as template
-          </button>
-        </Panel>
+        ) : <p className="mt-4 text-sm text-ink/48">No pending invitations.</p>}
       </section>
     </div>
   );
-}
-
-function Kpi({ label, value, tone = "neutral" }: { label: string; value: string; tone?: "neutral" | "good" | "warn" }) {
-  return (
-    <Panel className="p-4">
-      <p className="text-xs font-semibold uppercase tracking-wide text-ink/55">{label}</p>
-      <p className={cn("mt-2 text-2xl font-semibold", tone === "good" ? "text-teal" : tone === "warn" ? "text-amber" : "text-ink")}>{value}</p>
-    </Panel>
-  );
-}
-
-function ApprovalIcon({ state }: { state: ApprovalStep["state"] }) {
-  if (state === "approved") return <CheckCircle2 className="h-5 w-5 shrink-0 text-teal" />;
-  if (state === "pending") return <Clock3 className="h-5 w-5 shrink-0 text-amber" />;
-  return <MessageSquare className="h-5 w-5 shrink-0 text-ink/45" />;
 }

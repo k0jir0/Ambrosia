@@ -1,0 +1,532 @@
+name: AWS release
+
+on:
+  pull_request:
+    paths:
+      - "infra/aws/**"
+      - "services/api/Dockerfile"
+      - "apps/web/Dockerfile"
+      - ".github/workflows/aws-release.yml"
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Deployment environment
+        type: choice
+        options: [staging]
+        default: staging
+      apply:
+        description: Build, plan, migrate, and deploy after protected approvals
+        type: boolean
+        default: false
+      candidate_sha:
+        description: Exact commit SHA authorized for deployment (required when apply=true)
+        type: string
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: aws-${{ inputs.environment || 'validate' }}
+  cancel-in-progress: false
+
+env:
+  TERRAFORM_VERSION: 1.15.8
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+      - name: Terraform format
+        run: terraform -chdir=infra/aws fmt -check -recursive
+      - name: Terraform validate
+        run: |
+          terraform -chdir=infra/aws init -backend=false
+          terraform -chdir=infra/aws validate
+      - name: Validate bootstrap CloudFormation templates
+        run: |
+          python -m pip install --disable-pip-version-check cfn-lint==1.54.0
+          cfn-lint infra/aws/bootstrap/control-plane.yaml infra/aws/bootstrap/edge-certificate.yaml
+      - name: Verify the staging release contract
+        run: |
+          python scripts/verify-aws-staging-control-plane.py
+          python scripts/generate-index133-staging-readiness.py
+      - name: Container definitions are present
+        run: |
+          test -f services/api/Dockerfile
+          test -f apps/web/Dockerfile
+          test -f scripts/migrate_database.py
+      - name: Build release containers
+        run: |
+          docker build --pull -f services/api/Dockerfile -t ambrosia-api:validation .
+          docker build --pull -f apps/web/Dockerfile \
+            --build-arg "NEXT_PUBLIC_API_BASE_URL=https://api-staging.example.com" \
+            -t ambrosia-web:validation .
+
+  plan:
+    if: github.event_name == 'workflow_dispatch' && inputs.apply
+    needs: validate
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      api_image: ${{ steps.images.outputs.api }}
+      web_image: ${{ steps.images.outputs.web }}
+      foundation_plan_key: ${{ steps.plan.outputs.key }}
+    env:
+      DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
+      EXPECTED_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+      TF_STATE_KMS_KEY_ARN: ${{ vars.TF_STATE_KMS_KEY_ARN }}
+      DOMAIN_NAME: ${{ vars.DOMAIN_NAME }}
+      HOSTED_ZONE_ID: ${{ vars.HOSTED_ZONE_ID }}
+      API_DESIRED_COUNT: ${{ vars.API_DESIRED_COUNT || '1' }}
+      WEB_DESIRED_COUNT: ${{ vars.WEB_DESIRED_COUNT || '1' }}
+      ALERT_EMAIL: ${{ vars.ALERT_EMAIL }}
+      OWNER: ${{ vars.OWNER }}
+      COST_CENTER: ${{ vars.COST_CENTER }}
+      DATA_CLASSIFICATION: ${{ vars.DATA_CLASSIFICATION || 'synthetic' }}
+      BUDGET_NAME: ${{ vars.BUDGET_NAME || 'ambrosia-staging-monthly' }}
+      ALB_CERTIFICATE_ARN: ${{ secrets.ALB_CERTIFICATE_ARN }}
+      CLOUDFRONT_CERTIFICATE_ARN: ${{ secrets.CLOUDFRONT_CERTIFICATE_ARN }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+      - uses: aws-actions/configure-aws-credentials@ff717079ee2060e4bcee96c4779b553acc87447c # v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - uses: aws-actions/amazon-ecr-login@d539f0932e70871a027e9d5a9d8fc38589180a64 # v2
+
+      - name: Assert repository, ref, SHA, account, and environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "k0jir0/Ambrosia"
+          test -n "${{ inputs.candidate_sha }}"
+          test "$GITHUB_SHA" = "${{ inputs.candidate_sha }}"
+          test "$DEPLOY_ENVIRONMENT" = "staging"
+          test "$GITHUB_REF_NAME" = "staging"
+          test -n "$EXPECTED_ACCOUNT_ID"
+          test "$(aws sts get-caller-identity --query Account --output text)" = "$EXPECTED_ACCOUNT_ID"
+          test -n "$AWS_REGION"
+          test -n "$TF_STATE_BUCKET"
+          test -n "$DOMAIN_NAME"
+          test "$DOMAIN_NAME" != "example.com"
+          test -n "$HOSTED_ZONE_ID"
+          test -n "$OWNER"
+          test -n "$COST_CENTER"
+          test "$DATA_CLASSIFICATION" = "synthetic" -o "$DATA_CLASSIFICATION" = "approved-staging"
+          test -n "$ALB_CERTIFICATE_ARN"
+          test -n "$CLOUDFRONT_CERTIFICATE_ARN"
+          test "$API_DESIRED_COUNT" -ge 1
+          test "$WEB_DESIRED_COUNT" -ge 1
+          test "$(aws route53 get-hosted-zone --id "$HOSTED_ZONE_ID" --query 'HostedZone.Config.PrivateZone' --output text)" = "False"
+          ZONE_NAME=$(aws route53 get-hosted-zone --id "$HOSTED_ZONE_ID" --query 'HostedZone.Name' --output text)
+          test "${ZONE_NAME%.}" = "$DOMAIN_NAME"
+          test "$(aws acm describe-certificate --region "$AWS_REGION" --certificate-arn "$ALB_CERTIFICATE_ARN" --query 'Certificate.Status' --output text)" = "ISSUED"
+          test "$(aws acm describe-certificate --region us-east-1 --certificate-arn "$CLOUDFRONT_CERTIFICATE_ARN" --query 'Certificate.Status' --output text)" = "ISSUED"
+          aws budgets describe-budget --account-id "$EXPECTED_ACCOUNT_ID" --budget-name "$BUDGET_NAME" >/dev/null
+
+      - name: Verify remote-state protection
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(aws s3api get-bucket-versioning --bucket "$TF_STATE_BUCKET" --query Status --output text)" = "Enabled"
+          aws s3api get-public-access-block --bucket "$TF_STATE_BUCKET" \
+            --query 'PublicAccessBlockConfiguration.[BlockPublicAcls,IgnorePublicAcls,BlockPublicPolicy,RestrictPublicBuckets]' \
+            --output text | grep -q $'True\tTrue\tTrue\tTrue'
+          aws s3api get-bucket-encryption --bucket "$TF_STATE_BUCKET" >/dev/null
+
+      - name: Initialize remote state
+        shell: bash
+        run: |
+          set -euo pipefail
+          backend=(
+            -backend-config="bucket=$TF_STATE_BUCKET"
+            -backend-config="key=ambrosia/$DEPLOY_ENVIRONMENT/terraform.tfstate"
+            -backend-config="region=$AWS_REGION"
+            -backend-config="encrypt=true"
+            -backend-config="use_lockfile=true"
+          )
+          if [ -n "$TF_STATE_KMS_KEY_ARN" ]; then
+            backend+=( -backend-config="kms_key_id=$TF_STATE_KMS_KEY_ARN" )
+          fi
+          terraform -chdir=infra/aws init "${backend[@]}"
+
+      - name: Create immutable registries
+        shell: bash
+        run: |
+          set -euo pipefail
+          terraform -chdir=infra/aws apply -auto-approve \
+            -target=aws_ecr_repository.api \
+            -target=aws_ecr_repository.web \
+            -var="environment=$DEPLOY_ENVIRONMENT" \
+            -var="aws_region=$AWS_REGION" \
+            -var="domain_name=$DOMAIN_NAME" \
+            -var="hosted_zone_id=$HOSTED_ZONE_ID" \
+            -var="alb_certificate_arn=$ALB_CERTIFICATE_ARN" \
+            -var="cloudfront_certificate_arn=$CLOUDFRONT_CERTIFICATE_ARN" \
+            -var="owner=$OWNER" \
+            -var="cost_center=$COST_CENTER" \
+            -var="data_classification=$DATA_CLASSIFICATION"
+
+      - name: Read repository URLs
+        id: repositories
+        shell: bash
+        run: |
+          echo "api=$(terraform -chdir=infra/aws output -raw api_ecr_repository)" >> "$GITHUB_OUTPUT"
+          echo "web=$(terraform -chdir=infra/aws output -raw web_ecr_repository)" >> "$GITHUB_OUTPUT"
+
+      - name: Build immutable images
+        shell: bash
+        env:
+          API_REPOSITORY: ${{ steps.repositories.outputs.api }}
+          WEB_REPOSITORY: ${{ steps.repositories.outputs.web }}
+        run: |
+          set -euo pipefail
+          if [ "$DEPLOY_ENVIRONMENT" = "production" ]; then
+            WEB_HOST="$DOMAIN_NAME"
+          else
+            WEB_HOST="staging.$DOMAIN_NAME"
+          fi
+          docker build --pull -f services/api/Dockerfile -t "$API_REPOSITORY:$GITHUB_SHA" .
+          docker build --pull -f apps/web/Dockerfile \
+            --build-arg "NEXT_PUBLIC_API_BASE_URL=https://$WEB_HOST/api" \
+            --build-arg "NEXT_PUBLIC_SITE_URL=https://$WEB_HOST" \
+            -t "$WEB_REPOSITORY:$GITHUB_SHA" .
+
+      - name: Scan API image for fixed critical or high vulnerabilities
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        with:
+          image-ref: ${{ steps.repositories.outputs.api }}:${{ github.sha }}
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          vuln-type: os,library
+          severity: CRITICAL,HIGH
+          version: v0.72.0
+
+      - name: Scan web image for fixed critical or high vulnerabilities
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        with:
+          image-ref: ${{ steps.repositories.outputs.web }}:${{ github.sha }}
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          vuln-type: os,library
+          severity: CRITICAL,HIGH
+          version: v0.72.0
+
+      - name: Generate API SPDX SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
+        with:
+          image: ${{ steps.repositories.outputs.api }}:${{ github.sha }}
+          artifact-name: api-${{ github.sha }}.spdx.json
+          output-file: api.spdx.json
+          format: spdx-json
+          upload-release-assets: false
+
+      - name: Generate web SPDX SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
+        with:
+          image: ${{ steps.repositories.outputs.web }}:${{ github.sha }}
+          artifact-name: web-${{ github.sha }}.spdx.json
+          output-file: web.spdx.json
+          format: spdx-json
+          upload-release-assets: false
+
+      - name: Push scanned images
+        shell: bash
+        env:
+          API_REPOSITORY: ${{ steps.repositories.outputs.api }}
+          WEB_REPOSITORY: ${{ steps.repositories.outputs.web }}
+        run: |
+          docker push "$API_REPOSITORY:$GITHUB_SHA"
+          docker push "$WEB_REPOSITORY:$GITHUB_SHA"
+
+      - name: Resolve immutable ECR digests
+        id: images
+        shell: bash
+        env:
+          API_REPOSITORY: ${{ steps.repositories.outputs.api }}
+          WEB_REPOSITORY: ${{ steps.repositories.outputs.web }}
+        run: |
+          set -euo pipefail
+          API_DIGEST=$(aws ecr describe-images --repository-name "${API_REPOSITORY#*/}" --image-ids imageTag="$GITHUB_SHA" --query 'imageDetails[0].imageDigest' --output text)
+          WEB_DIGEST=$(aws ecr describe-images --repository-name "${WEB_REPOSITORY#*/}" --image-ids imageTag="$GITHUB_SHA" --query 'imageDetails[0].imageDigest' --output text)
+          test "$API_DIGEST" != "None"
+          test "$WEB_DIGEST" != "None"
+          echo "api=${API_REPOSITORY}@${API_DIGEST}" >> "$GITHUB_OUTPUT"
+          echo "web=${WEB_REPOSITORY}@${WEB_DIGEST}" >> "$GITHUB_OUTPUT"
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      - name: Sign both image digests with GitHub OIDC
+        env:
+          API_IMAGE: ${{ steps.images.outputs.api }}
+          WEB_IMAGE: ${{ steps.images.outputs.web }}
+        run: |
+          cosign sign --yes "$API_IMAGE"
+          cosign sign --yes "$WEB_IMAGE"
+
+      - name: Create and store the stopped-services foundation plan
+        id: plan
+        shell: bash
+        env:
+          API_IMAGE: ${{ steps.images.outputs.api }}
+          WEB_IMAGE: ${{ steps.images.outputs.web }}
+        run: |
+          set -euo pipefail
+          PLAN_PATH="$RUNNER_TEMP/foundation.tfplan"
+          PLAN_KEY="ambrosia/$DEPLOY_ENVIRONMENT/plans/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-foundation.tfplan"
+          terraform -chdir=infra/aws plan -out="$PLAN_PATH" \
+            -var="environment=$DEPLOY_ENVIRONMENT" \
+            -var="aws_region=$AWS_REGION" \
+            -var="domain_name=$DOMAIN_NAME" \
+            -var="hosted_zone_id=$HOSTED_ZONE_ID" \
+            -var="alb_certificate_arn=$ALB_CERTIFICATE_ARN" \
+            -var="cloudfront_certificate_arn=$CLOUDFRONT_CERTIFICATE_ARN" \
+            -var="api_image=$API_IMAGE" \
+            -var="web_image=$WEB_IMAGE" \
+            -var="api_desired_count=$API_DESIRED_COUNT" \
+            -var="web_desired_count=$WEB_DESIRED_COUNT" \
+            -var="alert_email=$ALERT_EMAIL" \
+            -var="owner=$OWNER" \
+            -var="cost_center=$COST_CENTER" \
+            -var="data_classification=$DATA_CLASSIFICATION" \
+            -var="enable_services=false"
+          terraform -chdir=infra/aws show -json "$PLAN_PATH" | jq -r '
+            .resource_changes[]?
+            | select(.change.actions != ["no-op"])
+            | "- `\(.address)`: `\(.change.actions | join(" -> "))`"
+          ' > "$RUNNER_TEMP/foundation-plan-summary.md"
+          aws s3 cp "$PLAN_PATH" "s3://$TF_STATE_BUCKET/$PLAN_KEY" --only-show-errors
+          echo "key=$PLAN_KEY" >> "$GITHUB_OUTPUT"
+          {
+            echo "## AWS $DEPLOY_ENVIRONMENT foundation plan"
+            echo
+            echo "Candidate: \`$GITHUB_SHA\`"
+            echo "API image: \`${{ steps.images.outputs.api }}\`"
+            echo "Web image: \`${{ steps.images.outputs.web }}\`"
+            echo "Sensitive binary plan: \`s3://$TF_STATE_BUCKET/$PLAN_KEY\`"
+            echo
+            echo "Changed resources and actions only; Terraform values are intentionally omitted."
+            cat "$RUNNER_TEMP/foundation-plan-summary.md"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  apply-foundation:
+    if: github.event_name == 'workflow_dispatch' && inputs.apply
+    needs: plan
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      enable_plan_key: ${{ steps.enable-plan.outputs.key }}
+      migration_task_arn: ${{ steps.migration.outputs.task_arn }}
+    env:
+      DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
+      EXPECTED_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+      TF_STATE_KMS_KEY_ARN: ${{ vars.TF_STATE_KMS_KEY_ARN }}
+      DOMAIN_NAME: ${{ vars.DOMAIN_NAME }}
+      HOSTED_ZONE_ID: ${{ vars.HOSTED_ZONE_ID }}
+      API_DESIRED_COUNT: ${{ vars.API_DESIRED_COUNT || '1' }}
+      WEB_DESIRED_COUNT: ${{ vars.WEB_DESIRED_COUNT || '1' }}
+      ALERT_EMAIL: ${{ vars.ALERT_EMAIL }}
+      OWNER: ${{ vars.OWNER }}
+      COST_CENTER: ${{ vars.COST_CENTER }}
+      DATA_CLASSIFICATION: ${{ vars.DATA_CLASSIFICATION || 'synthetic' }}
+      ALB_CERTIFICATE_ARN: ${{ secrets.ALB_CERTIFICATE_ARN }}
+      CLOUDFRONT_CERTIFICATE_ARN: ${{ secrets.CLOUDFRONT_CERTIFICATE_ARN }}
+      API_IMAGE: ${{ needs.plan.outputs.api_image }}
+      WEB_IMAGE: ${{ needs.plan.outputs.web_image }}
+      FOUNDATION_PLAN_KEY: ${{ needs.plan.outputs.foundation_plan_key }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+      - uses: aws-actions/configure-aws-credentials@ff717079ee2060e4bcee96c4779b553acc87447c # v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - name: Reassert target identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_SHA" = "${{ inputs.candidate_sha }}"
+          test "$(aws sts get-caller-identity --query Account --output text)" = "$EXPECTED_ACCOUNT_ID"
+      - name: Initialize remote state
+        shell: bash
+        run: |
+          set -euo pipefail
+          backend=(
+            -backend-config="bucket=$TF_STATE_BUCKET"
+            -backend-config="key=ambrosia/$DEPLOY_ENVIRONMENT/terraform.tfstate"
+            -backend-config="region=$AWS_REGION"
+            -backend-config="encrypt=true"
+            -backend-config="use_lockfile=true"
+          )
+          if [ -n "$TF_STATE_KMS_KEY_ARN" ]; then
+            backend+=( -backend-config="kms_key_id=$TF_STATE_KMS_KEY_ARN" )
+          fi
+          terraform -chdir=infra/aws init "${backend[@]}"
+      - name: Apply reviewed foundation plan
+        shell: bash
+        run: |
+          set -euo pipefail
+          PLAN_PATH="$RUNNER_TEMP/foundation.tfplan"
+          aws s3 cp "s3://$TF_STATE_BUCKET/$FOUNDATION_PLAN_KEY" "$PLAN_PATH" --only-show-errors
+          terraform -chdir=infra/aws apply -auto-approve "$PLAN_PATH"
+      - name: Run schema migration task
+        id: migration
+        shell: bash
+        run: |
+          set -euo pipefail
+          CLUSTER=$(terraform -chdir=infra/aws output -raw ecs_cluster)
+          TASK=$(terraform -chdir=infra/aws output -raw migration_task_definition)
+          SUBNETS=$(terraform -chdir=infra/aws output -json application_subnet_ids | jq -r 'join(",")')
+          SG=$(terraform -chdir=infra/aws output -raw ecs_security_group_id)
+          TASK_ARN=$(aws ecs run-task --cluster "$CLUSTER" --task-definition "$TASK" --launch-type FARGATE \
+            --network-configuration "awsvpcConfiguration={subnets=[$SUBNETS],securityGroups=[$SG],assignPublicIp=DISABLED}" \
+            --query 'tasks[0].taskArn' --output text)
+          test "$TASK_ARN" != "None"
+          echo "task_arn=$TASK_ARN" >> "$GITHUB_OUTPUT"
+          aws ecs wait tasks-stopped --cluster "$CLUSTER" --tasks "$TASK_ARN"
+          EXIT_CODE=$(aws ecs describe-tasks --cluster "$CLUSTER" --tasks "$TASK_ARN" --query 'tasks[0].containers[0].exitCode' --output text)
+          test "$EXIT_CODE" = "0"
+      - name: Create the service-enablement plan
+        id: enable-plan
+        shell: bash
+        run: |
+          set -euo pipefail
+          PLAN_PATH="$RUNNER_TEMP/enable.tfplan"
+          PLAN_KEY="ambrosia/$DEPLOY_ENVIRONMENT/plans/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-enable.tfplan"
+          terraform -chdir=infra/aws plan -out="$PLAN_PATH" \
+            -var="environment=$DEPLOY_ENVIRONMENT" \
+            -var="aws_region=$AWS_REGION" \
+            -var="domain_name=$DOMAIN_NAME" \
+            -var="hosted_zone_id=$HOSTED_ZONE_ID" \
+            -var="alb_certificate_arn=$ALB_CERTIFICATE_ARN" \
+            -var="cloudfront_certificate_arn=$CLOUDFRONT_CERTIFICATE_ARN" \
+            -var="api_image=$API_IMAGE" \
+            -var="web_image=$WEB_IMAGE" \
+            -var="api_desired_count=$API_DESIRED_COUNT" \
+            -var="web_desired_count=$WEB_DESIRED_COUNT" \
+            -var="alert_email=$ALERT_EMAIL" \
+            -var="owner=$OWNER" \
+            -var="cost_center=$COST_CENTER" \
+            -var="data_classification=$DATA_CLASSIFICATION" \
+            -var="enable_services=true"
+          terraform -chdir=infra/aws show -json "$PLAN_PATH" | jq -r '
+            .resource_changes[]?
+            | select(.change.actions != ["no-op"])
+            | "- `\(.address)`: `\(.change.actions | join(" -> "))`"
+          ' > "$RUNNER_TEMP/enable-plan-summary.md"
+          aws s3 cp "$PLAN_PATH" "s3://$TF_STATE_BUCKET/$PLAN_KEY" --only-show-errors
+          echo "key=$PLAN_KEY" >> "$GITHUB_OUTPUT"
+          {
+            echo "## AWS $DEPLOY_ENVIRONMENT service-enablement plan"
+            echo
+            echo "Migration task: \`${{ steps.migration.outputs.task_arn }}\`"
+            echo "Sensitive binary plan: \`s3://$TF_STATE_BUCKET/$PLAN_KEY\`"
+            echo
+            echo "Changed resources and actions only; Terraform values are intentionally omitted."
+            cat "$RUNNER_TEMP/enable-plan-summary.md"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Delete applied foundation plan
+        if: always()
+        run: aws s3 rm "s3://$TF_STATE_BUCKET/$FOUNDATION_PLAN_KEY" --only-show-errors
+
+  enable-services:
+    if: github.event_name == 'workflow_dispatch' && inputs.apply
+    needs: [plan, apply-foundation]
+    runs-on: ubuntu-latest
+    environment:
+      name: ${{ inputs.environment }}
+      url: ${{ steps.urls.outputs.web }}
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
+      EXPECTED_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+      TF_STATE_KMS_KEY_ARN: ${{ vars.TF_STATE_KMS_KEY_ARN }}
+      ENABLE_PLAN_KEY: ${{ needs.apply-foundation.outputs.enable_plan_key }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+      - uses: aws-actions/configure-aws-credentials@ff717079ee2060e4bcee96c4779b553acc87447c # v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - name: Reassert target identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_SHA" = "${{ inputs.candidate_sha }}"
+          test "$(aws sts get-caller-identity --query Account --output text)" = "$EXPECTED_ACCOUNT_ID"
+      - name: Initialize remote state
+        shell: bash
+        run: |
+          set -euo pipefail
+          backend=(
+            -backend-config="bucket=$TF_STATE_BUCKET"
+            -backend-config="key=ambrosia/$DEPLOY_ENVIRONMENT/terraform.tfstate"
+            -backend-config="region=$AWS_REGION"
+            -backend-config="encrypt=true"
+            -backend-config="use_lockfile=true"
+          )
+          if [ -n "$TF_STATE_KMS_KEY_ARN" ]; then
+            backend+=( -backend-config="kms_key_id=$TF_STATE_KMS_KEY_ARN" )
+          fi
+          terraform -chdir=infra/aws init "${backend[@]}"
+      - name: Apply reviewed service-enablement plan
+        shell: bash
+        run: |
+          set -euo pipefail
+          PLAN_PATH="$RUNNER_TEMP/enable.tfplan"
+          aws s3 cp "s3://$TF_STATE_BUCKET/$ENABLE_PLAN_KEY" "$PLAN_PATH" --only-show-errors
+          terraform -chdir=infra/aws apply -auto-approve "$PLAN_PATH"
+      - name: Wait for both services and verify public health
+        id: urls
+        shell: bash
+        run: |
+          set -euo pipefail
+          CLUSTER=$(terraform -chdir=infra/aws output -raw ecs_cluster)
+          aws ecs wait services-stable --cluster "$CLUSTER" --services api web
+          API_URL=$(terraform -chdir=infra/aws output -raw api_url)
+          WEB_URL=$(terraform -chdir=infra/aws output -raw web_url)
+          curl --fail --retry 12 --retry-delay 10 "$API_URL/ready"
+          curl --fail --retry 12 --retry-delay 10 "$WEB_URL/"
+          echo "api=$API_URL" >> "$GITHUB_OUTPUT"
+          echo "web=$WEB_URL" >> "$GITHUB_OUTPUT"
+          {
+            echo "## AWS $DEPLOY_ENVIRONMENT deployment verified"
+            echo
+            echo "Candidate: \`$GITHUB_SHA\`"
+            echo "Web: $WEB_URL"
+            echo "API ready: $API_URL/ready"
+            echo "Migration task: \`${{ needs.apply-foundation.outputs.migration_task_arn }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Delete applied service-enablement plan
+        if: always()
+        run: aws s3 rm "s3://$TF_STATE_BUCKET/$ENABLE_PLAN_KEY" --only-show-errors

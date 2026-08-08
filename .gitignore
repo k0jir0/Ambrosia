@@ -5,6 +5,13 @@ node_modules/
 # next
 .next/
 out/
+*.tsbuildinfo
+
+# terraform local state and provider cache (commit .terraform.lock.hcl)
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
 
 # tests
 test-results/

@@ -15,11 +15,11 @@ def test_root_test_scripts_expose_stack_unit_entrypoint() -> None:
     package_json = json.loads(_read("package.json"))
     scripts = package_json["scripts"]
 
-    assert scripts["test:api"] == "cd services/api && uv run pytest"
+    assert scripts["test:api"] == "cd services/api && uv run --frozen pytest"
     assert scripts["test:mobile"] == "pnpm --filter @ambrosia/mobile test"
     assert scripts["typecheck:mobile"] == "pnpm --filter @ambrosia/mobile typecheck"
     assert scripts["build:web"] == "pnpm --filter @ambrosia/web build"
-    assert scripts["test:unit"] == "python -m pytest tests/unit-tests -q"
+    assert scripts["test:unit"] == "uv run --project services/api --frozen pytest tests/unit-tests -q"
 
 
 def test_fastapi_routes_wire_review_scanner_and_mobile_surfaces() -> None:
@@ -83,4 +83,3 @@ def test_mobile_control_plane_schema_preserves_governance_and_route_contract() -
         "requiresServerConfirmation",
     }.issubset(route_required)
     assert schema["properties"]["routes"]["items"]["properties"]["sourceOfTruth"]["enum"] == ["fastapi"]
-

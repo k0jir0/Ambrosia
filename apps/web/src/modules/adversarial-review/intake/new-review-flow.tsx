@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowRight, CircleDashed } from "lucide-react";
 import { Panel, SectionTitle } from "@/components/ui";
-import { createAlphaHypothesis, createSignal, linkAlphaHypothesisSignal, linkSignalReview } from "@/lib/api";
+import { createAlphaHypothesis, createSignal, linkAlphaHypothesisSignal, linkSignalReview, recordProductEvent } from "@/lib/api";
 import { createReviewRecord, setReviewAlphaLink, useReviewArchive } from "@/lib/review-store";
 
 type Step = 1 | 2 | 3;
@@ -31,6 +31,19 @@ export function NewReviewFlow({ initialParams }: NewReviewFlowProps) {
     };
 
     const source = getParamValue("source");
+    const guided = getParamValue("guided");
+    if (guided === "ambrosia-first-decision") {
+      return {
+        ticker: "SAMPLE",
+        assetClass: "Illustrative equity basket",
+        timeHorizon: "6-12 months",
+        expression: "Research decision only — no live order",
+        thesis: "A crowded AI infrastructure position deserves a governed disconfirmation review before capital is committed.",
+        sourcePointer: "Ambrosia guided sample v1 · source cutoff 2026-08-07 · demo data",
+        summary: "dated Ambrosia guided decision (not live market data)",
+        link: null,
+      };
+    }
     const baseContext = {
       ticker: getParamValue("ticker", "AAPL").toUpperCase(),
       assetClass: getParamValue("assetClass", "Equities"),
@@ -187,6 +200,12 @@ export function NewReviewFlow({ initialParams }: NewReviewFlowProps) {
     }
 
     setCreateMessage(source === "api" ? "Review created through the API. Opening decision workbench..." : "API unavailable, so Ambrosia saved a local durable review. Opening decision workbench...");
+    if (source === "api") {
+      void recordProductEvent("packet_saved", "intake", {
+        objectReference: review.id,
+        properties: { mode: intakeContext?.summary ? "prefilled" : "own_thesis" },
+      });
+    }
     router.push(`/review/${encodeURIComponent(review.id)}`);
   }
 

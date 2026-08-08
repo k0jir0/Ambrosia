@@ -1,219 +1,35 @@
 "use client";
 
+import { useEffect } from "react";
 import Link from "next/link";
-import { ArrowRight, BellRing, FileSearch, TrendingUp } from "lucide-react";
+import { ArrowRight, Beaker, CheckCircle2, CircleDashed, FileInput, ShieldCheck } from "lucide-react";
+
 import { useReviewArchive } from "@/lib/review-store";
-import { Badge, Panel, SectionTitle } from "./ui";
+import { recordProductEvent } from "@/lib/api";
+import { Badge, Panel } from "./ui";
 
 export function DashboardPage() {
   const { reviews, source, loading } = useReviewArchive();
-  const reviewsAwaitingDecision = reviews.filter((review) => review.decisionState === null).length;
-  const dueOutcomes = reviews.filter((review) => review.decisionState !== null).length;
-  const reportReady = reviews.filter((review) => review.status === "synthesis" || review.status === "decision_recorded").length;
-  const recent = reviews.slice(0, 4);
-  const queue = reviews
-    .map((review) => {
-      if (review.decisionState === null) {
-        return {
-          id: `${review.id}-decision`,
-          label: `${reviewHeadline(review.ticker, review.title)} is awaiting decision`,
-          cta: "Continue",
-          href: `/review/${review.id}`,
-        };
-      }
-      if (review.status === "decision_recorded") {
-        return {
-          id: `${review.id}-outcome`,
-          label: `${reviewHeadline(review.ticker, review.title)} has outcome follow-up due`,
-          cta: "Record",
-          href: "/calibration",
-        };
-      }
-      return {
-        id: `${review.id}-review`,
-        label: `${reviewHeadline(review.ticker, review.title)} has a fresh review update`,
-        cta: "Open",
-        href: `/review/${review.id}`,
-      };
-    })
-    .slice(0, 3);
+  const awaitingDecision = reviews.filter((review) => review.decisionState === null);
+  const decided = reviews.filter((review) => review.decisionState !== null);
+  const recent = reviews.slice(0, 5);
 
-  return (
-    <div className="space-y-6">
-      <Panel className="p-5">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <p className="text-sm text-ink/70">Daily Briefing</p>
-            <h1 className="text-2xl font-semibold">Good morning. You have {reviewsAwaitingDecision} reviews awaiting decision.</h1>
-          </div>
-          <Link href="/review/new" className="focus-ring inline-flex items-center gap-2 rounded-md bg-teal px-4 py-2 text-sm font-semibold text-fog">
-            New Review <ArrowRight className="h-4 w-4" />
-          </Link>
-        </div>
-      </Panel>
+  useEffect(() => {
+    void recordProductEvent("return_session", "decision_packets");
+  }, []);
+  const sourceLabel = loading ? "Synchronizing" : source === "api" ? "Tenant database" : "Local fallback · not durable";
 
-      <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        <PulseCard label="Reviews" value={String(reviews.length)} note={loading ? "Syncing archive" : `Archive source: ${source}`} />
-        <PulseCard label="Pending Decisions" value={String(reviewsAwaitingDecision)} note="Need your action" />
-        <PulseCard label="Reports Ready" value={String(reportReady)} note="Synthesized and decision-ready" />
-        <PulseCard label="Outcome Queue" value={String(dueOutcomes)} note="Record feedback" />
-      </section>
+  return <div className="mx-auto max-w-6xl space-y-5">
+    <Panel className="overflow-hidden p-0"><div className="grid lg:grid-cols-[1.15fr_0.85fr]"><section className="p-6 sm:p-8"><div className="inline-flex items-center gap-2 rounded-full border border-teal/25 bg-teal/5 px-3 py-1.5 text-xs font-semibold text-teal"><ShieldCheck className="h-3.5 w-3.5" /> Human decision authority</div><h1 className="mt-6 max-w-2xl text-3xl font-semibold leading-tight tracking-[-0.035em] sm:text-5xl">Turn one thesis into a decision you can defend later.</h1><p className="mt-5 max-w-2xl text-sm leading-7 text-ink/62">Attach dated evidence, force the strongest disagreement, pass deterministic controls, record the human decision, and preserve what happened next.</p><div className="mt-7 flex flex-wrap gap-3"><Link href="/review/new?guided=ambrosia-first-decision" className="focus-ring inline-flex items-center gap-2 rounded-md bg-teal px-4 py-3 text-sm font-bold text-[#071411]"><Beaker className="h-4 w-4" /> Run five-minute guided case</Link><Link href="/review/new" className="focus-ring inline-flex items-center gap-2 rounded-md border border-line px-4 py-3 text-sm font-semibold"><FileInput className="h-4 w-4" /> Use my thesis</Link></div></section><aside className="border-t border-line bg-fog/65 p-6 lg:border-l lg:border-t-0 sm:p-8"><p className="text-xs font-semibold uppercase tracking-[0.16em] text-teal">Your next action</p>{awaitingDecision[0] ? <><h2 className="mt-4 text-xl font-semibold">Finish {awaitingDecision[0].ticker || "the open"} packet</h2><p className="mt-3 text-sm leading-6 text-ink/58">A thesis is waiting for its explicit human decision and rationale.</p><Link href={`/review/${awaitingDecision[0].id}`} className="focus-ring mt-6 inline-flex items-center gap-2 text-sm font-bold text-teal">Continue packet <ArrowRight className="h-4 w-4" /></Link></> : <><h2 className="mt-4 text-xl font-semibold">Challenge your first decision</h2><p className="mt-3 text-sm leading-6 text-ink/58">Start with the dated sample or enter a thesis from current work. No live order will be placed.</p><Link href="/onboarding" className="focus-ring mt-6 inline-flex items-center gap-2 text-sm font-bold text-teal">Choose a path <ArrowRight className="h-4 w-4" /></Link></>}</aside></div></Panel>
 
-      <section className="grid gap-4 xl:grid-cols-4">
-        {PROOF_CARDS.map((card) => (
-          <ProofCard key={card.title} card={card} />
-        ))}
-      </section>
+    <section className="grid gap-4 sm:grid-cols-3"><Metric label="Decision packets" value={String(reviews.length)} note={sourceLabel} /><Metric label="Needs human decision" value={String(awaitingDecision.length)} note="No model can approve" /><Metric label="Outcome memory" value={String(decided.length)} note="Decided packets ready for follow-up" /></section>
 
-      <section className="grid gap-4 xl:grid-cols-3">
-        <Panel className="p-5 xl:col-span-2">
-          <SectionTitle eyebrow="Needs Your Attention" title="Priority queue" />
-          <ul className="mt-4 space-y-3">
-            {queue.length > 0 ? (
-              queue.map((item) => (
-                <li key={item.id} className="flex items-center justify-between rounded-md border border-line bg-fog/70 p-3 text-sm">
-                  <span>{item.label}</span>
-                  <Link href={item.href} className="focus-ring inline-flex items-center gap-1 text-teal">
-                    {item.cta} <ArrowRight className="h-4 w-4" />
-                  </Link>
-                </li>
-              ))
-            ) : (
-              <li className="rounded-md border border-line bg-fog/70 p-3 text-sm text-ink/70">No queued actions yet. Create a review to start the decision pipeline.</li>
-            )}
-          </ul>
-        </Panel>
+    <Panel className="p-6"><div className="flex flex-wrap items-start justify-between gap-4"><div><p className="text-xs font-semibold uppercase tracking-[0.16em] text-teal">Governed workflow</p><h2 className="mt-2 text-xl font-semibold">One visible loop, no black-box approval</h2></div><Badge tone={source === "api" ? "good" : "warn"}>{sourceLabel}</Badge></div><ol className="mt-6 grid gap-4 md:grid-cols-5">{[["01", "Intake", "State action, horizon, and falsifier."], ["02", "Evidence", "Expose source and as-of time."], ["03", "Challenge", "Require critique and disconfirmation."], ["04", "Controls", "Replay deterministic risk gates."], ["05", "Decision", "Human rationale becomes memory."]].map(([number, title, copy], index) => <li key={number} className="rounded-lg border border-line bg-fog/60 p-4">{index < Math.min(5, reviews.length ? 4 : 1) ? <CheckCircle2 className="h-4 w-4 text-teal" /> : <CircleDashed className="h-4 w-4 text-ink/35" />}<p className="mt-5 text-[10px] font-bold tracking-[0.16em] text-teal">{number}</p><h3 className="mt-2 text-sm font-semibold">{title}</h3><p className="mt-2 text-xs leading-5 text-ink/48">{copy}</p></li>)}</ol></Panel>
 
-        <Panel className="p-5">
-          <SectionTitle eyebrow="Calibration Snapshot" title="Performance this week" />
-          <div className="mt-4 space-y-3 text-sm">
-            <div className="rounded-md border border-line bg-fog/70 p-3">
-              <p className="text-ink/70">Decision accuracy</p>
-              <p className="mt-1 text-xl font-semibold">72%</p>
-            </div>
-            <div className="rounded-md border border-line bg-fog/70 p-3">
-              <p className="text-ink/70">Confidence calibration</p>
-              <p className="mt-1 flex items-center gap-2 text-xl font-semibold text-amber">
-                <TrendingUp className="h-4 w-4" /> 73%
-              </p>
-            </div>
-            <Link href="/calibration" className="focus-ring inline-flex items-center gap-1 text-sm font-medium text-teal">
-              See full calibration <ArrowRight className="h-4 w-4" />
-            </Link>
-          </div>
-        </Panel>
-      </section>
-
-      <Panel className="p-5">
-        <div className="mb-3 flex items-center justify-between">
-          <SectionTitle eyebrow="Recent Reviews" title="Resume active packets" />
-          <Link href="/history" className="focus-ring text-sm font-medium text-teal">
-            View all
-          </Link>
-        </div>
-        <ul className="space-y-2">
-          {recent.map((review) => (
-            <li key={review.id} className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-line bg-fog/70 p-3 text-sm">
-              <div className="flex items-center gap-2">
-                <Badge tone="info">{review.ticker}</Badge>
-                <span>{review.title}</span>
-              </div>
-              <div className="flex items-center gap-3">
-                <span className="text-ink/70">{review.confidence}% confidence</span>
-                <Link href={`/review/${review.id}`} className="focus-ring inline-flex items-center gap-1 text-teal">
-                  Open <ArrowRight className="h-4 w-4" />
-                </Link>
-              </div>
-            </li>
-          ))}
-        </ul>
-      </Panel>
-
-      <Panel className="p-5">
-        <div className="flex items-center gap-2 text-sm text-ink/70">
-          <BellRing className="h-4 w-4 text-amber" />
-          Live ticker intelligence is now available from the sidebar and from the Markets route.
-        </div>
-      </Panel>
-    </div>
-  );
+    <Panel className="p-6"><div className="flex items-center justify-between gap-3"><div><p className="text-xs font-semibold uppercase tracking-[0.16em] text-teal">Recent packets</p><h2 className="mt-2 text-xl font-semibold">Resume accountable work</h2></div><Link href="/review" className="text-sm font-semibold text-teal">Open queue</Link></div>{recent.length ? <ul className="mt-5 divide-y divide-line">{recent.map((review) => <li key={review.id} className="flex flex-wrap items-center justify-between gap-3 py-4"><div className="flex items-center gap-3"><Badge tone="info">{review.ticker || "Thesis"}</Badge><div><p className="text-sm font-semibold">{review.title}</p><p className="mt-1 text-xs text-ink/45">{review.decisionState ? `Human decision: ${review.decisionState}` : "Human decision required"}</p></div></div><Link href={`/review/${review.id}`} className="focus-ring inline-flex items-center gap-1 text-sm font-semibold text-teal">Open <ArrowRight className="h-4 w-4" /></Link></li>)}</ul> : <div className="mt-5 rounded-lg border border-dashed border-line p-8 text-center"><p className="text-sm font-semibold">No private packets yet</p><p className="mt-2 text-xs text-ink/48">The guided case creates a clearly labelled demonstration packet.</p></div>}</Panel>
+  </div>;
 }
 
-function reviewHeadline(ticker: string, title: string): string {
-  const normalizedTicker = ticker.trim();
-  const normalizedTitle = title.trim();
-  if (!normalizedTicker) return normalizedTitle;
-  return normalizedTitle.toUpperCase().startsWith(`${normalizedTicker.toUpperCase()} `)
-    ? normalizedTitle
-    : `${normalizedTicker} ${normalizedTitle}`;
-}
-
-function PulseCard({ label, value, note }: { label: string; value: string; note: string }) {
-  return (
-    <Panel className="p-4">
-      <p className="text-sm text-ink/70">{label}</p>
-      <p className="mt-1 text-2xl font-semibold">{value}</p>
-      <p className="mt-2 text-xs text-ink/60">{note}</p>
-    </Panel>
-  );
-}
-
-type ProofCardModel = {
-  title: string;
-  claim: string;
-  action: string;
-  href: string;
-  caveat?: string;
-};
-
-const PROOF_CARDS: ProofCardModel[] = [
-  {
-    title: "Agentic AI for Investments",
-    claim: "Typed thesis intake becomes claims, sources, validation, critique, and audit under human decision control.",
-    action: "Create Review",
-    href: "/review/new"
-  },
-  {
-    title: "Investment Trading Decisions",
-    claim: "One packet carries market context, backtest, risk, confidence, outcome memory, and reportable state.",
-    action: "Run Workflow",
-    href: "/review/new"
-  },
-  {
-    title: "Swarm Intelligence",
-    claim: "Specialist roles are preserved and coordinated into PM synthesis rather than flattened into one answer.",
-    action: "Run Agent Swarm",
-    href: "/review/atr-003",
-    caveat: "Known limitation: formal pairwise disagreement score is pending."
-  },
-  {
-    title: "Agentic Swarm",
-    claim: "Provider-routed specialist actions mutate packet state, emit audit, and surface operator proof.",
-    action: "Open Advanced",
-    href: "/advanced"
-  }
-];
-
-function ProofCard({ card }: { card: ProofCardModel }) {
-  return (
-    <Panel className="p-4">
-      <div className="flex h-full flex-col">
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <p className="text-sm font-semibold text-ink">{card.title}</p>
-            <p className="mt-2 text-sm leading-6 text-ink/70">{card.claim}</p>
-          </div>
-          <FileSearch className="h-4 w-4 shrink-0 text-teal" />
-        </div>
-        {card.caveat ? (
-          <div className="mt-3">
-            <Badge tone="warn">{card.caveat}</Badge>
-          </div>
-        ) : null}
-        <Link href={card.href} className="focus-ring mt-4 inline-flex w-fit items-center gap-1 rounded-md border border-line px-3 py-2 text-sm font-semibold text-teal hover:border-teal/50">
-          {card.action} <ArrowRight className="h-4 w-4" />
-        </Link>
-      </div>
-    </Panel>
-  );
+function Metric({ label, value, note }: { label: string; value: string; note: string }) {
+  return <Panel className="p-5"><p className="text-xs font-semibold uppercase tracking-[0.12em] text-ink/45">{label}</p><p className="mt-2 text-3xl font-semibold">{value}</p><p className="mt-2 text-xs text-ink/45">{note}</p></Panel>;
 }

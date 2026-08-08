@@ -110,9 +110,26 @@ function normalizeTickerForPath(ticker: string): string {
 async function fetchWithTimeout(input: RequestInfo | URL, init?: RequestInit, timeoutMs = DEFAULT_API_TIMEOUT_MS): Promise<Response> {
   const controller = new AbortController();
   const timeout = window.setTimeout(() => controller.abort(new ApiUnavailableError()), timeoutMs);
+  const headers = new Headers(init?.headers);
+  const method = (init?.method ?? "GET").toUpperCase();
+  if (!["GET", "HEAD", "OPTIONS"].includes(method)) {
+    const csrf = document.cookie
+      .split(";")
+      .map((part) => part.trim())
+      .find((part) => part.startsWith("ambrosia_csrf="))
+      ?.slice("ambrosia_csrf=".length);
+    if (csrf && !headers.has("X-CSRF-Token")) {
+      headers.set("X-CSRF-Token", decodeURIComponent(csrf));
+    }
+  }
 
   try {
-    return await fetch(input, { ...init, signal: controller.signal });
+    return await fetch(input, {
+      ...init,
+      headers,
+      credentials: "include",
+      signal: controller.signal,
+    });
   } catch (error) {
     if (error instanceof ApiUnavailableError || (error instanceof DOMException && error.name === "AbortError")) {
       throw new ApiUnavailableError();
@@ -121,6 +138,307 @@ async function fetchWithTimeout(input: RequestInfo | URL, init?: RequestInit, ti
   } finally {
     window.clearTimeout(timeout);
   }
+}
+
+export type AccountSession = {
+  user: { id: string; email: string; displayName?: string; professionalRole?: string };
+  organization: { id: string; name: string; role: string };
+  session: { id: string; expiresAt?: string; absoluteExpiresAt?: string };
+};
+
+type SignupResult = {
+  status: "pending_verification";
+  message: string;
+  userId: string;
+  organizationId: string;
+  workspaceId: string;
+  developmentVerificationToken?: string;
+  deliveryStatus: "sent" | "retry_required";
+};
+
+async function authRequest<T>(path: string, init?: RequestInit): Promise<T> {
+  const apiBaseUrl = getApiBaseUrl();
+  if (!apiBaseUrl) throw new ApiUnavailableError();
+  const response = await fetchWithTimeout(`${apiBaseUrl}${path}`, init, 20000);
+  return readJsonResponse<T>(response);
+}
+
+export function signupAccount(body: {
+  email: string;
+  password: string;
+  organizationName: string;
+  displayName: string;
+  professionalRole: string;
+  acceptedTerms: boolean;
+}): Promise<SignupResult> {
+  return authRequest<SignupResult>("/auth/signup", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+export function resendAccountVerification(email: string): Promise<{ message: string; developmentVerificationToken?: string }> {
+  return authRequest("/auth/resend-verification", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email }),
+  });
+}
+
+export function verifyAccountEmail(token: string): Promise<AccountSession> {
+  return authRequest<AccountSession>("/auth/verify-email", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token }),
+  });
+}
+
+export function loginAccount(email: string, password: string): Promise<AccountSession> {
+  return authRequest<AccountSession>("/auth/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password }),
+  });
+}
+
+export function getAccountSession(): Promise<AccountSession> {
+  return authRequest<AccountSession>("/auth/me");
+}
+
+export async function recordProductEvent(
+  eventType: "onboarding_viewed" | "guided_started" | "own_thesis_started" | "packet_saved" | "review_completed" | "outcome_recorded" | "return_session",
+  surface: string,
+  options: {
+    objectReference?: string;
+    properties?: Record<string, string | number | boolean | null>;
+  } = {},
+): Promise<boolean> {
+  try {
+    const sessionKey = "ambrosia.analytics.session";
+    let sessionId = window.sessionStorage.getItem(sessionKey);
+    if (!sessionId) {
+      sessionId = window.crypto.randomUUID();
+      window.sessionStorage.setItem(sessionKey, sessionId);
+    }
+    let objectKey = "";
+    if (options.objectReference) {
+      const digest = await window.crypto.subtle.digest(
+        "SHA-256",
+        new TextEncoder().encode(options.objectReference),
+      );
+      objectKey = Array.from(new Uint8Array(digest).slice(0, 8))
+        .map((value) => value.toString(16).padStart(2, "0"))
+        .join("");
+    }
+    const result = await authRequest<{ inserted: boolean }>("/analytics/events", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        eventType,
+        surface,
+        objectReference: options.objectReference,
+        eventKey: `${sessionId}:${eventType}:${surface}:${objectKey}`.slice(0, 120),
+        properties: options.properties ?? {},
+      }),
+    });
+    return result.inserted;
+  } catch {
+    // Telemetry is deliberately best effort and never blocks the decision workflow.
+    return false;
+  }
+}
+
+export type ActivationReport = {
+  windowDays: number;
+  events: Record<string, { count: number; uniqueUsers: number }>;
+};
+
+export function getActivationReport(days = 30): Promise<ActivationReport> {
+  return authRequest(`/analytics/activation?days=${encodeURIComponent(days)}`);
+}
+
+export type GovernedArtifactRecord = {
+  id: string;
+  artifact_kind: "exports" | "evidence" | "llm" | "reports";
+  content_hash: string;
+  size_bytes: number;
+  storage_status: "pending" | "durable" | "failed";
+  created_at: string;
+};
+
+export function listGovernedArtifacts(): Promise<{ artifacts: GovernedArtifactRecord[] }> {
+  return authRequest("/artifacts");
+}
+
+export function getGovernedArtifactDownload(artifactId: string): Promise<{
+  url: string;
+  expiresInSeconds: number;
+}> {
+  return authRequest(`/artifacts/${encodeURIComponent(artifactId)}/download`);
+}
+
+export function requestPasswordReset(email: string): Promise<{
+  message: string;
+  developmentResetToken?: string;
+}> {
+  return authRequest("/auth/forgot-password", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email }),
+  });
+}
+
+export function resetAccountPassword(token: string, newPassword: string): Promise<{
+  status: string;
+  message: string;
+}> {
+  return authRequest("/auth/reset-password", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token, newPassword }),
+  });
+}
+
+export async function logoutAccount(): Promise<void> {
+  const apiBaseUrl = getApiBaseUrl();
+  if (!apiBaseUrl) throw new ApiUnavailableError();
+  const response = await fetchWithTimeout(`${apiBaseUrl}/auth/logout`, { method: "POST" }, 20000);
+  if (!response.ok) {
+    throw new Error(`Unable to sign out (${response.status})`);
+  }
+}
+
+export type AccountSessionRecord = {
+  id: string;
+  current: boolean;
+  createdAt?: string;
+  lastSeenAt?: string;
+  expiresAt: string;
+  absoluteExpiresAt: string;
+  ipPrefix?: string;
+};
+
+export function listAccountSessions(): Promise<{ sessions: AccountSessionRecord[] }> {
+  return authRequest("/auth/sessions");
+}
+
+export function revokeAccountSession(sessionId: string): Promise<{ revoked: boolean }> {
+  return authRequest(`/auth/sessions/${encodeURIComponent(sessionId)}`, { method: "DELETE" });
+}
+
+export async function logoutAllAccounts(): Promise<void> {
+  const apiBaseUrl = getApiBaseUrl();
+  if (!apiBaseUrl) throw new ApiUnavailableError();
+  const response = await fetchWithTimeout(`${apiBaseUrl}/auth/logout-all`, { method: "POST" }, 20000);
+  if (!response.ok) throw new Error(`API request failed: ${response.status}`);
+}
+
+export function updateAccountProfile(body: { displayName: string; professionalRole: string }): Promise<{ user: AccountSession["user"] }> {
+  return authRequest("/auth/profile", {
+    method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+  });
+}
+
+export function changeAccountPassword(currentPassword: string, newPassword: string): Promise<{ status: string; otherSessionsRevoked: boolean }> {
+  return authRequest("/auth/change-password", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ currentPassword, newPassword }),
+  });
+}
+
+export type TeamMemberRecord = {
+  id: string;
+  email: string;
+  display_name: string;
+  professional_role: string;
+  role: string;
+  status: string;
+  created_at?: string;
+};
+
+export type InvitationRecord = {
+  id: string;
+  email: string;
+  role: string;
+  created_at?: string;
+  expires_at?: string;
+  deliveryStatus?: "sent" | "retry_required";
+};
+
+export function getTeam(): Promise<{ members: TeamMemberRecord[]; invitations: InvitationRecord[] }> {
+  return authRequest("/team");
+}
+
+export function inviteTeamMember(email: string, role: string): Promise<InvitationRecord & { developmentInvitationToken?: string }> {
+  return authRequest("/team/invitations", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, role }),
+  });
+}
+
+export function revokeTeamInvitation(id: string): Promise<{ revoked: boolean }> {
+  return authRequest(`/team/invitations/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
+export function updateTeamMember(
+  id: string,
+  role: "viewer" | "analyst" | "reviewer" | "admin",
+  status: "active" | "suspended",
+): Promise<{ updated: boolean }> {
+  return authRequest(`/team/members/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ role, status }),
+  });
+}
+
+export function acceptTeamInvitation(body: {
+  token: string;
+  password?: string;
+  displayName: string;
+  professionalRole: string;
+  acceptedTerms: boolean;
+}): Promise<AccountSession> {
+  return authRequest("/auth/accept-invite", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+  });
+}
+
+export type LocalWorkerRecord = {
+  id: string;
+  name: string;
+  status: string;
+  last_seen_at?: string;
+  created_at?: string;
+};
+
+export function listLocalWorkers(): Promise<{ workers: LocalWorkerRecord[] }> {
+  return authRequest("/llm/workers");
+}
+
+export function createLocalWorker(name: string): Promise<{ id: string; name: string; token: string }> {
+  return authRequest("/llm/workers", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name }),
+  });
+}
+
+export function revokeLocalWorker(id: string): Promise<{ revoked: boolean }> {
+  return authRequest(`/llm/workers/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
+export type LlmRunRecord = {
+  id: string;
+  job_id: string;
+  model_name: string;
+  model_digest?: string;
+  verification_status: string;
+  output_schema_version: string;
+  content_hash: string;
+  created_at: string;
+};
+
+export function listLlmRuns(): Promise<{ runs: LlmRunRecord[] }> {
+  return authRequest("/llm/runs");
 }
 
 export async function createReview(input: ThesisInput): Promise<TradeReview> {

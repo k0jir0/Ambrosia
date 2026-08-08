@@ -35,8 +35,8 @@ def main() -> int:
         errors.append("ios.bundleIdentifier must be com.ambrosia.mobile")
     if app.get("android", {}).get("package") != "com.ambrosia.mobile":
         errors.append("android.package must be com.ambrosia.mobile")
-    if app.get("extra", {}).get("defaultApiUrl") != "https://ambrosia-api-69t6.onrender.com":
-        errors.append("extra.defaultApiUrl must point at the approved production API")
+    if app.get("extra", {}).get("defaultApiUrl") != "http://127.0.0.1:8000":
+        errors.append("extra.defaultApiUrl must remain local; production builds inject EXPO_PUBLIC_API_URL")
     if app.get("extra", {}).get("eas", {}).get("projectId") != "b69a95c2-84e0-429f-8781-e0227e374ed8":
         errors.append("extra.eas.projectId must match the connected Expo project")
 
@@ -59,7 +59,7 @@ def main() -> int:
     print("- iOS bundle: com.ambrosia.mobile")
     print("- Android package: com.ambrosia.mobile")
     print("- EAS profiles: development, preview, production")
-    print("- Production API: https://ambrosia-api-69t6.onrender.com")
+    print("- Production API: supplied by EXPO_PUBLIC_API_URL in the protected build environment")
     return 0
 
 

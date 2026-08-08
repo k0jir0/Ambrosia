@@ -1,0 +1,155 @@
+variable "project" {
+  type    = string
+  default = "ambrosia"
+}
+
+variable "owner" {
+  type        = string
+  description = "Named operational owner applied to every AWS resource that supports tags"
+  validation {
+    condition     = length(trimspace(var.owner)) >= 2
+    error_message = "owner must name the accountable staging operator or team."
+  }
+}
+
+variable "cost_center" {
+  type        = string
+  description = "Approved cost-allocation identifier"
+  validation {
+    condition     = length(trimspace(var.cost_center)) >= 2
+    error_message = "cost_center must be an approved non-empty allocation identifier."
+  }
+}
+
+variable "data_classification" {
+  type        = string
+  default     = "synthetic"
+  description = "Data classification for this environment"
+  validation {
+    condition     = contains(["synthetic", "approved-staging", "approved-production"], var.data_classification)
+    error_message = "data_classification must be synthetic, approved-staging, or approved-production."
+  }
+}
+
+variable "environment" {
+  type = string
+  validation {
+    condition     = contains(["staging", "production"], var.environment)
+    error_message = "environment must be staging or production"
+  }
+}
+
+variable "aws_region" {
+  type    = string
+  default = "ca-central-1"
+  validation {
+    condition     = var.aws_region == "ca-central-1"
+    error_message = "The Index133 staging control plane is restricted to ca-central-1."
+  }
+}
+
+variable "vpc_cidr" {
+  type    = string
+  default = "10.42.0.0/16"
+}
+
+variable "domain_name" {
+  type        = string
+  description = "Route53-managed apex domain, for example ambrosia.example"
+  validation {
+    condition     = can(regex("^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$", var.domain_name)) && var.domain_name != "example.com"
+    error_message = "domain_name must be a real lower-case DNS apex and cannot be example.com."
+  }
+}
+
+variable "hosted_zone_id" {
+  type        = string
+  description = "Route53 public hosted zone id for domain_name"
+  validation {
+    condition     = can(regex("^Z[A-Z0-9]+$", var.hosted_zone_id))
+    error_message = "hosted_zone_id must be a Route53 hosted-zone identifier beginning with Z."
+  }
+}
+
+variable "alb_certificate_arn" {
+  type        = string
+  description = "Regional ACM certificate covering the API and CloudFront-to-ALB origin hostnames"
+  validation {
+    condition     = can(regex("^arn:aws[a-z-]*:acm:ca-central-1:[0-9]{12}:certificate/", var.alb_certificate_arn))
+    error_message = "alb_certificate_arn must identify a ca-central-1 ACM certificate."
+  }
+}
+
+variable "cloudfront_certificate_arn" {
+  type        = string
+  description = "us-east-1 ACM certificate covering the web hostname"
+  validation {
+    condition     = can(regex("^arn:aws[a-z-]*:acm:us-east-1:[0-9]{12}:certificate/", var.cloudfront_certificate_arn))
+    error_message = "cloudfront_certificate_arn must identify a us-east-1 ACM certificate."
+  }
+}
+
+variable "api_image" {
+  type        = string
+  default     = ""
+  description = "Immutable ECR API image reference, preferably by sha256 digest"
+  validation {
+    condition     = var.api_image == "" || can(regex("@sha256:[0-9a-f]{64}$", var.api_image))
+    error_message = "api_image must be empty during registry bootstrap or be an immutable sha256 digest reference."
+  }
+}
+
+variable "web_image" {
+  type        = string
+  default     = ""
+  description = "Immutable ECR web image reference, preferably by sha256 digest"
+  validation {
+    condition     = var.web_image == "" || can(regex("@sha256:[0-9a-f]{64}$", var.web_image))
+    error_message = "web_image must be empty during registry bootstrap or be an immutable sha256 digest reference."
+  }
+}
+
+variable "api_desired_count" {
+  type    = number
+  default = 2
+  validation {
+    condition     = var.api_desired_count >= 1 && var.api_desired_count <= 8 && floor(var.api_desired_count) == var.api_desired_count
+    error_message = "api_desired_count must be an integer from 1 through 8."
+  }
+}
+
+variable "web_desired_count" {
+  type    = number
+  default = 2
+  validation {
+    condition     = var.web_desired_count >= 1 && var.web_desired_count <= 8 && floor(var.web_desired_count) == var.web_desired_count
+    error_message = "web_desired_count must be an integer from 1 through 8."
+  }
+}
+
+variable "enable_services" {
+  type        = bool
+  default     = true
+  description = "Set false for the first infrastructure apply, run the migration task, then enable"
+}
+
+variable "db_instance_class" {
+  type    = string
+  default = "db.t4g.small"
+}
+
+variable "redis_node_type" {
+  type    = string
+  default = "cache.t4g.small"
+}
+
+variable "alert_email" {
+  type        = string
+  default     = ""
+  description = "Optional operations email subscribed to the alarm topic"
+}
+
+variable "extra_allowed_origins" {
+  type    = list(string)
+  default = []
+}

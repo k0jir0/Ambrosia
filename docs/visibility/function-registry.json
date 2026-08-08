@@ -488,6 +488,14 @@
     "auditEvent": "packets.audit.write"
   },
   {
+    "method": "GET",
+    "path": "/packets/{packet_id}/audit-chain/verify",
+    "exposure": "user",
+    "frontendRoute": "/review/:id",
+    "requiredRole": "user",
+    "auditEvent": "packets.audit-chain.verify.read"
+  },
+  {
     "method": "POST",
     "path": "/packets/{packet_id}/backtest/prepare",
     "exposure": "user",
@@ -521,6 +529,46 @@
   },
   {
     "method": "POST",
+    "path": "/packets/{packet_id}/decision",
+    "exposure": "user",
+    "frontendRoute": "/review/:id",
+    "requiredRole": "user",
+    "auditEvent": "packets.decision.write"
+  },
+  {
+    "method": "POST",
+    "path": "/packets/{packet_id}/disconfirmation/run",
+    "exposure": "user",
+    "frontendRoute": "/review/:id",
+    "requiredRole": "user",
+    "auditEvent": "packets.disconfirmation.run.write"
+  },
+  {
+    "method": "GET",
+    "path": "/packets/{packet_id}/integration/status",
+    "exposure": "user",
+    "frontendRoute": "/review/:id",
+    "requiredRole": "user",
+    "auditEvent": "packets.integration.status.read"
+  },
+  {
+    "method": "GET",
+    "path": "/packets/{packet_id}/memory",
+    "exposure": "user",
+    "frontendRoute": "/review/:id",
+    "requiredRole": "user",
+    "auditEvent": "packets.memory.read"
+  },
+  {
+    "method": "POST",
+    "path": "/packets/{packet_id}/memory/resolve",
+    "exposure": "user",
+    "frontendRoute": "/review/:id",
+    "requiredRole": "user",
+    "auditEvent": "packets.memory.resolve.write"
+  },
+  {
+    "method": "POST",
     "path": "/packets/{packet_id}/metrics/refresh",
     "exposure": "user",
     "frontendRoute": "/review/:id",
@@ -542,6 +590,14 @@
     "frontendRoute": "/review/:id",
     "requiredRole": "user",
     "auditEvent": "packets.portfolio.update.write"
+  },
+  {
+    "method": "POST",
+    "path": "/packets/{packet_id}/provenance/refresh",
+    "exposure": "user",
+    "frontendRoute": "/review/:id",
+    "requiredRole": "user",
+    "auditEvent": "packets.provenance.refresh.write"
   },
   {
     "method": "POST",
@@ -569,11 +625,35 @@
   },
   {
     "method": "POST",
+    "path": "/packets/{packet_id}/risk-gate/run",
+    "exposure": "user",
+    "frontendRoute": "/review/:id",
+    "requiredRole": "user",
+    "auditEvent": "packets.risk-gate.run.write"
+  },
+  {
+    "method": "POST",
     "path": "/packets/{packet_id}/risk/evaluate",
     "exposure": "user",
     "frontendRoute": "/review/:id",
     "requiredRole": "user",
     "auditEvent": "packets.risk.evaluate.write"
+  },
+  {
+    "method": "POST",
+    "path": "/packets/{packet_id}/selective-integrate",
+    "exposure": "user",
+    "frontendRoute": "/review/:id",
+    "requiredRole": "user",
+    "auditEvent": "packets.selective-integrate.write"
+  },
+  {
+    "method": "GET",
+    "path": "/packets/{packet_id}/versions",
+    "exposure": "user",
+    "frontendRoute": "/review/:id",
+    "requiredRole": "user",
+    "auditEvent": "packets.versions.read"
   },
   {
     "method": "GET",

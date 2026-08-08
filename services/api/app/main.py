@@ -67,6 +67,7 @@ from .day6 import evaluate_risk, prepare_backtest_plan, run_controlled_backtest
 from .day7 import build_portfolio_context, derive_confidence
 from .coordinator import run_specialists
 from .feedback_api import feedback_router
+from .auth_api import router as auth_router
 from .market_providers import market_provider_status
 from .providers import provider_status, resolve_provider
 from .report import generate_report
@@ -97,9 +98,6 @@ from .visibility_registry import (
 )
 from .tool_boundaries import list_tool_boundaries
 from .phase_c_discovery import router as discovery_router
-from .phase_d_rbac import (
-    RBACMiddleware,
-)
 from .phase_e_execution import router as execution_router
 from .phase_index61_completion import router as completion_router
 from .phase_b_ci_cd import router as phase_b_router
@@ -109,8 +107,15 @@ from .phase_e_execution_loop import router as phase_e_router
 from .phase_e_market_integration import router as market_integration_router
 from .index84_platform import INDEX97_SIGNAL_SEED, router as index84_platform_router
 from .mobile_api import router as mobile_router
+from .llm_catalog import router as llm_catalog_router
+from .team_api import router as team_router
+from .product_analytics import router as product_analytics_router
+from .artifact_store import artifact_store, router as artifact_router
+from .tenant_context import reset_organization_id, set_organization_id
 from .operations import (
+    ApiPrefixMiddleware,
     ProductionBoundaryMiddleware,
+    current_principal,
     register_audit_sink,
     register_readiness_check,
     router as operations_router,
@@ -122,6 +127,23 @@ ROADMAP_LEDGER_PATH = Path(__file__).resolve().parents[3] / "docs" / "roadmap" /
 DB_SCHEMA_VERSION_PATH = Path(__file__).resolve().parents[3] / "infra" / "db" / "schema-version.json"
 
 app = FastAPI(title="Ambrosia Trade Review API", version="0.1.0")
+
+
+def _submit_tenant_task(function) -> None:
+    """Propagate only the server-derived tenant into a worker thread."""
+    principal = current_principal()
+    if principal is None or not principal.organization_id:
+        raise HTTPException(status_code=401, detail="Tenant-bound identity required")
+    organization_id = principal.organization_id
+
+    def scoped() -> None:
+        token = set_organization_id(organization_id)
+        try:
+            function()
+        finally:
+            reset_organization_id(token)
+
+    _executor.submit(scoped)
 
 TEAM_READ_ROLES = {"viewer", "analyst", "reviewer", "owner", "admin", "service"}
 TEAM_WRITE_ROLES = {"analyst", "reviewer", "owner", "admin", "service"}
@@ -135,7 +157,7 @@ configured_origins = [
     for origin in os.getenv("ALLOWED_ORIGINS", "").split(",")
     if origin.strip()
 ]
-allowed_origin_regex = os.getenv("ALLOWED_ORIGIN_REGEX", r"https://.*\.onrender\.com")
+allowed_origin_regex = os.getenv("ALLOWED_ORIGIN_REGEX", "").strip() or None
 
 
 app.add_middleware(
@@ -149,6 +171,7 @@ app.add_middleware(
 
 # Include feedback router for calibration queries and feedback recording
 app.include_router(feedback_router)
+app.include_router(auth_router)
 
 # Include Phase B: CI/CD Industrialization
 app.include_router(phase_b_router)
@@ -166,21 +189,22 @@ app.include_router(phase_e_router)
 app.include_router(market_integration_router)
 app.include_router(index84_platform_router)
 app.include_router(mobile_router)
+app.include_router(llm_catalog_router)
+app.include_router(team_router)
+app.include_router(product_analytics_router)
+app.include_router(artifact_router)
 app.include_router(operations_router)
 
 # Include INDEX61 Completion Status & RBAC
 app.include_router(completion_router)
 
-# Add RBAC Middleware - Now Enabled by Default (Phase D Active)
-RBAC_ENABLED = os.getenv("RBAC_ENABLED", "true").lower() == "true"
-if RBAC_ENABLED:
-    app.add_middleware(RBACMiddleware)
-print("[ok] RBAC compatibility middleware active")
-
 # This is the authoritative identity, policy, request-safety, audit, and
 # telemetry boundary. Production identities are accepted only from managed
 # bearer credentials; development header identities are explicitly local-only.
 app.add_middleware(ProductionBoundaryMiddleware)
+# Last-added middleware is outermost in Starlette, so the public /api prefix is
+# normalized before authentication, route policy, telemetry, and FastAPI routing.
+app.add_middleware(ApiPrefixMiddleware)
 
 
 def _persistence_readiness() -> None:
@@ -190,6 +214,7 @@ def _persistence_readiness() -> None:
 
 
 register_readiness_check("persistence", _persistence_readiness)
+register_readiness_check("artifactStorage", artifact_store.healthcheck)
 register_audit_sink(store.append_security_audit)
 
 
@@ -308,22 +333,16 @@ def _require_role(
     scope: str,
     force: bool = False,
 ) -> str:
-    # DISABLED FOR PHASE A - Will be enforced in Phase D (Week 8)
-    # TODO: Re-enable role enforcement in Phase D deployment
-    # For now, always return a default role to allow testing
-    
-    # Check if RBAC is enabled via environment variable
-    rbac_enabled = os.getenv("RBAC_ENABLED", "false").lower() == "true"
-    if not force and not rbac_enabled:
-        # Phase A: Return default role to allow all access
-        return "analyst"
-    
-    # Phase D+: Enforce role checking
-    role = _normalize_role(header_role)
+    # The request boundary authenticates once and places the server-derived
+    # principal in context. Header values remain in signatures temporarily for
+    # API compatibility but never decide authorization.
+    del header_role, force
+    principal = current_principal()
+    role = _normalize_role(principal.role if principal else None)
     if not role:
         raise HTTPException(
             status_code=403,
-            detail=f"Missing X-Ambrosia-Role header for {scope} access",
+            detail=f"Authenticated role required for {scope} access",
         )
     if role not in allowed_roles:
         allowed = ", ".join(sorted(allowed_roles))
@@ -1296,7 +1315,7 @@ def run_packet_backtest_async(
         except Exception as exc:  # pragma: no cover
             store.fail_job(job.id, str(exc))
 
-    _executor.submit(_execute)
+    _submit_tenant_task(_execute)
     return store.get_job(job.id) or job
 
 
@@ -1834,7 +1853,7 @@ def scanner_run_async(
         except Exception as exc:  # pragma: no cover - runtime failure
             store.fail_job(job.id, str(exc))
 
-    _executor.submit(_execute)
+    _submit_tenant_task(_execute)
     # re-fetch so caller gets the latest state (may already be running)
     return store.get_job(job.id) or job
 
@@ -2004,6 +2023,11 @@ def generate_packet_report(packet_id: str) -> ReportArtifact:
         raise HTTPException(status_code=404, detail="Packet not found")
 
     report = generate_report(packet)
+    storage = artifact_store.persist_json(
+        "reports", packet_id, f"decision-report-{report.createdAt}.json",
+        report.model_dump(mode="json"),
+    )
+    report = report.model_copy(update=storage)
 
     store.add_packet_audit_event(
         packet_id,
@@ -2024,6 +2048,8 @@ def generate_packet_report_async(
         raise HTTPException(status_code=404, detail="Packet not found")
 
     job = store.enqueue_job("report.generate", f"packet={packet_id}", idempotency_key)
+    principal = current_principal()
+    created_by_user_id = principal.subject if principal else None
 
     def _execute() -> None:
         if not store.start_job(job.id):
@@ -2034,6 +2060,12 @@ def generate_packet_report_async(
                 store.fail_job(job.id, "Packet no longer found")
                 return
             rpt = generate_report(pkt)
+            storage = artifact_store.persist_json(
+                "reports", packet_id, f"decision-report-{rpt.createdAt}.json",
+                rpt.model_dump(mode="json"),
+                created_by_user_id=created_by_user_id,
+            )
+            rpt = rpt.model_copy(update=storage)
             store.add_packet_audit_event(
                 packet_id,
                 AuditEventCreate(
@@ -2045,7 +2077,7 @@ def generate_packet_report_async(
         except Exception as exc:  # pragma: no cover
             store.fail_job(job.id, str(exc))
 
-    _executor.submit(_execute)
+    _submit_tenant_task(_execute)
     return store.get_job(job.id) or job
 
 
@@ -2059,7 +2091,10 @@ def create_workspace(
     x_ambrosia_role: str | None = Header(default=None, alias="X-Ambrosia-Role"),
 ) -> WorkspaceRecord:
     _require_role(TEAM_WRITE_ROLES, x_ambrosia_role, scope="team write")
-    return store.create_workspace(body)
+    principal = current_principal()
+    if principal is None:
+        raise HTTPException(status_code=401, detail="Authenticated identity required")
+    return store.create_workspace(body.model_copy(update={"ownerId": principal.subject}))
 
 
 @app.get("/workspaces", response_model=list[WorkspaceRecord])
@@ -2068,7 +2103,11 @@ def list_workspaces(
     x_ambrosia_role: str | None = Header(default=None, alias="X-Ambrosia-Role"),
 ) -> list[WorkspaceRecord]:
     _require_role(TEAM_READ_ROLES, x_ambrosia_role, scope="team read")
-    return store.list_workspaces(owner_id=owner_id)
+    del owner_id
+    principal = current_principal()
+    if principal is None:
+        raise HTTPException(status_code=401, detail="Authenticated identity required")
+    return store.list_workspaces(owner_id=principal.subject)
 
 
 @app.get("/workspaces/{workspace_id}", response_model=WorkspaceRecord)

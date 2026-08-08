@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -12,6 +13,9 @@ EVIDENCE_PATH = ROOT / "artifacts" / "release-evidence.json"
 
 def main() -> int:
     errors: list[str] = []
+
+    if os.getenv("NEXT_PUBLIC_ENABLE_LABS", "false").lower() == "true":
+        errors.append("NEXT_PUBLIC_ENABLE_LABS=true is forbidden by production readiness")
 
     if not DOCKERFILE_PATH.exists():
         errors.append("Missing CLI Dockerfile at packages/cli/Dockerfile")

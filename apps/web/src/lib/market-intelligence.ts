@@ -21,6 +21,20 @@ export type RiskReturnPoint = {
   liquidity: number;
 };
 
+const MARKET_TICKER_PATTERN = /^[A-Z0-9][A-Z0-9.-]{0,14}$/;
+
+export function normalizeMarketTicker(value: string): string | null {
+  const normalized = value.trim().toUpperCase().replace(/\s+/g, "");
+  return MARKET_TICKER_PATTERN.test(normalized) ? normalized : null;
+}
+
+export function normalizeCompareSymbols(values: string[], primaryTicker: string): string[] {
+  const primary = normalizeMarketTicker(primaryTicker);
+  return Array.from(
+    new Set(values.map(normalizeMarketTicker).filter((value): value is string => Boolean(value && value !== primary)))
+  ).slice(0, 3);
+}
+
 export function seedFromTicker(ticker: string) {
   return ticker
     .toUpperCase()

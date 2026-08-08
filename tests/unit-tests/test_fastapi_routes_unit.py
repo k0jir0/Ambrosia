@@ -160,3 +160,34 @@ def test_scanner_route_uses_injected_scanner_function(isolated_app, monkeypatch)
     assert response.status_code == 200
     assert response.json()["candidates"][0]["ticker"] == "SPY"
     assert response.json()["totalScanned"] == 1
+
+
+def test_scanner_route_honors_runtime_kill_switch(isolated_app, monkeypatch) -> None:
+    client, _, _ = isolated_app
+    monkeypatch.setenv("MARKET_SCANNER_ENABLED", "false")
+
+    response = client.post("/scanner/run", json={"universe": ["SPY"]})
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "Market Scanner is temporarily unavailable"
+
+
+def test_scanner_promotion_honors_runtime_safety_gate(isolated_app, monkeypatch) -> None:
+    client, _, _ = isolated_app
+    monkeypatch.setenv("MARKET_SCANNER_PROMOTION_ENABLED", "false")
+
+    response = client.post(
+        "/scanner/candidates/promote-alpha",
+        json={
+            "ticker": "SPY",
+            "signal": "momentum_up",
+            "thesisSuggestion": "SPY momentum remains a research hypothesis.",
+            "score": 0.8,
+            "price": 500,
+            "trend": "uptrend",
+            "volume": 5_000_000,
+        },
+    )
+
+    assert response.status_code == 503
+    assert "tenant lifecycle storage" in response.json()["detail"]

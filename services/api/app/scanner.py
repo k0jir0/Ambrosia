@@ -114,7 +114,7 @@ def run_scanner(request: ScannerRunRequest) -> ScannerResult:
     top_candidates = candidates[: request.maxCandidates]
 
     overall_mode: str = "fallback"
-    if any(c.dataMode == "live" for c in top_candidates):
+    if top_candidates and all(candidate.dataMode == "live" for candidate in top_candidates):
         overall_mode = "live"
 
     return ScannerResult(

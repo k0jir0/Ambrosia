@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
 
-export default function TeamManagementRedirect() {
+export default function GovernanceRedirect() {
   redirect("/team");
 }

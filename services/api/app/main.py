@@ -353,6 +353,25 @@ def _require_role(
     return role
 
 
+def _require_market_scanner_enabled() -> None:
+    if os.getenv("MARKET_SCANNER_ENABLED", "true").strip().lower() not in {"1", "true", "yes", "on"}:
+        raise HTTPException(status_code=503, detail="Market Scanner is temporarily unavailable")
+
+
+def _require_market_intelligence_enabled() -> None:
+    environment = os.getenv("ENVIRONMENT", "development").strip().lower()
+    default = environment not in {"production", "staging"}
+    if not _feature_enabled("MARKET_INTELLIGENCE_ENABLED", default=default):
+        raise HTTPException(status_code=503, detail="Market Intelligence is temporarily unavailable")
+
+
+def _require_report_export_enabled() -> None:
+    environment = os.getenv("ENVIRONMENT", "development").strip().lower()
+    default = environment not in {"production", "staging"}
+    if not _feature_enabled("REPORT_EXPORT_ENABLED", default=default):
+        raise HTTPException(status_code=503, detail="Governed report export is temporarily unavailable")
+
+
 @app.get("/health")
 def health() -> dict:
     return {
@@ -1015,17 +1034,32 @@ def get_packet_audit(packet_id: str) -> list[AuditEvent]:
 
 
 @app.get("/market/{ticker}/snapshot", response_model=MarketSnapshot)
-def get_market_snapshot(ticker: str) -> MarketSnapshot:
+def get_market_snapshot(
+    ticker: str,
+    x_ambrosia_role: str | None = Header(default=None, alias="X-Ambrosia-Role"),
+) -> MarketSnapshot:
+    _require_market_intelligence_enabled()
+    _require_role(ADVANCED_ROLES, x_ambrosia_role, scope="market intelligence")
     return build_market_snapshot(ticker)
 
 
 @app.get("/market/{ticker}/technicals", response_model=TechnicalIndicators)
-def get_market_technicals(ticker: str) -> TechnicalIndicators:
+def get_market_technicals(
+    ticker: str,
+    x_ambrosia_role: str | None = Header(default=None, alias="X-Ambrosia-Role"),
+) -> TechnicalIndicators:
+    _require_market_intelligence_enabled()
+    _require_role(ADVANCED_ROLES, x_ambrosia_role, scope="market intelligence")
     return build_technicals(ticker)
 
 
 @app.get("/sentiment/{ticker}", response_model=SentimentData)
-def get_sentiment(ticker: str) -> SentimentData:
+def get_sentiment(
+    ticker: str,
+    x_ambrosia_role: str | None = Header(default=None, alias="X-Ambrosia-Role"),
+) -> SentimentData:
+    _require_market_intelligence_enabled()
+    _require_role(ADVANCED_ROLES, x_ambrosia_role, scope="market intelligence")
     return build_sentiment(ticker)
 
 
@@ -1826,6 +1860,7 @@ def scanner_run(
     body: ScannerRunRequest,
     x_ambrosia_role: str | None = Header(default=None, alias="X-Ambrosia-Role"),
 ) -> ScannerResult:
+    _require_market_scanner_enabled()
     _require_role(ADVANCED_ROLES, x_ambrosia_role, scope="advanced")
     return run_scanner(body)
 
@@ -1836,6 +1871,7 @@ def scanner_run_async(
     x_ambrosia_role: str | None = Header(default=None, alias="X-Ambrosia-Role"),
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
 ) -> JobRecord:
+    _require_market_scanner_enabled()
     _require_role(ADVANCED_ROLES, x_ambrosia_role, scope="advanced")
     universe_label = ",".join(body.universe) if body.universe else "default-nyse"
     job = store.enqueue_job(
@@ -2018,6 +2054,7 @@ def health_detailed() -> dict:
 
 @app.post("/packets/{packet_id}/report", response_model=ReportArtifact)
 def generate_packet_report(packet_id: str) -> ReportArtifact:
+    _require_report_export_enabled()
     packet = store.get_packet(packet_id)
     if packet is None:
         raise HTTPException(status_code=404, detail="Packet not found")
@@ -2044,6 +2081,7 @@ def generate_packet_report_async(
     packet_id: str,
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
 ) -> JobRecord:
+    _require_report_export_enabled()
     if store.get_packet(packet_id) is None:
         raise HTTPException(status_code=404, detail="Packet not found")
 

@@ -10,56 +10,35 @@ import {
   LayoutDashboard,
   LogOut,
   Menu,
+  Search,
+  ScanSearch,
   Settings,
+  TerminalSquare,
+  TestTubeDiagonal,
+  Activity,
+  RadioTower,
   Users,
   X,
 } from "lucide-react";
 
 import { getAccountSession, logoutAccount, type AccountSession } from "@/lib/api";
+import { getRouteAvailability, isRouteAvailable, PUBLIC_PATHS } from "@/lib/route-availability";
+import { CommandPalette } from "./command-palette";
 import { cn } from "./ui";
-
-const PUBLIC_PATHS = new Set([
-  "/",
-  "/signup",
-  "/login",
-  "/forgot-password",
-  "/reset-password",
-  "/verify-email",
-  "/accept-invite",
-  "/terms",
-  "/privacy",
-  "/company-proof",
-]);
 
 const NAV_ITEMS = [
   { href: "/review/new", label: "Intake", icon: ClipboardPlus },
   { href: "/app", label: "Decision Packets", icon: LayoutDashboard },
   { href: "/review", label: "Review Queue", icon: ClipboardCheck },
   { href: "/history", label: "Outcomes & Memory", icon: History },
+  { href: "/market-scanner", label: "Market Scanner", icon: ScanSearch },
+  { href: "/alpha", label: "Alpha Lab", icon: TestTubeDiagonal },
+  { href: "/signals", label: "Signals Lab", icon: RadioTower },
+  { href: "/cli-design", label: "CLI Guide", icon: TerminalSquare },
+  { href: "/operations", label: "Operations", icon: Activity },
   { href: "/team", label: "Team", icon: Users },
   { href: "/admin", label: "Admin", icon: Settings },
 ] as const;
-
-const LAB_PATH_PREFIXES = [
-  "/advanced",
-  "/alpha",
-  "/calibration",
-  "/cli-design",
-  "/discovery",
-  "/enterprise",
-  "/execution-intelligence",
-  "/governance",
-  "/market-scanner",
-  "/markets",
-  "/platform",
-  "/relay-benchmarks",
-  "/reports",
-  "/signals",
-] as const;
-
-const labsEnabled =
-  process.env.NEXT_PUBLIC_ENABLE_LABS === "true" ||
-  (process.env.NEXT_PUBLIC_ENABLE_LABS === undefined && process.env.NODE_ENV !== "production");
 
 function activePath(pathname: string, href: string) {
   return pathname === href || pathname.startsWith(`${href}/`);
@@ -68,27 +47,32 @@ function activePath(pathname: string, href: string) {
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname() || "/";
   const isPublic = PUBLIC_PATHS.has(pathname);
-  const isHiddenLab = LAB_PATH_PREFIXES.some(
-    (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`),
-  );
+  const routeAvailability = getRouteAvailability(pathname);
+  const routeEnabled = routeAvailability?.enabled ?? true;
   const [profile, setProfile] = useState<AccountSession | null>(null);
   const [checking, setChecking] = useState(!isPublic);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
 
   useEffect(() => {
     if (isPublic) {
       setChecking(false);
       return;
     }
-    if (isHiddenLab && !labsEnabled) {
-      window.location.replace("/app");
+    if (!routeEnabled && routeAvailability) {
+      window.location.replace(routeAvailability.unavailableRedirect);
       return;
     }
     let active = true;
     setChecking(true);
     getAccountSession()
       .then((session) => {
-        if (active) setProfile(session);
+        if (!active) return;
+        if (!isRouteAvailable(pathname, session.organization.role)) {
+          window.location.replace(routeAvailability?.unavailableRedirect ?? "/app");
+          return;
+        }
+        setProfile(session);
       })
       .catch(() => {
         const returnTo = encodeURIComponent(pathname);
@@ -100,7 +84,18 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     return () => {
       active = false;
     };
-  }, [isHiddenLab, isPublic, pathname]);
+  }, [isPublic, pathname, routeAvailability, routeEnabled]);
+
+  useEffect(() => {
+    function openCommandPalette(event: KeyboardEvent) {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        setCommandPaletteOpen(true);
+      }
+    }
+    window.addEventListener("keydown", openCommandPalette);
+    return () => window.removeEventListener("keydown", openCommandPalette);
+  }, []);
 
   if (isPublic) return <>{children}</>;
 
@@ -114,6 +109,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       </main>
     );
   }
+
+  const navItems = NAV_ITEMS.filter((item) => isRouteAvailable(item.href, profile.organization.role));
 
   async function signOut() {
     await logoutAccount();
@@ -131,7 +128,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
           <nav className="mt-7 flex-1">
             <ul className="space-y-1">
-              {NAV_ITEMS.map((item) => {
+              {navItems.map((item) => {
                 const Icon = item.icon;
                 const active = activePath(pathname, item.href);
                 return (
@@ -168,6 +165,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 <LogOut className="h-4 w-4" />
               </button>
             </div>
+            <button
+              type="button"
+              onClick={() => setCommandPaletteOpen(true)}
+              className="focus-ring mt-3 flex w-full items-center justify-between rounded-md border border-line px-2 py-2 text-xs text-ink/65"
+            >
+              <span className="inline-flex items-center gap-2"><Search className="h-3.5 w-3.5" /> Commands</span>
+              <span>Ctrl K</span>
+            </button>
           </section>
         </aside>
 
@@ -176,7 +181,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
       <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-line bg-paper/95 p-2 backdrop-blur lg:hidden">
         <ul className="grid grid-cols-5 gap-1">
-          {NAV_ITEMS.slice(0, 4).map((item) => {
+          {navItems.slice(0, 4).map((item) => {
             const Icon = item.icon;
             const active = activePath(pathname, item.href);
             return (
@@ -223,7 +228,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               </button>
             </div>
             <ul className="space-y-1">
-              {NAV_ITEMS.map((item) => {
+              {navItems.map((item) => {
                 const Icon = item.icon;
                 return (
                   <li key={item.href}>
@@ -240,6 +245,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </section>
         </div>
       ) : null}
+      <CommandPalette
+        open={commandPaletteOpen}
+        onClose={() => setCommandPaletteOpen(false)}
+        role={profile.organization.role}
+      />
     </div>
   );
 }

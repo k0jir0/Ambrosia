@@ -20,7 +20,6 @@ import {
   YAxis
 } from "recharts";
 import {
-  ApiUnavailableError,
   getMarketSnapshot,
   getMarketTechnicals,
   getSentiment,
@@ -32,6 +31,8 @@ import {
   buildOhlcSeries,
   buildRiskReturn,
   buildYieldCurve,
+  normalizeCompareSymbols,
+  normalizeMarketTicker,
   summarizeTicker,
   withMovingAverages
 } from "@/lib/market-intelligence";
@@ -40,12 +41,13 @@ import { Badge, Panel, SectionTitle, cn } from "./ui";
 
 type Tab = "primary" | "analytics" | "macro" | "performance";
 type PriceStyle = "candlestick" | "ohlc" | "line";
+type EvidenceStatus = "loading" | "live" | "unavailable";
 
 const TABS: Array<{ id: Tab; label: string }> = [
   { id: "primary", label: "Primary" },
   { id: "analytics", label: "Analytics" },
   { id: "macro", label: "Macro" },
-  { id: "performance", label: "Performance" }
+  { id: "performance", label: "Scenario" }
 ];
 
 export function MarketIntelligencePage({ ticker, compare = [] }: { ticker: string; compare?: string[] }) {
@@ -56,7 +58,10 @@ export function MarketIntelligencePage({ ticker, compare = [] }: { ticker: strin
   const [snapshot, setSnapshot] = useState<MarketSnapshot | null>(null);
   const [technicals, setTechnicals] = useState<TechnicalIndicators | null>(null);
   const [sentiment, setSentiment] = useState<SentimentData | null>(null);
-  const [liveMode, setLiveMode] = useState<"live" | "fallback">("fallback");
+  const [snapshotStatus, setSnapshotStatus] = useState<EvidenceStatus>("loading");
+  const [technicalsStatus, setTechnicalsStatus] = useState<EvidenceStatus>("loading");
+  const [sentimentStatus, setSentimentStatus] = useState<EvidenceStatus>("loading");
+  const [tickerError, setTickerError] = useState<string | null>(null);
 
   const baseSeries = useMemo(() => buildOhlcSeries(ticker, 72), [ticker]);
   const series = useMemo(() => withMovingAverages(baseSeries), [baseSeries]);
@@ -67,7 +72,7 @@ export function MarketIntelligencePage({ ticker, compare = [] }: { ticker: strin
   const frontier = useMemo(() => buildEfficientFrontier(ticker), [ticker]);
   const summary = useMemo(() => summarizeTicker(ticker, series), [ticker, series]);
   const compareSymbols = useMemo(
-    () => Array.from(new Set(compare.map((item) => item.trim().toUpperCase()).filter((item) => item && item !== ticker.toUpperCase()))).slice(0, 3),
+    () => normalizeCompareSymbols(compare, ticker),
     [compare, ticker]
   );
   const compareSeries = useMemo(() => compareSymbols.map((symbol) => ({ symbol, points: withMovingAverages(buildOhlcSeries(symbol, 72)) })), [compareSymbols]);
@@ -91,14 +96,14 @@ export function MarketIntelligencePage({ ticker, compare = [] }: { ticker: strin
     setSearchTicker(ticker.toUpperCase());
   }, [ticker]);
 
-  function normalizeTickerInput(value: string): string {
-    return value.trim().toUpperCase().replace(/\s+/g, "");
-  }
-
   function handleTickerSearch(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const nextTicker = normalizeTickerInput(searchTicker);
-    if (!nextTicker) return;
+    const nextTicker = normalizeMarketTicker(searchTicker);
+    if (!nextTicker) {
+      setTickerError("Use 1-15 letters, numbers, periods, or hyphens.");
+      return;
+    }
+    setTickerError(null);
     if (nextTicker === ticker.toUpperCase()) return;
     router.push(`/markets/${encodeURIComponent(nextTicker)}`);
   }
@@ -106,30 +111,26 @@ export function MarketIntelligencePage({ ticker, compare = [] }: { ticker: strin
   useEffect(() => {
     let cancelled = false;
 
-    async function loadLive() {
-      try {
-        const [nextSnapshot, nextTechnicals, nextSentiment] = await Promise.all([
+    async function loadEvidence() {
+      setSnapshotStatus("loading");
+      setTechnicalsStatus("loading");
+      setSentimentStatus("loading");
+      const [nextSnapshot, nextTechnicals, nextSentiment] = await Promise.allSettled([
           getMarketSnapshot(ticker),
           getMarketTechnicals(ticker),
           getSentiment(ticker),
-        ]);
+      ]);
 
-        if (cancelled) return;
-        setSnapshot(nextSnapshot);
-        setTechnicals(nextTechnicals);
-        setSentiment(nextSentiment);
-        setLiveMode("live");
-      } catch (error) {
-        if (cancelled) return;
-        if (error instanceof ApiUnavailableError) {
-          setLiveMode("fallback");
-          return;
-        }
-        setLiveMode("fallback");
-      }
+      if (cancelled) return;
+      setSnapshot(nextSnapshot.status === "fulfilled" ? nextSnapshot.value : null);
+      setSnapshotStatus(nextSnapshot.status === "fulfilled" ? "live" : "unavailable");
+      setTechnicals(nextTechnicals.status === "fulfilled" ? nextTechnicals.value : null);
+      setTechnicalsStatus(nextTechnicals.status === "fulfilled" ? "live" : "unavailable");
+      setSentiment(nextSentiment.status === "fulfilled" ? nextSentiment.value : null);
+      setSentimentStatus(nextSentiment.status === "fulfilled" ? "live" : "unavailable");
     }
 
-    void loadLive();
+    void loadEvidence();
 
     return () => {
       cancelled = true;
@@ -150,9 +151,11 @@ export function MarketIntelligencePage({ ticker, compare = [] }: { ticker: strin
           <div>
             <div className="mb-2 flex items-center gap-2">
               <Badge tone="info">{ticker.toUpperCase()}</Badge>
-              <Badge tone={liveMode === "live" ? "good" : "warn"}>{liveMode === "live" ? "Live" : "Fallback"}</Badge>
+              <EvidenceBadge label="Quote" status={snapshotStatus} />
+              <EvidenceBadge label="Technicals" status={technicalsStatus} />
+              <EvidenceBadge label="Sentiment" status={sentimentStatus} />
               <Badge tone="neutral">{providerBadge}</Badge>
-              {compare.length > 0 ? <Badge tone="warn">Compare: {compare.join(" · ")}</Badge> : null}
+              {compareSymbols.length > 0 ? <Badge tone="warn">Compare: {compareSymbols.join(" · ")}</Badge> : null}
             </div>
             <h1 className="text-2xl font-semibold">{summary.headline}</h1>
             <p className="mt-2 max-w-4xl text-sm text-ink/75">{summary.line}</p>
@@ -173,6 +176,9 @@ export function MarketIntelligencePage({ ticker, compare = [] }: { ticker: strin
             type="text"
             value={searchTicker}
             onChange={(event) => setSearchTicker(event.target.value)}
+            maxLength={15}
+            aria-invalid={Boolean(tickerError)}
+            aria-describedby={tickerError ? "market-ticker-error" : undefined}
             placeholder="AAPL"
             className="focus-ring h-9 w-36 rounded-md border border-line bg-fog px-3 text-sm text-ink"
             aria-label="Search stock ticker"
@@ -181,6 +187,7 @@ export function MarketIntelligencePage({ ticker, compare = [] }: { ticker: strin
             <Search className="h-4 w-4" />
             Open
           </button>
+          {tickerError ? <span id="market-ticker-error" className="text-xs text-coral">{tickerError}</span> : null}
         </form>
       </Panel>
 
@@ -201,7 +208,7 @@ export function MarketIntelligencePage({ ticker, compare = [] }: { ticker: strin
           ))}
           <div className="ml-auto flex items-center gap-2 text-xs text-ink/60">
             <RefreshCw className="h-3.5 w-3.5" />
-            {liveMode === "live" ? "Live quote and sentiment connected" : "Using deterministic fallback market data"}
+            API evidence and simulated analytics are labeled independently
           </div>
         </div>
       </Panel>
@@ -211,6 +218,7 @@ export function MarketIntelligencePage({ ticker, compare = [] }: { ticker: strin
           <Panel className="p-4 xl:col-span-2">
             <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
               <SectionTitle eyebrow="Price" title="Line, Candlestick, and OHLC" />
+              <Badge tone="warn">Simulated series</Badge>
               <div className="flex gap-2 text-xs">
                 {(["candlestick", "ohlc", "line"] as PriceStyle[]).map((style) => (
                   <button
@@ -277,7 +285,10 @@ export function MarketIntelligencePage({ ticker, compare = [] }: { ticker: strin
           </Panel>
 
           <Panel className="p-4 xl:col-span-3">
-            <SectionTitle eyebrow="Volume" title="Participation and momentum confirmation" />
+            <div className="flex items-start justify-between gap-3">
+              <SectionTitle eyebrow="Volume" title="Participation and momentum confirmation" />
+              <Badge tone="warn">Simulated</Badge>
+            </div>
             <div className="mt-3 h-56">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={series.slice(-36)}>
@@ -297,12 +308,12 @@ export function MarketIntelligencePage({ ticker, compare = [] }: { ticker: strin
       {activeTab === "analytics" ? (
         <div className="grid gap-4 xl:grid-cols-2">
           <Panel className="p-4">
-            <SectionTitle eyebrow="Correlation Heatmap" title="Ticker concentration and co-movement" />
+            <LabeledSection eyebrow="Correlation Heatmap" title="Ticker concentration and co-movement" />
             <Heatmap symbols={heatmap.symbols} values={heatmap.points} primary={ticker.toUpperCase()} />
           </Panel>
 
           <Panel className="p-4">
-            <SectionTitle eyebrow="Risk-Return Scatter" title="Relative efficiency view" />
+            <LabeledSection eyebrow="Risk-Return Scatter" title="Relative efficiency view" />
             <div className="mt-3 h-80">
               <ResponsiveContainer width="100%" height="100%">
                 <ScatterChart>
@@ -319,7 +330,7 @@ export function MarketIntelligencePage({ ticker, compare = [] }: { ticker: strin
           </Panel>
 
           <Panel className="p-4 xl:col-span-2">
-            <SectionTitle eyebrow="Efficient Frontier" title="Portfolio construction reference" />
+            <LabeledSection eyebrow="Efficient Frontier" title="Portfolio construction reference" />
             <div className="mt-3 h-72">
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={frontier.curve}>
@@ -342,7 +353,7 @@ export function MarketIntelligencePage({ ticker, compare = [] }: { ticker: strin
 
       {activeTab === "macro" ? (
         <Panel className="p-4">
-          <SectionTitle eyebrow="Yield Curve" title="Cross-asset macro regime" />
+          <LabeledSection eyebrow="Yield Curve" title="Cross-asset macro regime" />
           <div className="mt-3 h-80">
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={yieldCurve}>
@@ -362,7 +373,7 @@ export function MarketIntelligencePage({ ticker, compare = [] }: { ticker: strin
       {activeTab === "performance" ? (
         <div className="grid gap-4 xl:grid-cols-2">
           <Panel className="p-4">
-            <SectionTitle eyebrow="Equity Curve" title="Cumulative decision performance" />
+            <LabeledSection eyebrow="Synthetic Path" title="Illustrative cumulative scenario" />
             <div className="mt-3 h-72">
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={performance.equity}>
@@ -377,7 +388,7 @@ export function MarketIntelligencePage({ ticker, compare = [] }: { ticker: strin
           </Panel>
 
           <Panel className="p-4">
-            <SectionTitle eyebrow="Drawdown" title="Peak-to-trough risk" />
+            <LabeledSection eyebrow="Synthetic Drawdown" title="Illustrative peak-to-trough scenario" />
             <div className="mt-3 h-72">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={performance.drawdown}>
@@ -396,9 +407,23 @@ export function MarketIntelligencePage({ ticker, compare = [] }: { ticker: strin
       <Panel className="p-4 text-sm text-ink/70">
         <div className="flex items-center gap-2">
           <BarChart2 className="h-4 w-4 text-teal" />
-          All core intelligence graphs are ticker-bound. Thesis ticker is pinned as primary in comparison mode.
+          Charts are deterministic simulations bound to the ticker, not observed history or portfolio performance.
         </div>
       </Panel>
+    </div>
+  );
+}
+
+function EvidenceBadge({ label, status }: { label: string; status: EvidenceStatus }) {
+  const value = status === "live" ? "Live" : status === "loading" ? "Loading" : "Unavailable";
+  return <Badge tone={status === "live" ? "good" : status === "loading" ? "neutral" : "warn"}>{label}: {value}</Badge>;
+}
+
+function LabeledSection({ eyebrow, title }: { eyebrow: string; title: string }) {
+  return (
+    <div className="flex items-start justify-between gap-3">
+      <SectionTitle eyebrow={eyebrow} title={title} />
+      <Badge tone="warn">Simulated</Badge>
     </div>
   );
 }

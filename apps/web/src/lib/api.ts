@@ -871,6 +871,48 @@ type SignalOutcomeWritebackRequest = {
   lastReviewedAt?: string;
 };
 
+export type ResearchObjectReference = {
+  referenceId: string;
+  snapshotId: string;
+  objectType: "signal" | "hypothesis";
+  objectId: string;
+  versionId: number;
+  snapshot: Record<string, unknown>;
+  contentHash: string;
+  relationshipType: "research_evidence" | "supports" | "challenges" | "disconfirms";
+  actor: string;
+  attachedAt: string;
+  driftStatus: "current" | "superseded";
+};
+
+export async function attachResearchObjectReference(
+  reviewId: string,
+  body: {
+    objectType: "signal" | "hypothesis";
+    objectId: string;
+    versionId?: number | "current";
+    relationshipType?: ResearchObjectReference["relationshipType"];
+  }
+): Promise<ResearchObjectReference> {
+  const apiBaseUrl = getApiBaseUrl();
+  if (!apiBaseUrl) throw new ApiUnavailableError();
+  const response = await fetchWithTimeout(`${apiBaseUrl}/reviews/${encodeURIComponent(reviewId)}/research-object-references`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const payload = await readJsonResponse<{ reference: ResearchObjectReference }>(response);
+  return payload.reference;
+}
+
+export async function listResearchObjectReferences(reviewId: string): Promise<ResearchObjectReference[]> {
+  const apiBaseUrl = getApiBaseUrl();
+  if (!apiBaseUrl) throw new ApiUnavailableError();
+  const response = await fetchWithTimeout(`${apiBaseUrl}/reviews/${encodeURIComponent(reviewId)}/research-object-references`);
+  const payload = await readJsonResponse<{ references: ResearchObjectReference[] }>(response);
+  return payload.references;
+}
+
 export async function linkSignalReview(signalId: string, body: SignalReviewLinkRequest): Promise<Record<string, unknown>> {
   const apiBaseUrl = getApiBaseUrl();
   if (!apiBaseUrl) throw new ApiUnavailableError();

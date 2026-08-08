@@ -137,6 +137,7 @@ test("signal proposal recreates stale linked signal before writeback", async ({ 
     const url = request.url();
 
     if (await fulfillGovernedPacketRequest(route, governedPackets)) return;
+    if (await fulfillResearchReferenceRequest(route)) return;
 
     if (url.endsWith("/signals/stale-signal/link-review")) {
       staleLinkAttempted = true;
@@ -215,6 +216,7 @@ test("signal proposal sanitizes short generated signal fields", async ({ page })
     const url = request.url();
 
     if (await fulfillGovernedPacketRequest(route, governedPackets)) return;
+    if (await fulfillResearchReferenceRequest(route)) return;
 
     if (url.endsWith("/alpha/hypotheses") && request.method() === "POST") {
       await route.fulfill({ status: 201, contentType: "application/json", body: JSON.stringify({ hypothesisId: "alpha-sanitized" }) });
@@ -319,6 +321,41 @@ test("dark mode is the default visual mode", async ({ page }) => {
 });
 
 type JsonRecord = Record<string, unknown>;
+
+async function fulfillResearchReferenceRequest(route: Route): Promise<boolean> {
+  const request = route.request();
+  const url = new URL(request.url());
+  if (!url.pathname.match(/^\/reviews\/[^/]+\/research-object-references$/)) return false;
+
+  if (request.method() === "GET") {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ references: [] }) });
+    return true;
+  }
+  if (request.method() !== "POST") return false;
+
+  const body = request.postDataJSON() as { objectType: "signal" | "hypothesis"; objectId: string; versionId?: number | "current"; relationshipType?: string };
+  const versionId = typeof body.versionId === "number" ? body.versionId : 1;
+  await route.fulfill({
+    status: 201,
+    contentType: "application/json",
+    body: JSON.stringify({
+      reference: {
+        referenceId: `reference-${body.objectId}-${versionId}`,
+        snapshotId: `${body.objectType}:${body.objectId}:${versionId}:fixture`,
+        objectType: body.objectType,
+        objectId: body.objectId,
+        versionId,
+        snapshot: { signalId: body.objectId, version: versionId },
+        contentHash: "fixture-content-hash",
+        relationshipType: body.relationshipType ?? "research_evidence",
+        actor: "e2e-analyst",
+        attachedAt: "2026-07-06T00:00:00.000Z",
+        driftStatus: "current",
+      },
+    }),
+  });
+  return true;
+}
 
 async function fulfillGovernedPacketRequest(
   route: Route,

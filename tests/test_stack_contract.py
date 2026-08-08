@@ -257,6 +257,7 @@ class StackContractTests(unittest.TestCase):
         app_shell = read_text("apps/web/src/components/app-shell.tsx")
         advanced_page = read_text("apps/web/src/app/advanced/page.tsx")
         dashboard = read_text("apps/web/src/components/dashboard-page.tsx")
+        manifest = read_text("apps/web/src/lib/route-availability.ts")
 
         for href, label in [
             ("/review/new", "Intake"),
@@ -269,17 +270,18 @@ class StackContractTests(unittest.TestCase):
             self.assertIn(f'{{ href: "{href}", label: "{label}"', app_shell)
 
         for expected in [
-            "const LAB_PATH_PREFIXES",
-            '"/advanced"',
-            'process.env.NEXT_PUBLIC_ENABLE_LABS === "true"',
-            'window.location.replace("/app")',
+            "getRouteAvailability",
+            "routeAvailability.unavailableRedirect",
             "getAccountSession()",
             "profile.organization.name",
             "logoutAccount()",
         ]:
             self.assertIn(expected, app_shell)
 
-        self.assertIn("Module directory", advanced_page)
+        self.assertIn('"/advanced"', manifest)
+        self.assertIn('process.env.NEXT_PUBLIC_ENABLE_LABS === "true"', manifest)
+
+        self.assertIn('redirect("/operations")', advanced_page)
 
         for expected in [
             "Run five-minute guided case",
@@ -290,13 +292,53 @@ class StackContractTests(unittest.TestCase):
         ]:
             self.assertIn(expected, dashboard)
 
-        for expected in [
-            "Admin & Monitoring",
-            "26 panels / 7 destinations",
-            "Provider Modes",
-            "Moved to",
+    def test_route_manifest_has_dedicated_typed_policy_and_production_labs_gate(self) -> None:
+        manifest = read_text("apps/web/src/lib/route-availability.ts")
+
+        for field in [
+            "label:",
+            "owningWorkflow:",
+            "buildSwitch:",
+            "runtimePolicy:",
+            "dedicatedSwitch:",
+            "minimumRole:",
+            "environments:",
+            "dataModes:",
+            "releaseStatus:",
+            "evidenceArtifactId:",
+            "unavailableRedirect:",
         ]:
-            self.assertIn(expected, advanced_page)
+            self.assertIn(field, manifest)
+
+        self.assertIn("Duplicate route prefix", manifest)
+        self.assertIn("has an invalid role declaration", manifest)
+        self.assertIn("must use a dedicated exposure switch", manifest)
+        self.assertIn("NEXT_PUBLIC_ENABLE_LABS=true is forbidden in production", manifest)
+        self.assertNotIn('"/discovery",', manifest)
+        self.assertNotIn('"/platform",', manifest)
+        self.assertNotIn('"/enterprise",', manifest)
+        self.assertNotIn('"/governance",', manifest)
+
+    def test_legacy_product_routes_redirect_to_guarded_owners(self) -> None:
+        redirects = {
+            "apps/web/src/app/discovery/page.tsx": "/market-scanner",
+            "apps/web/src/app/platform/page.tsx": "/operations",
+            "apps/web/src/app/governance/page.tsx": "/team",
+            "apps/web/src/app/governance/team-management/page.tsx": "/team",
+            "apps/web/src/app/enterprise/page.tsx": "/admin",
+            "apps/web/src/app/reports/page.tsx": "/review",
+            "apps/web/src/app/advanced/page.tsx": "/operations",
+        }
+        for path, target in redirects.items():
+            page = read_text(path)
+            self.assertIn('from "next/navigation"', page)
+            self.assertIn(f'redirect("{target}")', page)
+
+        palette = read_text("apps/web/src/components/command-palette.tsx")
+        for retired in ["/discovery", "/platform", "/enterprise", "/advanced", "/governance/team-management"]:
+            self.assertNotIn(f'href: "{retired}"', palette)
+        for owner in ["/market-scanner", "/operations", "/team", "/admin"]:
+            self.assertIn(f'href: "{owner}"', palette)
 
     def test_backend_contracts_cover_operational_routes(self) -> None:
         pyproject = tomllib.loads(read_text("services/api/pyproject.toml"))
@@ -359,8 +401,45 @@ class StackContractTests(unittest.TestCase):
         self.assertIn("--timeout-graceful-shutdown 30", render)
         self.assertIn("ambrosia-api-staging", render)
         self.assertIn("ambrosia-web-staging", render)
+        for safe_default in [
+            "NEXT_PUBLIC_ENABLE_LABS",
+            "NEXT_PUBLIC_ENABLE_MARKET_SCANNER_PROMOTION",
+            "NEXT_PUBLIC_ENABLE_CALIBRATION_DEMO",
+            "NEXT_PUBLIC_ENABLE_REVIEW_EXPORT",
+            "ALPHA_LAB_DEMO_SEED_ENABLED",
+            "SIGNALS_VALIDATION_ENABLED",
+            "SIGNALS_EXECUTION_HANDOFF_ENABLED",
+            "REPORT_EXPORT_ENABLED",
+        ]:
+            self.assertIn(safe_default, render)
         self.assertIn("cwd=api_dir", validator)
         self.assertIn('"-p", "test_stack_contract.py"', validator)
+
+    def test_release_targets_propagate_dedicated_flags_and_reject_global_labs(self) -> None:
+        readiness = read_text("scripts/verify-release-readiness.py")
+        aws_release = read_text(".github/workflows/aws-release.yml")
+        terraform = read_text("infra/aws/main.tf")
+
+        self.assertIn("NEXT_PUBLIC_ENABLE_LABS=true is forbidden by production readiness", readiness)
+        for dedicated_flag in [
+            "NEXT_PUBLIC_ENABLE_MARKET_SCANNER",
+            "NEXT_PUBLIC_ENABLE_OPERATIONS",
+            "NEXT_PUBLIC_ENABLE_CALIBRATION",
+            "NEXT_PUBLIC_ENABLE_REVIEW_EXPORT",
+            "NEXT_PUBLIC_ENABLE_ALPHA_LAB",
+            "NEXT_PUBLIC_ENABLE_SIGNALS_LAB",
+            "NEXT_PUBLIC_ENABLE_CLI_DESIGN",
+        ]:
+            self.assertIn(dedicated_flag, aws_release)
+        for disabled_flag in [
+            "NEXT_PUBLIC_ENABLE_LABS",
+            "NEXT_PUBLIC_ENABLE_MARKET_SCANNER_PROMOTION",
+            "NEXT_PUBLIC_ENABLE_CALIBRATION_DEMO",
+            "NEXT_PUBLIC_ENABLE_REVIEW_EXPORT",
+            "NEXT_PUBLIC_ENABLE_ALPHA_LAB",
+            "NEXT_PUBLIC_ENABLE_SIGNALS_LAB",
+        ]:
+            self.assertIn(disabled_flag, terraform)
 
 
 if __name__ == "__main__":

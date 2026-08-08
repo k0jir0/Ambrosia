@@ -20,42 +20,31 @@ def read_text(relative_path: str) -> str:
 
 
 class Index90StackTests(unittest.TestCase):
-    def test_frontend_labs_remain_addressable_but_outside_sellable_navigation(self) -> None:
+    def test_frontend_routes_use_dedicated_owners_and_retired_aliases(self) -> None:
         app_shell = read_text("apps/web/src/components/app-shell.tsx")
         palette = read_text("apps/web/src/components/command-palette.tsx")
 
-        for route in [
-            '/platform',
-            '/alpha',
-            '/execution-intelligence',
-            '/relay-benchmarks',
-            '/enterprise',
-            '/cli-design',
-        ]:
+        for route in ['/alpha', '/cli-design', '/operations']:
             self.assertIn(route, app_shell)
             self.assertIn(route, palette)
 
+        for internal_route in ['/execution-intelligence', '/relay-benchmarks']:
+            self.assertIn(internal_route, palette)
+
         for label in [
-            'Platform',
             'Alpha Lab',
             'Execution Intelligence',
             'Relay + Benchmarks',
-            'Enterprise',
-            'CLI Design',
+            'CLI Guide',
+            'Operations',
         ]:
             self.assertIn(label, palette)
 
         sellable_navigation = app_shell.split("const NAV_ITEMS = [", 1)[1].split("] as const;", 1)[0]
-        for route in [
-            '/platform',
-            '/alpha',
-            '/execution-intelligence',
-            '/relay-benchmarks',
-            '/enterprise',
-            '/cli-design',
-        ]:
+        for route in ['/platform', '/execution-intelligence', '/relay-benchmarks', '/enterprise']:
             self.assertNotIn(route, sellable_navigation)
-        self.assertIn("NEXT_PUBLIC_ENABLE_LABS", app_shell)
+        for retired in ['/platform', '/enterprise', '/advanced', '/discovery', '/governance/team-management']:
+            self.assertNotIn(f'href: "{retired}"', palette)
 
     def test_index89_pages_have_route_state_boundaries(self) -> None:
         for page in [
@@ -69,18 +58,14 @@ class Index90StackTests(unittest.TestCase):
             page_file = ROOT / "apps" / "web" / "src" / "app" / page / "page.tsx"
             self.assertTrue(page_file.exists(), f"Missing page: {page_file}")
 
-        for page in [
-            "platform",
-            "alpha",
-            "execution-intelligence",
-            "relay-benchmarks",
-            "enterprise",
-            "cli-design",
-        ]:
+        for page in ["alpha", "execution-intelligence", "relay-benchmarks", "cli-design"]:
             loading_file = ROOT / "apps" / "web" / "src" / "app" / page / "loading.tsx"
             error_file = ROOT / "apps" / "web" / "src" / "app" / page / "error.tsx"
             self.assertTrue(loading_file.exists(), f"Missing loading boundary: {loading_file}")
             self.assertTrue(error_file.exists(), f"Missing error boundary: {error_file}")
+
+        self.assertIn('redirect("/operations")', read_text("apps/web/src/app/platform/page.tsx"))
+        self.assertIn('redirect("/admin")', read_text("apps/web/src/app/enterprise/page.tsx"))
 
         state_component = read_text("apps/web/src/components/route-state.tsx")
         error_component = read_text("apps/web/src/components/route-error.tsx")
@@ -89,31 +74,23 @@ class Index90StackTests(unittest.TestCase):
         self.assertIn("RouteStatusBadge", state_component)
         self.assertIn("RouteErrorView", error_component)
 
-    def test_cli_design_page_describes_entire_cli_flow(self) -> None:
+    def test_cli_design_page_uses_generated_truthful_registry(self) -> None:
         page = read_text("apps/web/src/app/cli-design/page.tsx")
 
-        for stage in [
-            "1) Bootstrap and identity",
-            "2) Decision intake and packet access",
-            "3) Research and relay",
-            "4) Validation and execution intelligence",
-            "5) Enterprise governance",
+        for expected in [
+            "cli-guide-registry.json",
+            "Implemented means the command parses",
+            "tested means a focused CLI contract test exists",
+            "qualified means a read command",
+            "there is no in-browser terminal",
+            "no public package publication is claimed",
+            "Write commands are listed for contract accuracy",
         ]:
-            self.assertIn(stage, page)
+            self.assertIn(expected, page)
 
-        for command in [
-            "ambrosia auth login",
-            "ambrosia --json health --detailed",
-            "ambrosia --json reviews create",
-            "ambrosia --json relay evaluate",
-            "ambrosia --json signals create",
-            "ambrosia --json alpha create",
-            "ambrosia --json backtests run",
-            "ambrosia --json warm-path ingest",
-            "ambrosia --json enterprise service-account",
-            "ambrosia --json enterprise security-packet",
-        ]:
-            self.assertIn(command, page)
+        registry = read_text("apps/web/src/generated/cli-guide-registry.json")
+        self.assertIn('"command": "ambrosia health"', registry)
+        self.assertIn('"qualificationStatus": "qualified"', registry)
 
     def test_adversarial_review_flow_isolated_in_module_boundary(self) -> None:
         module_index = read_text("apps/web/src/modules/adversarial-review/index.ts")

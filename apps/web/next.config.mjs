@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 const isDevelopment = process.env.NODE_ENV !== "production";
 const projectDirectory = path.dirname(fileURLToPath(import.meta.url));
 const configuredApiUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? process.env.NEXT_PUBLIC_API_URL;
+const localApiUpstream = process.env.AMBROSIA_LOCAL_API_UPSTREAM ?? "http://127.0.0.1:8000";
 let apiConnectSource = "";
 try {
   apiConnectSource = configuredApiUrl && !configuredApiUrl.startsWith("/")
@@ -22,6 +23,15 @@ const nextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
   allowedDevOrigins: ["127.0.0.1"],
+  async rewrites() {
+    if (!isDevelopment || configuredApiUrl !== "/api") return [];
+    return [
+      {
+        source: "/api/:path*",
+        destination: `${localApiUpstream}/:path*`
+      }
+    ];
+  },
   async headers() {
     return [
       {

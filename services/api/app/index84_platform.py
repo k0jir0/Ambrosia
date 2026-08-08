@@ -1,37 +1,37 @@
 from __future__ import annotations
 
-import json
+import copy
 import hashlib
+import json
 import os
 import re
+from collections.abc import Iterator, MutableMapping
+from contextvars import ContextVar
 from datetime import datetime, timedelta
-from pathlib import Path
+from typing import Any, Literal
 from uuid import uuid4
 
-from fastapi import APIRouter, Header, HTTPException, Query
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
+from pydantic import BaseModel, ConfigDict, Field
 
 from .db import PostgresReviewStore
+from .operations import current_principal
 from .project_paths import PROJECT_ROOT
+from .research_lifecycle import (
+    LifecycleRepository,
+    MemoryLifecycleRepository,
+    PostgresLifecycleRepository,
+)
 
-
-router = APIRouter(tags=["index84-platform"])
 
 _relay_runs: dict[str, dict] = {}
 _features: dict[str, dict] = {}
-_signals: dict[str, dict] = {}
 _backtests: dict[str, dict] = {}
-_signal_review_links: dict[str, dict] = {}
-_signal_versions: dict[str, list[dict]] = {}
-_signal_validation_runs: dict[str, list[dict]] = {}
-_signal_policy_events: dict[str, list[dict]] = {}
-_scanner_promotions: dict[str, dict] = {}
 _paper_trades: dict[str, dict] = {}
 _fills: dict[str, dict] = {}
 _service_accounts: dict[str, dict] = {}
 _audit_exports: dict[str, dict] = {}
 _market_replays: dict[str, dict] = {}
-_alpha_hypotheses: dict[str, dict] = {}
 _warm_path_events: list[dict] = []
 _sso_config: dict = {
     "enabled": False,
@@ -45,12 +45,10 @@ _sso_config: dict = {
 
 _ROOT = PROJECT_ROOT
 _RELEASE_EVIDENCE_PATH = _ROOT / "artifacts" / "release-evidence.json"
-_SIGNAL_STATE_PATH = Path(
-    os.getenv(
-        "AMBROSIA_SIGNAL_STATE_PATH",
-        str(_ROOT / "artifacts" / "signal-lifecycle-state.json"),
-    )
-)
+_memory_lifecycle_repository = MemoryLifecycleRepository()
+_lifecycle_context: ContextVar[
+    tuple[str, dict[str, dict], LifecycleRepository] | None
+] = ContextVar("index84_lifecycle_context", default=None)
 _index84_db: PostgresReviewStore | None = None
 
 _database_url = os.getenv("DATABASE_URL")
@@ -62,8 +60,162 @@ if _database_url:
         _index84_db = None
 
 
+def _env_enabled(name: str, *, development_default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        qualified = os.getenv("ENVIRONMENT", "development").strip().lower() in {
+            "staging",
+            "production",
+        }
+        return development_default and not qualified
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _require_capability(name: str, *, development_default: bool = False) -> None:
+    if not _env_enabled(name, development_default=development_default):
+        raise HTTPException(status_code=503, detail=f"{name} is disabled")
+
+
+def _lifecycle_organization_id() -> str:
+    principal = current_principal()
+    if principal is not None and principal.organization_id:
+        return principal.organization_id
+    qualified = os.getenv("ENVIRONMENT", "development").strip().lower() in {
+        "staging",
+        "production",
+    }
+    if qualified or _env_enabled("REQUIRE_DATABASE"):
+        raise HTTPException(status_code=503, detail="Tenant lifecycle context is unavailable")
+    return "development-local"
+
+
+def _lifecycle_repository() -> LifecycleRepository:
+    database_url = os.getenv("DATABASE_URL", "").strip()
+    if database_url:
+        return PostgresLifecycleRepository(database_url)
+    qualified = os.getenv("ENVIRONMENT", "development").strip().lower() in {
+        "staging",
+        "production",
+    }
+    if qualified or _env_enabled("REQUIRE_DATABASE"):
+        raise HTTPException(status_code=503, detail="Tenant lifecycle database is unavailable")
+    return _memory_lifecycle_repository
+
+
+def _active_lifecycle() -> tuple[str, dict[str, dict], LifecycleRepository]:
+    organization_id = _lifecycle_organization_id()
+    active = _lifecycle_context.get()
+    if active is not None and active[0] == organization_id:
+        return active
+    repository = _lifecycle_repository()
+    try:
+        state = repository.load(organization_id)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Tenant lifecycle database is unavailable") from exc
+    active = (organization_id, state, repository)
+    _lifecycle_context.set(active)
+    return active
+
+
+class _TenantLifecycleMap(MutableMapping[str, Any]):
+    def __init__(self, collection: str) -> None:
+        self.collection = collection
+
+    def _mapping(self) -> dict[str, Any]:
+        return _active_lifecycle()[1][self.collection]
+
+    def __getitem__(self, key: str) -> Any:
+        return self._mapping()[key]
+
+    def __setitem__(self, key: str, value: Any) -> None:
+        self._mapping()[key] = value
+
+    def __delitem__(self, key: str) -> None:
+        del self._mapping()[key]
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._mapping())
+
+    def __len__(self) -> int:
+        return len(self._mapping())
+
+
+_signals = _TenantLifecycleMap("signals")
+_signal_review_links = _TenantLifecycleMap("signalReviewLinks")
+_research_attachment_events = _TenantLifecycleMap("researchAttachmentEvents")
+_signal_versions = _TenantLifecycleMap("signalVersions")
+_signal_validation_runs = _TenantLifecycleMap("signalValidationRuns")
+_signal_policy_events = _TenantLifecycleMap("signalPolicyEvents")
+_scanner_promotions = _TenantLifecycleMap("scannerPromotions")
+_alpha_hypotheses = _TenantLifecycleMap("alphaHypotheses")
+
+
+def _is_lifecycle_path(path: str) -> bool:
+    return path.startswith(("/alpha", "/signals", "/scanner/candidates/promot")) or (
+        path.startswith("/reviews/") and path.endswith("/research-object-references")
+    )
+
+
+async def _lifecycle_request_scope(request: Request):
+    path = request.url.path
+    if not _is_lifecycle_path(path):
+        yield
+        return
+
+    is_write = request.method not in {"GET", "HEAD", "OPTIONS"}
+    if path.startswith("/alpha"):
+        _require_capability(
+            "ALPHA_LAB_WRITES_ENABLED" if is_write else "ALPHA_LAB_READ_ENABLED",
+            development_default=True,
+        )
+    if path.startswith("/signals"):
+        _require_capability(
+            "SIGNALS_LAB_WRITES_ENABLED" if is_write else "SIGNALS_LAB_READ_ENABLED",
+            development_default=True,
+        )
+        if path.endswith("/seed-index97"):
+            _require_capability("ALPHA_LAB_DEMO_SEED_ENABLED")
+        if path.endswith("/validate"):
+            _require_capability("SIGNALS_VALIDATION_ENABLED", development_default=True)
+    if path.startswith("/scanner/candidates/promot") and is_write:
+        _require_capability("ALPHA_LAB_WRITES_ENABLED", development_default=True)
+        _require_capability("SIGNALS_LAB_WRITES_ENABLED", development_default=True)
+
+    organization_id = _lifecycle_organization_id()
+    repository = _lifecycle_repository()
+    try:
+        state = repository.load(organization_id)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Tenant lifecycle database is unavailable") from exc
+    token = _lifecycle_context.set((organization_id, state, repository))
+    try:
+        yield
+    finally:
+        _lifecycle_context.reset(token)
+
+
+router = APIRouter(
+    tags=["index84-platform"],
+    dependencies=[Depends(_lifecycle_request_scope)],
+)
+
+
 def _now() -> str:
     return datetime.now().isoformat()
+
+
+def _require_scanner_promotion_enabled() -> None:
+    if not _env_enabled("MARKET_SCANNER_PROMOTION_ENABLED", development_default=True):
+        raise HTTPException(
+            status_code=503,
+            detail="Scanner promotion is unavailable until tenant lifecycle storage is certified",
+        )
+
+
+def _require_scanner_role() -> None:
+    principal = current_principal()
+    if principal is None or principal.role not in {"analyst", "reviewer", "owner", "admin", "service"}:
+        raise HTTPException(status_code=403, detail="Advanced role required for scanner promotion access")
 
 
 def _stable_id(prefix: str, seed: str | None = None) -> str:
@@ -74,70 +226,15 @@ def _stable_id(prefix: str, seed: str | None = None) -> str:
 
 
 def _persist_signal_state() -> None:
-    payload = {
-        "schemaVersion": "signal-lifecycle-state.v1",
-        "updatedAt": _now(),
-        "signals": _signals,
-        "signalVersions": _signal_versions,
-        "signalReviewLinks": _signal_review_links,
-        "signalValidationRuns": _signal_validation_runs,
-        "signalPolicyEvents": _signal_policy_events,
-        "scannerPromotions": _scanner_promotions,
-        "alphaHypotheses": _alpha_hypotheses,
-    }
-    if _index84_db is not None:
-        try:
-            _index84_db.save_signal_lifecycle_snapshot(payload)
-        except Exception:
-            pass
-    _SIGNAL_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
-    _SIGNAL_STATE_PATH.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    organization_id, state, repository = _active_lifecycle()
+    try:
+        repository.save(organization_id, state)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Tenant lifecycle write was not persisted") from exc
 
 
 def _load_signal_state() -> None:
-    if _index84_db is not None:
-        try:
-            payload = _index84_db.load_signal_lifecycle_snapshot()
-            if isinstance(payload, dict):
-                if isinstance(payload.get("signals"), dict):
-                    _signals.update(payload["signals"])
-                if isinstance(payload.get("signalVersions"), dict):
-                    _signal_versions.update(payload["signalVersions"])
-                if isinstance(payload.get("signalReviewLinks"), dict):
-                    _signal_review_links.update(payload["signalReviewLinks"])
-                if isinstance(payload.get("signalValidationRuns"), dict):
-                    _signal_validation_runs.update(payload["signalValidationRuns"])
-                if isinstance(payload.get("signalPolicyEvents"), dict):
-                    _signal_policy_events.update(payload["signalPolicyEvents"])
-                if isinstance(payload.get("scannerPromotions"), dict):
-                    _scanner_promotions.update(payload["scannerPromotions"])
-                if isinstance(payload.get("alphaHypotheses"), dict):
-                    _alpha_hypotheses.update(payload["alphaHypotheses"])
-                return
-        except Exception:
-            pass
-
-    if not _SIGNAL_STATE_PATH.exists():
-        return
-    try:
-        payload = json.loads(_SIGNAL_STATE_PATH.read_text(encoding="utf-8"))
-    except json.JSONDecodeError:
-        return
-
-    if isinstance(payload.get("signals"), dict):
-        _signals.update(payload["signals"])
-    if isinstance(payload.get("signalVersions"), dict):
-        _signal_versions.update(payload["signalVersions"])
-    if isinstance(payload.get("signalReviewLinks"), dict):
-        _signal_review_links.update(payload["signalReviewLinks"])
-    if isinstance(payload.get("signalValidationRuns"), dict):
-        _signal_validation_runs.update(payload["signalValidationRuns"])
-    if isinstance(payload.get("signalPolicyEvents"), dict):
-        _signal_policy_events.update(payload["signalPolicyEvents"])
-    if isinstance(payload.get("scannerPromotions"), dict):
-        _scanner_promotions.update(payload["scannerPromotions"])
-    if isinstance(payload.get("alphaHypotheses"), dict):
-        _alpha_hypotheses.update(payload["alphaHypotheses"])
+    _active_lifecycle()
 
 
 class ChatMessage(BaseModel):
@@ -236,6 +333,61 @@ class SignalReviewLinkRequest(BaseModel):
     reviewId: str = Field(min_length=1)
     hypothesisId: str | None = None
     signalVersion: int | None = Field(default=None, ge=1)
+
+
+ResearchObjectType = Literal["alpha_hypothesis", "signal"]
+ResearchRelationshipType = Literal["research_evidence", "supports", "challenges", "disconfirms"]
+
+
+class ResearchObjectReferenceRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    objectId: str = Field(min_length=1, max_length=200)
+    versionId: int | Literal["current"] = "current"
+    objectType: ResearchObjectType
+    relationshipType: ResearchRelationshipType = "research_evidence"
+
+
+class ResearchObjectReference(BaseModel):
+    referenceId: str
+    snapshotId: str
+    objectType: ResearchObjectType
+    objectId: str
+    versionId: int
+    organizationId: str
+    snapshot: dict[str, Any]
+    contentHash: str
+    source: str | None = None
+    mode: str | None = None
+    provider: str | None = None
+    asOf: str | None = None
+    benchmark: str | None = None
+    formula: str | None = None
+    costs: Any | None = None
+    assumptions: Any | None = None
+    relationshipType: ResearchRelationshipType
+    actor: str
+    attachedAt: str
+    driftStatus: Literal["current", "superseded"]
+
+
+class ResearchObjectReferenceResponse(BaseModel):
+    schemaVersion: Literal["research-object-reference-response.v1"] = "research-object-reference-response.v1"
+    reviewId: str
+    reference: ResearchObjectReference
+
+
+class ResearchObjectReferenceListResponse(BaseModel):
+    schemaVersion: Literal["research-object-reference-list.v1"] = "research-object-reference-list.v1"
+    reviewId: str
+    references: list[ResearchObjectReference]
+
+
+class ResearchObjectPage(BaseModel):
+    schemaVersion: Literal["research-object-page.v1"] = "research-object-page.v1"
+    items: list[dict[str, Any]]
+    nextCursor: str | None
+    limit: int
 
 
 class SignalDecisionWritebackRequest(BaseModel):
@@ -593,9 +745,6 @@ class AuditExportRequest(BaseModel):
     format: str = "jsonl"
 
 
-_load_signal_state()
-
-
 @router.post("/v1/chat/completions")
 def openai_compatible_chat_completion(request: ChatCompletionRequest) -> dict:
     prompt = "\n".join(message.content for message in request.messages if message.role != "system")
@@ -886,6 +1035,7 @@ def create_alpha_hypothesis(
         "updatedAt": _now(),
     }
     _alpha_hypotheses[hypothesis_id] = hypothesis
+    _persist_signal_state()
     _idempotency_store(endpoint, idempotency_key, hypothesis)
     return hypothesis
 
@@ -893,6 +1043,28 @@ def create_alpha_hypothesis(
 @router.get("/alpha/hypotheses")
 def list_alpha_hypotheses() -> list[dict]:
     return sorted(_alpha_hypotheses.values(), key=lambda item: item["updatedAt"], reverse=True)
+
+
+def _bounded_page(items: list[dict], limit: int, cursor: str | None, id_key: str) -> ResearchObjectPage:
+    ordered = sorted(
+        items,
+        key=lambda item: (str(item.get("updatedAt", "")), str(item.get(id_key, ""))),
+        reverse=True,
+    )
+    if cursor:
+        positions = [index for index, item in enumerate(ordered) if str(item.get(id_key)) == cursor]
+        ordered = ordered[positions[0] + 1:] if positions else []
+    page = ordered[:limit]
+    next_cursor = str(page[-1].get(id_key)) if len(ordered) > limit and page else None
+    return ResearchObjectPage(items=copy.deepcopy(page), nextCursor=next_cursor, limit=limit)
+
+
+@router.get("/alpha/hypotheses/read", response_model=ResearchObjectPage)
+def read_alpha_hypotheses(
+    limit: int = Query(default=25, ge=1, le=100),
+    cursor: str | None = Query(default=None, max_length=200),
+) -> ResearchObjectPage:
+    return _bounded_page(list(_alpha_hypotheses.values()), limit, cursor, "hypothesisId")
 
 
 @router.get("/alpha/hypotheses/{hypothesis_id}")
@@ -903,9 +1075,26 @@ def get_alpha_hypothesis(hypothesis_id: str) -> dict:
     return hypothesis
 
 
+@router.get("/alpha/hypotheses/{hypothesis_id}/versions/{version}")
+def get_alpha_hypothesis_version(hypothesis_id: str, version: int) -> dict:
+    hypothesis = get_alpha_hypothesis(hypothesis_id)
+    current_version = int(hypothesis.get("activeVersion", hypothesis.get("version", 1)))
+    if version != current_version:
+        raise HTTPException(status_code=404, detail="Alpha hypothesis version not found")
+    return copy.deepcopy(hypothesis)
+
+
 @router.get("/signals")
 def list_signals() -> list[dict]:
     return sorted(_signals.values(), key=lambda item: item["updatedAt"], reverse=True)
+
+
+@router.get("/signals/read", response_model=ResearchObjectPage)
+def read_signals(
+    limit: int = Query(default=25, ge=1, le=100),
+    cursor: str | None = Query(default=None, max_length=200),
+) -> ResearchObjectPage:
+    return _bounded_page(list(_signals.values()), limit, cursor, "signalId")
 
 
 @router.post("/signals/seed-index97")
@@ -1061,6 +1250,8 @@ def promote_scanner_candidate_to_alpha(
     request: ScannerCandidatePromoteRequest,
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
 ) -> dict:
+    _require_scanner_role()
+    _require_scanner_promotion_enabled()
     endpoint = _endpoint_key("/scanner/candidates/promote-alpha")
     cached = _idempotency_lookup(endpoint, idempotency_key)
     if cached is not None:
@@ -1193,6 +1384,8 @@ def promote_scanner_candidate_to_alpha(
 
 @router.get("/scanner/candidates/promotions")
 def list_scanner_candidate_promotions() -> list[dict]:
+    _require_scanner_role()
+    _require_scanner_promotion_enabled()
     records = sorted(_scanner_promotions.values(), key=lambda item: item.get("promotedAt", ""), reverse=True)
     return [_scanner_promotion_summary(record) for record in records]
 
@@ -1223,6 +1416,126 @@ def _find_signal_review_link(signal_id: str, review_id: str, signal_version: int
         return None
     candidates.sort(key=lambda item: int(item.get("signalVersion", 0)), reverse=True)
     return candidates[0]
+
+
+def _research_snapshot(request: ResearchObjectReferenceRequest) -> tuple[int, dict]:
+    if request.objectType == "signal":
+        requested = None if request.versionId == "current" else request.versionId
+        version = _resolve_signal_version(request.objectId, requested)
+        snapshot = next(
+            item for item in _signal_versions.get(request.objectId, [])
+            if int(item.get("version", 0)) == version
+        )
+        return version, copy.deepcopy(snapshot)
+
+    hypothesis = _alpha_hypotheses.get(request.objectId)
+    if hypothesis is None:
+        raise HTTPException(status_code=404, detail="Research object not found")
+    version = int(hypothesis.get("activeVersion", hypothesis.get("version", 1)))
+    if request.versionId != "current" and request.versionId != version:
+        raise HTTPException(status_code=404, detail="Research object not found")
+    return version, copy.deepcopy(hypothesis)
+
+
+@router.post(
+    "/reviews/{review_id}/research-object-references",
+    response_model=ResearchObjectReferenceResponse,
+    status_code=201,
+)
+def attach_research_object_reference(
+    review_id: str,
+    request: ResearchObjectReferenceRequest,
+) -> ResearchObjectReferenceResponse:
+    _require_capability(
+        "SIGNALS_LAB_READ_ENABLED" if request.objectType == "signal" else "ALPHA_LAB_READ_ENABLED",
+        development_default=True,
+    )
+    organization_id = _lifecycle_organization_id()
+    principal = current_principal()
+    actor = principal.subject if principal is not None else "development-system"
+    version, snapshot = _research_snapshot(request)
+    canonical = json.dumps(snapshot, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    content_hash = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    identity = f"{review_id}:{request.objectType}:{request.objectId}:{version}:{request.relationshipType}"
+    reference_id = _stable_id("research-reference", identity)
+    snapshot_id = f"{request.objectType}:{request.objectId}:{version}:{content_hash[:16]}"
+    attached_at = _now()
+    current_version = version
+    if request.objectType == "signal":
+        signal = _signals.get(request.objectId, {})
+        current_version = int(signal.get("activeVersion", signal.get("version", version)))
+
+    reference = ResearchObjectReference(
+        referenceId=reference_id,
+        snapshotId=snapshot_id,
+        objectType=request.objectType,
+        objectId=request.objectId,
+        versionId=version,
+        organizationId=organization_id,
+        snapshot=snapshot,
+        contentHash=content_hash,
+        source=snapshot.get("source", snapshot.get("sourceLabel")),
+        mode=snapshot.get("dataMode", snapshot.get("mode")),
+        provider=snapshot.get("provider"),
+        asOf=snapshot.get("asOf", snapshot.get("updatedAt")),
+        benchmark=snapshot.get("benchmark"),
+        formula=snapshot.get("formula"),
+        costs=snapshot.get("costs", snapshot.get("costModel")),
+        assumptions=snapshot.get("assumptions", snapshot.get("validationGates")),
+        relationshipType=request.relationshipType,
+        actor=actor,
+        attachedAt=attached_at,
+        driftStatus="current" if current_version == version else "superseded",
+    )
+    link = {
+        "linkId": reference_id,
+        "schemaVersion": "research-review-link.v1",
+        "reviewId": review_id,
+        "signalId": request.objectId if request.objectType == "signal" else None,
+        "signalVersion": version if request.objectType == "signal" else None,
+        "relationshipType": request.relationshipType,
+        "linkedAt": attached_at,
+        "updatedAt": attached_at,
+        "researchObjectReference": reference.model_dump(),
+    }
+    event = {
+        "eventId": _stable_id("research-attachment-event", identity),
+        "schemaVersion": "research-attachment-event.v1",
+        "eventType": "research_object.attached",
+        "reviewId": review_id,
+        "objectType": request.objectType,
+        "objectId": request.objectId,
+        "versionId": version,
+        "relationshipType": request.relationshipType,
+        "actor": actor,
+        "attachedAt": attached_at,
+        "contentHash": content_hash,
+    }
+    _signal_review_links[reference_id] = link
+    _research_attachment_events[event["eventId"]] = event
+    _persist_signal_state()
+    return ResearchObjectReferenceResponse(reviewId=review_id, reference=reference)
+
+
+@router.get(
+    "/reviews/{review_id}/research-object-references",
+    response_model=ResearchObjectReferenceListResponse,
+)
+def list_research_object_references(review_id: str) -> ResearchObjectReferenceListResponse:
+    references: list[ResearchObjectReference] = []
+    for link in _signal_review_links.values():
+        if link.get("reviewId") != review_id or not link.get("researchObjectReference"):
+            continue
+        payload = copy.deepcopy(link["researchObjectReference"])
+        if payload["objectType"] == "signal":
+            live = _signals.get(payload["objectId"])
+        else:
+            live = _alpha_hypotheses.get(payload["objectId"])
+        live_version = int(live.get("activeVersion", live.get("version", 1))) if live else None
+        payload["driftStatus"] = "current" if live_version == int(payload["versionId"]) else "superseded"
+        references.append(ResearchObjectReference(**payload))
+    references.sort(key=lambda item: (item.attachedAt, item.referenceId), reverse=True)
+    return ResearchObjectReferenceListResponse(reviewId=review_id, references=references)
 
 
 @router.post("/signals/{signal_id}/versions", status_code=201)
@@ -1816,13 +2129,21 @@ def _has_decision_risk_budget(signal: dict, request: SignalDecisionWritebackRequ
 
 def _resolve_execution_readiness(signal: dict, action: str | None, request: SignalDecisionWritebackRequest) -> str:
     if request.executionReadiness:
+        if request.executionReadiness == "execution_candidate" and not _env_enabled(
+            "SIGNALS_EXECUTION_HANDOFF_ENABLED"
+        ):
+            return "execution_blocked"
         return request.executionReadiness
     if action in {"BLOCK", "RETIRE"}:
         return "execution_blocked"
     if action in ACTIONABLE_SIGNAL_DECISIONS and not _has_decision_risk_budget(signal, request):
         return "execution_blocked"
     if action in ACTIONABLE_SIGNAL_DECISIONS and (request.approvalState or "").lower() == "approved":
-        return "execution_candidate"
+        return (
+            "execution_candidate"
+            if _env_enabled("SIGNALS_EXECUTION_HANDOFF_ENABLED")
+            else "execution_blocked"
+        )
     if action in ACTIONABLE_SIGNAL_DECISIONS:
         return "paper_trade_ready"
     return "not_executable"

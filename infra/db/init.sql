@@ -435,3 +435,4 @@ CREATE INDEX IF NOT EXISTS idx_execution_replay_expiry ON execution_replay_guard
 -- Keep fresh local/bootstrap databases aligned with the latest additive schema.
 -- Existing databases apply this file through the migration runner instead.
 \ir migrations/V0008__identity_tenancy_and_llm_catalog.sql
+\ir migrations/V0009__research_tenant_lifecycle.sql

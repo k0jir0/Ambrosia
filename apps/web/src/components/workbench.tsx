@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { Activity, ArrowRight, Beaker, CheckCircle2, Circle, Clock3, Download, RefreshCw, ShieldCheck, SlidersHorizontal } from "lucide-react";
 import {
+  attachResearchObjectReference,
   createAlphaHypothesis,
   createPacket,
   createSignal,
@@ -19,6 +20,7 @@ import {
   preparePacketBacktest,
   linkAlphaHypothesisSignal,
   linkSignalReview,
+  listResearchObjectReferences,
   recordDecision,
   recordPacketDecision,
   recordPacketOutcome,
@@ -26,7 +28,8 @@ import {
   refreshPacketMetrics,
   runPacketAgents,
   writebackSignalDecision,
-  writebackSignalOutcome
+  writebackSignalOutcome,
+  type ResearchObjectReference
 } from "@/lib/api";
 import {
   getLocalReviews,
@@ -41,6 +44,7 @@ import {
   type ReviewAlphaLink
 } from "@/lib/review-store";
 import { sampleReviews } from "@/lib/sample-data";
+import { isFeatureEnabled } from "@/lib/route-availability";
 import type {
   AuditEvent,
   Claim,
@@ -147,6 +151,7 @@ const signalDecisionActionOptions: Array<{ action: SignalDecisionAction; label: 
 ];
 
 export function Workbench({ initialReviewId }: { initialReviewId?: string } = {}) {
+  const governedReportExportEnabled = isFeatureEnabled("review-export");
   const [reviews, setReviews] = useState<TradeReview[]>(() => mergeReviews(getLocalReviews(), sampleReviews));
   const [packetIdsByReviewId, setPacketIdsByReviewId] = useState<Record<string, string>>({});
   const [activeId, setActiveId] = useState(() => {
@@ -155,6 +160,7 @@ export function Workbench({ initialReviewId }: { initialReviewId?: string } = {}
   });
   const [activeAction, setActiveAction] = useState<string | null>(null);
   const [activeAlphaLink, setActiveAlphaLink] = useState<ReviewAlphaLink | null>(null);
+  const [researchReferences, setResearchReferences] = useState<ResearchObjectReference[]>([]);
   const [activeAlphaDecay, setActiveAlphaDecay] = useState<AlphaDecaySnapshot | null>(null);
   const [actionFeedback, setActionFeedback] = useState<{ tone: "neutral" | "good" | "warn"; message: string } | null>(null);
   const [liveMarketData, setLiveMarketData] = useState<LiveMarketData | null>(null);
@@ -194,10 +200,13 @@ export function Workbench({ initialReviewId }: { initialReviewId?: string } = {}
   }, [initialReviewId]);
 
   useEffect(() => {
+    let cancelled = false;
     setLiveMarketData(null);
     setActivePacketData(null);
     setReportArtifact(null);
-    setActiveAlphaLink(activeId ? getReviewAlphaLink(activeId) : null);
+    const localLink = activeId ? getReviewAlphaLink(activeId) : null;
+    setActiveAlphaLink(localLink);
+    setResearchReferences([]);
     setActiveAlphaDecay(null);
     setRunbookState({
       status: "idle",
@@ -205,6 +214,21 @@ export function Workbench({ initialReviewId }: { initialReviewId?: string } = {}
       message: "Ready to run the next checkpoint."
     });
     setActionFeedback(null);
+    if (activeId) {
+      listResearchObjectReferences(activeId)
+        .then((references) => {
+          if (cancelled) return;
+          setResearchReferences(references);
+          const signalReference = references.find((reference) => reference.objectType === "signal");
+          if (signalReference) setActiveAlphaLink(linkFromResearchReference(signalReference));
+        })
+        .catch(() => {
+          // Local linkage remains a development fallback when the lifecycle API is unavailable.
+        });
+    }
+    return () => {
+      cancelled = true;
+    };
   }, [activeId]);
 
   useEffect(() => {
@@ -425,6 +449,12 @@ export function Workbench({ initialReviewId }: { initialReviewId?: string } = {}
       throw new Error("Signal link does not include a signal id.");
     }
     const reviewId = activeReview.id;
+    await attachResearchObjectReference(reviewId, {
+      objectType: "signal",
+      objectId: signalId,
+      versionId: signalLink.signalVersion ?? "current",
+      relationshipType: "research_evidence"
+    });
     await linkSignalReview(signalId, {
       reviewId,
       hypothesisId: signalLink.hypothesisId,
@@ -861,7 +891,8 @@ export function Workbench({ initialReviewId }: { initialReviewId?: string } = {}
         appendAuditEvent("report.generated", `Report artifact generated for ${activeReview.ticker}; packet refresh unavailable after export.`);
       }
       return { result: "ok", report };
-    } catch {
+    } catch (error) {
+      if (governedReportExportEnabled) throw error;
       const fallbackReport = buildLocalReportArtifact(activeReview, packetForFallback);
       setReportArtifact(fallbackReport);
       appendAuditEvent("report.generate.fallback", "Report endpoint unavailable; exported a local Markdown artifact from current packet state.");
@@ -1142,7 +1173,7 @@ export function Workbench({ initialReviewId }: { initialReviewId?: string } = {}
     <main className="min-h-screen pb-10 text-ink">
       <div className="mx-auto max-w-[1500px] space-y-4">
         <TopBar review={activeReview} />
-        {activeAlphaLink ? <LinkedAlphaPanel link={activeAlphaLink} /> : null}
+        {activeAlphaLink ? <LinkedAlphaPanel link={activeAlphaLink} references={researchReferences} /> : null}
         <IntegrationKpiPanel metrics={integrationKpis} />
         {actionFeedback ? <FeedbackBanner feedback={actionFeedback} /> : null}
         <RunbookStrip
@@ -1152,6 +1183,7 @@ export function Workbench({ initialReviewId }: { initialReviewId?: string } = {}
           reportArtifact={reportArtifact}
           runbookState={runbookState}
           activeAction={activeAction}
+          governedReportExportEnabled={governedReportExportEnabled}
           providerMode={providerMode}
           onProviderModeChange={setProviderMode}
           onRunNext={runNextRunbookStep}
@@ -1413,7 +1445,28 @@ function TopBar({ review }: { review: TradeReview }) {
     return trimmed.length >= minLength ? trimmed : fallback;
   }
 
-function LinkedAlphaPanel({ link }: { link: ReviewAlphaLink }) {
+function linkFromResearchReference(reference: ResearchObjectReference): ReviewAlphaLink {
+  const snapshot = reference.snapshot;
+  const universe = Array.isArray(snapshot.universe) ? snapshot.universe : [];
+  return {
+    source: "alpha",
+    objectType: reference.objectType,
+    signalId: reference.objectType === "signal" ? reference.objectId : undefined,
+    hypothesisId: reference.objectType === "hypothesis" ? reference.objectId : undefined,
+    signalVersion: reference.objectType === "signal" ? reference.versionId : undefined,
+    title: readOptionalText(snapshot.name) ?? readOptionalText(snapshot.title),
+    signalFamily: readOptionalText(snapshot.signalFamily),
+    formula: readOptionalText(snapshot.formula),
+    ticker: readOptionalText(universe[0]),
+    createdAt: reference.attachedAt
+  };
+}
+
+function readOptionalText(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value : undefined;
+}
+
+function LinkedAlphaPanel({ link, references }: { link: ReviewAlphaLink; references: ResearchObjectReference[] }) {
   const objectId = link.objectType === "hypothesis" ? link.hypothesisId : link.signalId;
 
   return (
@@ -1431,12 +1484,18 @@ function LinkedAlphaPanel({ link }: { link: ReviewAlphaLink }) {
             {link.signalFamily ? ` | Family ${link.signalFamily}` : ""}
           </p>
           {link.formula ? <p className="mt-1 text-xs text-ink/65">Formula: {link.formula}</p> : null}
+          {references.map((reference) => (
+            <p key={reference.referenceId} className="mt-1 text-xs text-ink/65">
+              Snapshot v{reference.versionId} | {reference.relationshipType} | {reference.driftStatus} | hash {reference.contentHash.slice(0, 12)}
+            </p>
+          ))}
         </div>
         <div className="flex items-center gap-2">
           <Link href="/alpha" className="focus-ring rounded-md border border-line bg-paper px-3 py-1.5 text-xs font-semibold text-teal hover:border-teal/60">
             Open Alpha Lab
           </Link>
           <Badge tone="info">{link.objectType}</Badge>
+          {references.some((reference) => reference.driftStatus === "superseded") ? <Badge tone="warn">Superseded snapshot</Badge> : null}
         </div>
       </div>
     </Panel>
@@ -1494,6 +1553,7 @@ function RunbookStrip({
   reportArtifact,
   runbookState,
   activeAction,
+  governedReportExportEnabled,
   providerMode,
   onProviderModeChange,
   onRunNext,
@@ -1506,6 +1566,7 @@ function RunbookStrip({
   reportArtifact: ReportArtifact | null;
   runbookState: RunbookRunState;
   activeAction: string | null;
+  governedReportExportEnabled: boolean;
   providerMode: ProviderMode;
   onProviderModeChange: (mode: ProviderMode) => void;
   onRunNext: () => void;
@@ -1566,15 +1627,17 @@ function RunbookStrip({
           >
             {activeAction === "Run guided demo" ? "Running..." : "Run guided demo"}
           </button>
-          <button
-            type="button"
-            onClick={onExportReport}
-            disabled={Boolean(activeAction)}
-            className="focus-ring inline-flex items-center gap-1 rounded-md border border-line bg-fog/70 px-3 py-2 text-xs font-semibold text-slate-200 transition hover:border-teal/50 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            <Download className="h-3.5 w-3.5" />
-            {activeAction === "Generate report" ? "Generating..." : reportArtifact ? "Export report" : "Generate / export report"}
-          </button>
+          {governedReportExportEnabled ? (
+            <button
+              type="button"
+              onClick={onExportReport}
+              disabled={Boolean(activeAction)}
+              className="focus-ring inline-flex items-center gap-1 rounded-md border border-line bg-fog/70 px-3 py-2 text-xs font-semibold text-slate-200 transition hover:border-teal/50 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <Download className="h-3.5 w-3.5" />
+              {activeAction === "Generate report" ? "Generating..." : reportArtifact ? "Export report" : "Generate / export report"}
+            </button>
+          ) : null}
         </div>
       </div>
 

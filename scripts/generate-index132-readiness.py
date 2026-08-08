@@ -58,9 +58,9 @@ def main() -> int:
     repository_checks = {
         "requiredFiles": {"status": "passed" if not missing_files else "failed", "missing": missing_files},
         "schemaVersion": {
-            "status": "passed" if schema.get("dbSchemaVersion") == "v0008" else "failed",
+            "status": "passed" if schema.get("dbSchemaVersion", "") >= "v0008" else "failed",
             "actual": schema.get("dbSchemaVersion"),
-            "required": "v0008",
+            "requiredMinimum": "v0008",
         },
         "migrationChain": {
             "status": "passed" if (ROOT / "infra/db/migrations/V0008__identity_tenancy_and_llm_catalog.sql").is_file() else "failed"

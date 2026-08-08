@@ -39,6 +39,8 @@ const EMPTY_DETAILS: SignalDetails = {
   versions: [],
 };
 
+const signalsDemoSeedEnabled = process.env.NEXT_PUBLIC_ENABLE_SIGNALS_DEMO_SEED === "true";
+
 export default function SignalsPage() {
   const [status, setStatus] = useState<RouteStatus>("loading");
   const [message, setMessage] = useState<string>("Loading signals...");
@@ -69,11 +71,10 @@ export default function SignalsPage() {
     }
 
     const items = Array.isArray(response.data) ? (response.data as Array<Record<string, unknown>>) : [];
-    const details = await loadSignalDetails(items);
     const signalIds = items.map((item) => textOrFallback(item.signalId, "")).filter(Boolean);
     setSignals(items);
-    setSignalDetails(details);
-    setSelectedSignalId((current) => (current && signalIds.includes(current) ? current : signalIds[0] ?? null));
+    setSignalDetails({});
+    setSelectedSignalId((current) => (current && signalIds.includes(current) ? current : null));
     setMetrics(metricsResponse.ok && isRecord(metricsResponse.data) ? metricsResponse.data : null);
     setScorecard(scorecardResponse.ok && isRecord(scorecardResponse.data) ? scorecardResponse.data : null);
     setStatus(items.length === 0 ? "empty" : "success");
@@ -100,9 +101,16 @@ export default function SignalsPage() {
     void load();
   }, []);
 
+  useEffect(() => {
+    if (!selectedSignalId || signalDetails[selectedSignalId]) return;
+    void loadSignalDetails(selectedSignalId).then((details) => {
+      setSignalDetails((current) => ({ ...current, [selectedSignalId]: details }));
+    });
+  }, [selectedSignalId, signalDetails]);
+
   const cockpitMetrics = buildCockpitMetrics(signals, signalDetails);
   const triageEntries = buildDecisionTriage(signals, signalDetails);
-  const selectedSignal = signals.find((signal) => textOrFallback(signal.signalId, "") === selectedSignalId) ?? signals[0] ?? null;
+  const selectedSignal = signals.find((signal) => textOrFallback(signal.signalId, "") === selectedSignalId) ?? null;
   const selectedDetails = selectedSignal ? detailsForSignal(selectedSignal, signalDetails) : EMPTY_DETAILS;
 
   if (status === "loading") return <RouteLoading title="Signals" />;
@@ -119,15 +127,17 @@ export default function SignalsPage() {
           </div>
           <div className="flex items-center gap-2">
             <RouteStatusBadge status={status} />
-            <button
-              type="button"
-              onClick={() => void seedSignals()}
-              disabled={seeding}
-              className="focus-ring inline-flex items-center gap-2 rounded-md bg-teal px-3 py-1 text-xs font-semibold text-fog disabled:opacity-60"
-            >
-              {seeding ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <Database className="h-3.5 w-3.5" />}
-              Seed lifecycle data
-            </button>
+            {signalsDemoSeedEnabled ? (
+              <button
+                type="button"
+                onClick={() => void seedSignals()}
+                disabled={seeding}
+                className="focus-ring inline-flex items-center gap-2 rounded-md bg-teal px-3 py-1 text-xs font-semibold text-fog disabled:opacity-60"
+              >
+                {seeding ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <Database className="h-3.5 w-3.5" />}
+                Seed lifecycle data
+              </button>
+            ) : null}
             <button
               type="button"
               onClick={() => void load()}
@@ -341,32 +351,20 @@ export default function SignalsPage() {
   );
 }
 
-async function loadSignalDetails(signals: Array<Record<string, unknown>>): Promise<Record<string, SignalDetails>> {
-  const entries = await Promise.all(
-    signals.map(async (signal) => {
-      const signalId = textOrFallback(signal.signalId, "");
-      if (!signalId) return null;
+async function loadSignalDetails(signalId: string): Promise<SignalDetails> {
+  const [validationRuns, decisionLinks, policyEvents, versions] = await Promise.all([
+    fetchControlPlane(`/signals/${encodeURIComponent(signalId)}/validation-runs`),
+    fetchControlPlane(`/signals/${encodeURIComponent(signalId)}/decision-links`),
+    fetchControlPlane(`/signals/${encodeURIComponent(signalId)}/policy-events`),
+    fetchControlPlane(`/signals/${encodeURIComponent(signalId)}/versions`),
+  ]);
 
-      const [validationRuns, decisionLinks, policyEvents, versions] = await Promise.all([
-        fetchControlPlane(`/signals/${encodeURIComponent(signalId)}/validation-runs`),
-        fetchControlPlane(`/signals/${encodeURIComponent(signalId)}/decision-links`),
-        fetchControlPlane(`/signals/${encodeURIComponent(signalId)}/policy-events`),
-        fetchControlPlane(`/signals/${encodeURIComponent(signalId)}/versions`),
-      ]);
-
-      return [
-        signalId,
-        {
-          validationRuns: recordsFromResponse(validationRuns),
-          decisionLinks: recordsFromResponse(decisionLinks),
-          policyEvents: recordsFromResponse(policyEvents),
-          versions: recordsFromResponse(versions),
-        },
-      ] as [string, SignalDetails];
-    })
-  );
-
-  return Object.fromEntries(entries.filter((entry): entry is [string, SignalDetails] => entry !== null));
+  return {
+    validationRuns: recordsFromResponse(validationRuns),
+    decisionLinks: recordsFromResponse(decisionLinks),
+    policyEvents: recordsFromResponse(policyEvents),
+    versions: recordsFromResponse(versions),
+  };
 }
 
 function recordsFromResponse(response: Awaited<ReturnType<typeof fetchControlPlane>>): Array<Record<string, unknown>> {

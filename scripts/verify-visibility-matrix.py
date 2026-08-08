@@ -61,6 +61,8 @@ def collect_frontend_routes(app_dir: Path) -> set[str]:
 
 
 def classify_endpoint(path: str) -> tuple[str, str]:
+    if path.startswith("/scanner/"):
+        return "advanced", "/market-scanner"
     if path.startswith("/sandbox/"):
         return "advanced", "/advanced"
     if "/attribution/" in path:
@@ -79,7 +81,6 @@ def classify_endpoint(path: str) -> tuple[str, str]:
         or path.startswith("/tools/")
         or path.startswith("/alerts/")
         or path.startswith("/jobs")
-        or path.startswith("/scanner/")
         or path.startswith("/visibility/")
         or path in {"/health", "/health/detailed", "/metrics", "/scorecard", "/market/providers/status"}
     ):

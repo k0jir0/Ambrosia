@@ -17,6 +17,7 @@ param(
     [string]$DataClassification = "synthetic",
     [string]$AlertEmail,
     [string]$BudgetName = "ambrosia-staging-monthly",
+    [switch]$AllowPlanLimitedEnvironment,
     [switch]$VerifyOnly
 )
 
@@ -71,12 +72,13 @@ if ($LASTEXITCODE -ne 0) { throw "The remote staging branch does not exist." }
 
 if (-not $VerifyOnly) {
     $values = @(
-        $ReviewerLogin, $AwsAccountId, $StateBucket, $StateKmsKeyArn, $DomainName,
-        $HostedZoneId, $DeployRoleArn, $AlbCertificateArn,
+        $AwsAccountId, $StateBucket, $StateKmsKeyArn, $DomainName, $HostedZoneId,
+        $DeployRoleArn, $AlbCertificateArn,
         $CloudFrontCertificateArn, $Owner, $CostCenter, $AlertEmail
     )
+    if (-not $AllowPlanLimitedEnvironment) { $values += $ReviewerLogin }
     if ($values | Where-Object { [string]::IsNullOrWhiteSpace($_) }) {
-        throw "All staging values, including ReviewerLogin and AlertEmail, are required."
+        throw "All staging values and AlertEmail are required; ReviewerLogin is also required unless -AllowPlanLimitedEnvironment is explicit."
     }
     if ($Environment -ne "staging") { throw "Index133 permits this script to configure staging only." }
     if ($AwsRegion -ne "ca-central-1") { throw "AWS staging is restricted to ca-central-1." }
@@ -86,14 +88,26 @@ if (-not $VerifyOnly) {
         throw "DataClassification must be synthetic or approved-staging."
     }
 
-    $reviewer = & gh api "users/$ReviewerLogin" | ConvertFrom-Json
-    $environmentBody = @{
-        wait_timer = 0
-        prevent_self_review = $true
-        reviewers = @(@{ type = "User"; id = $reviewer.id })
-        deployment_branch_policy = @{
-            protected_branches = $false
-            custom_branch_policies = $true
+    if ($AllowPlanLimitedEnvironment) {
+        Write-Warning "GitHub environment reviewers are not being configured. The staging branch must retain an independent approval requirement."
+        $environmentBody = @{
+            can_admins_bypass = $false
+            deployment_branch_policy = @{
+                protected_branches = $false
+                custom_branch_policies = $true
+            }
+        }
+    } else {
+        $reviewer = & gh api "users/$ReviewerLogin" | ConvertFrom-Json
+        $environmentBody = @{
+            wait_timer = 0
+            prevent_self_review = $true
+            can_admins_bypass = $false
+            reviewers = @(@{ type = "User"; id = $reviewer.id })
+            deployment_branch_policy = @{
+                protected_branches = $false
+                custom_branch_policies = $true
+            }
         }
     }
     if ($PSCmdlet.ShouldProcess("$Repository environment $Environment", "Create and protect")) {
@@ -156,6 +170,13 @@ if (-not $VerifyOnly) {
 
 $environmentInfo = & gh api "repos/$Repository/environments/$Environment" | ConvertFrom-Json
 if (-not $environmentInfo.protection_rules) { throw "No environment protection rules are configured." }
+if ($environmentInfo.can_admins_bypass -ne $false) {
+    throw "Administrator bypass must be disabled for the staging environment."
+}
+$reviewerRules = @($environmentInfo.protection_rules | Where-Object { $_.type -eq "required_reviewers" })
+if (-not $AllowPlanLimitedEnvironment -and $reviewerRules.Count -eq 0) {
+    throw "The staging environment has no required-reviewer rule. Use -AllowPlanLimitedEnvironment only when the repository plan cannot provide it."
+}
 if ($environmentInfo.deployment_branch_policy.custom_branch_policies -ne $true) {
     throw "The environment is not restricted by custom deployment branch policy."
 }
@@ -171,7 +192,13 @@ $protection = & gh api "repos/$Repository/branches/staging/protection" | Convert
 if (-not $protection.required_pull_request_reviews -or -not $protection.required_status_checks.strict) {
     throw "Staging branch protection is incomplete."
 }
+if ($AllowPlanLimitedEnvironment -and $protection.required_pull_request_reviews.required_approving_review_count -lt 1) {
+    throw "The plan-limited environment requires at least one independent staging branch approval."
+}
 
 Write-Host "Verified protected GitHub AWS staging control plane for $Repository."
 Write-Host "Environment variables: $($RequiredVariables -join ', ')"
 Write-Host "Environment secrets: $($RequiredSecrets -join ', ') (values not displayed)"
+if ($AllowPlanLimitedEnvironment) {
+    Write-Warning "Plan-limited mode verified: deployment approval is enforced by staging branch review, not an environment reviewer rule."
+}

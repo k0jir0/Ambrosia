@@ -46,14 +46,18 @@ issue, JSON evidence file, shell history, or screenshot.
    both ACM certificates to be `ISSUED`. The regional certificate covers
    `api-staging` and `origin-staging`; the edge certificate covers `staging`.
 3. Run `scripts/configure-github-aws-staging.ps1` to create a reviewed,
-   staging-branch-only GitHub environment and branch protection. Populate
+   staging-branch-only GitHub environment and branch protection. If the private
+   repository's billing plan rejects environment reviewers, use
+   `-AllowPlanLimitedEnvironment` explicitly; this disables administrator
+   deployment bypass, retains the staging-only environment policy, and requires
+   independent approval at the protected `staging` branch instead. Populate
    environment variables `AWS_ACCOUNT_ID`, `AWS_REGION`, `TF_STATE_BUCKET`,
    `TF_STATE_KMS_KEY_ARN`, `DOMAIN_NAME`, `HOSTED_ZONE_ID`,
    `API_DESIRED_COUNT`, `WEB_DESIRED_COUNT`, `ALERT_EMAIL`, `OWNER`,
    `COST_CENTER`, `DATA_CLASSIFICATION`, and `BUDGET_NAME`; add protected secrets
    `AWS_DEPLOY_ROLE_ARN`, `ALB_CERTIFICATE_ARN`, and
-   `CLOUDFRONT_CERTIFICATE_ARN`. Re-run the script with `-VerifyOnly` and retain
-   its value-free output.
+   `CLOUDFRONT_CERTIFICATE_ARN`. Re-run the script with `-VerifyOnly` (and the
+   same plan-limitation switch, when used) and retain its value-free output.
 4. Review `infra/aws/environments/staging.tfvars.example`, run `terraform fmt`,
    `init`, `validate`, and a saved plan. A second operator reviews the plan.
 5. Record the exact merged `staging` SHA. Dispatch **AWS release** with

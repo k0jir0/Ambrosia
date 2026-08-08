@@ -12,6 +12,7 @@ from fastapi import APIRouter, Header, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from .db import PostgresReviewStore
+from .project_paths import PROJECT_ROOT
 
 
 router = APIRouter(tags=["index84-platform"])
@@ -42,7 +43,7 @@ _sso_config: dict = {
     "updatedAt": None,
 }
 
-_ROOT = Path(__file__).resolve().parents[3]
+_ROOT = PROJECT_ROOT
 _RELEASE_EVIDENCE_PATH = _ROOT / "artifacts" / "release-evidence.json"
 _SIGNAL_STATE_PATH = Path(
     os.getenv(

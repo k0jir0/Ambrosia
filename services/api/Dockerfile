@@ -24,7 +24,11 @@ COPY --from=builder --chown=ambrosia:ambrosia /app/.venv /app/.venv
 COPY --chown=ambrosia:ambrosia services/api/app ./app
 COPY --chown=ambrosia:ambrosia scripts/migrate_database.py ./scripts/migrate_database.py
 COPY --chown=ambrosia:ambrosia infra/db ./infra/db
+COPY --chown=ambrosia:ambrosia docs/visibility ./docs/visibility
+COPY --chown=ambrosia:ambrosia docs/roadmap/pdo-ledger.seed.json ./docs/roadmap/pdo-ledger.seed.json
+RUN mkdir -p /app/artifacts && chown ambrosia:ambrosia /app/artifacts
 USER ambrosia
+RUN python -c "import app.main"
 EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
   CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/live', timeout=3)"

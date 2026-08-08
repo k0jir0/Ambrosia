@@ -1,6 +1,10 @@
 FROM node:20.18.1-bookworm-slim AS builder
 ENV NEXT_TELEMETRY_DISABLED=1
-RUN corepack enable && corepack prepare pnpm@9.12.0 --activate
+RUN apt-get update \
+    && apt-get dist-upgrade -y --no-install-recommends \
+    && rm -rf /var/lib/apt/lists/* \
+    && corepack enable \
+    && corepack prepare pnpm@9.12.0 --activate
 WORKDIR /workspace
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
 COPY apps/web/package.json apps/web/package.json
@@ -17,7 +21,10 @@ RUN pnpm --filter @ambrosia/web build
 
 FROM node:20.18.1-bookworm-slim AS runtime
 ENV NODE_ENV=production NEXT_TELEMETRY_DISABLED=1 PORT=3000 HOSTNAME=0.0.0.0
-RUN useradd --create-home --uid 10001 ambrosia
+RUN apt-get update \
+    && apt-get dist-upgrade -y --no-install-recommends \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd --create-home --uid 10001 ambrosia
 WORKDIR /app
 COPY --from=builder --chown=ambrosia:ambrosia /workspace/apps/web/.next/standalone ./
 COPY --from=builder --chown=ambrosia:ambrosia /workspace/apps/web/.next/static ./apps/web/.next/static

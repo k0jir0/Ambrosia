@@ -4,6 +4,9 @@ FROM python:3.12.10-slim-bookworm AS builder
 ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy
 COPY --from=uv /uv /uvx /bin/
 WORKDIR /app
+RUN apt-get update \
+    && apt-get dist-upgrade -y --no-install-recommends \
+    && rm -rf /var/lib/apt/lists/*
 COPY services/api/pyproject.toml services/api/uv.lock ./
 RUN uv sync --frozen --no-dev --no-install-project
 
@@ -12,7 +15,10 @@ ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PORT=8000
-RUN useradd --create-home --uid 10001 ambrosia
+RUN apt-get update \
+    && apt-get dist-upgrade -y --no-install-recommends \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd --create-home --uid 10001 ambrosia
 WORKDIR /app
 COPY --from=builder --chown=ambrosia:ambrosia /app/.venv /app/.venv
 COPY --chown=ambrosia:ambrosia services/api/app ./app

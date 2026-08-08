@@ -4,13 +4,16 @@ import { useMemo, useState } from "react";
 import Link from "next/link";
 import { Database, Download, LoaderCircle, Search } from "lucide-react";
 import { PacketLibraryPanel, ReviewArchivePanel } from "@/components/advanced-panels";
+import { CalibrationPage } from "@/components/calibration-page";
 import { seedIndex97Reviews } from "@/lib/api";
+import { isFeatureEnabled } from "@/lib/route-availability";
 import { useReviewArchive } from "@/lib/review-store";
 import { Badge, Panel, SectionTitle } from "./ui";
 
 const OUTCOME_LOOKUP = ["won", "lost", "pending"] as const;
 
 export function HistoryPage() {
+  const calibrationEnabled = isFeatureEnabled("calibration");
   const { reviews, source, loading } = useReviewArchive();
   const [query, setQuery] = useState("");
   const [decisionFilter, setDecisionFilter] = useState("all");
@@ -158,6 +161,8 @@ export function HistoryPage() {
           <Download className="h-4 w-4" /> Export CSV (filtered)
         </button>
       </Panel>
+
+      {calibrationEnabled ? <CalibrationPage /> : null}
     </div>
   );
 }

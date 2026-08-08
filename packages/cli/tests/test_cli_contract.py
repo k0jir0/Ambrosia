@@ -7,7 +7,7 @@ ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "packages" / "cli"))
 sys.path.insert(0, str(ROOT / "packages" / "sdk-python"))
 
-from ambrosia_cli.main import build_parser, dispatch, main  # noqa: E402
+from ambrosia_cli.main import build_parser, dispatch, get_command_catalog, main  # noqa: E402
 from ambrosia_sdk import (  # noqa: E402
     AmbrosiaClient,
     SignalCreate,
@@ -38,6 +38,20 @@ def test_commands_catalog_is_numbered() -> None:
     assert len(result) > 0
     assert result[0]["index"] == 1
     assert "command" in result[0]
+
+
+def test_cli_guide_registry_is_parser_derived_and_truthful() -> None:
+    catalog = get_command_catalog()
+
+    assert catalog
+    assert all(entry["implementationStatus"] == "implemented" for entry in catalog)
+    assert all(entry["authority"] in {"read", "write"} for entry in catalog)
+    assert all(
+        entry["qualificationStatus"] != "qualified" or entry["authority"] == "read"
+        for entry in catalog
+    )
+    assert next(entry for entry in catalog if entry["command"] == "ambrosia scanner run")["authority"] == "write"
+    assert next(entry for entry in catalog if entry["command"] == "ambrosia health")["endpoint"] == "/health"
 
 
 def test_no_args_prints_help(capsys) -> None:

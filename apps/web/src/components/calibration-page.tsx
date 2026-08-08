@@ -100,7 +100,7 @@ type HealthMetric = {
 };
 
 type CalibrationDashboardData = {
-  source: "live" | "fixture";
+  source: "live" | "fixture" | "empty" | "unavailable";
   sourceLabel: string;
   message: string;
   asOf: string;
@@ -329,15 +329,19 @@ const SEEDED_ALERTS: CalibrationAlert[] = [
   }
 ];
 
+const calibrationDemoEnabled = process.env.NEXT_PUBLIC_ENABLE_CALIBRATION_DEMO === "true";
+
 export function CalibrationPage() {
   const [data, setData] = useState<CalibrationDashboardData>(() =>
     buildDashboardData({
-      records: SEEDED_RECORDS,
-      alerts: SEEDED_ALERTS,
+      records: calibrationDemoEnabled ? SEEDED_RECORDS : [],
+      alerts: calibrationDemoEnabled ? SEEDED_ALERTS : [],
       summary: EMPTY_SUMMARY,
       metrics: null,
-      source: "fixture",
-      message: "Seeded model-evaluation fixture shown until staging records settled outcomes."
+      source: calibrationDemoEnabled ? "fixture" : "empty",
+      message: calibrationDemoEnabled
+        ? "Explicit demo fixture. These records are not organization outcomes."
+        : "Loading tenant-scoped settled outcomes."
     })
   );
   const [loading, setLoading] = useState(false);
@@ -347,12 +351,14 @@ export function CalibrationPage() {
     if (!apiBaseUrl) {
       setData(
         buildDashboardData({
-          records: SEEDED_RECORDS,
-          alerts: SEEDED_ALERTS,
+          records: calibrationDemoEnabled ? SEEDED_RECORDS : [],
+          alerts: calibrationDemoEnabled ? SEEDED_ALERTS : [],
           summary: EMPTY_SUMMARY,
           metrics: null,
-          source: "fixture",
-          message: "API base URL is unavailable; showing seeded model-evaluation fixture."
+          source: calibrationDemoEnabled ? "fixture" : "unavailable",
+          message: calibrationDemoEnabled
+            ? "API unavailable. Explicit demo fixture is shown."
+            : "Calibration API is unavailable. No synthetic outcomes are substituted."
         })
       );
       return;
@@ -375,12 +381,14 @@ export function CalibrationPage() {
       if (liveRecords.length === 0 && liveSummary.total_decisions === 0) {
         setData(
           buildDashboardData({
-            records: SEEDED_RECORDS,
-            alerts: SEEDED_ALERTS,
+            records: calibrationDemoEnabled ? SEEDED_RECORDS : [],
+            alerts: calibrationDemoEnabled ? SEEDED_ALERTS : [],
             summary: liveSummary,
             metrics,
-            source: "fixture",
-            message: "Staging feedback store is empty; seeded model-evaluation fixture is shown."
+            source: calibrationDemoEnabled ? "fixture" : "empty",
+            message: calibrationDemoEnabled
+              ? "Tenant feedback is empty. Explicit demo fixture is shown."
+              : "No settled tenant outcomes are available yet."
           })
         );
         return;
@@ -399,12 +407,14 @@ export function CalibrationPage() {
     } catch {
       setData(
         buildDashboardData({
-          records: SEEDED_RECORDS,
-          alerts: SEEDED_ALERTS,
+          records: calibrationDemoEnabled ? SEEDED_RECORDS : [],
+          alerts: calibrationDemoEnabled ? SEEDED_ALERTS : [],
           summary: EMPTY_SUMMARY,
           metrics: null,
-          source: "fixture",
-          message: "Calibration API unavailable; showing seeded model-evaluation fixture."
+          source: calibrationDemoEnabled ? "fixture" : "unavailable",
+          message: calibrationDemoEnabled
+            ? "Calibration API unavailable. Explicit demo fixture is shown."
+            : "Calibration API unavailable. No synthetic outcomes are substituted."
         })
       );
     } finally {
@@ -433,7 +443,7 @@ export function CalibrationPage() {
             <p className="mt-3 max-w-4xl text-sm leading-6 text-ink/75">{data.message}</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <Badge tone={data.source === "live" ? "good" : "warn"}>{data.sourceLabel}</Badge>
+            <Badge tone={data.source === "live" ? "good" : data.source === "empty" ? "neutral" : "warn"}>{data.sourceLabel}</Badge>
             <button
               type="button"
               onClick={() => void loadCalibrationData()}
@@ -627,7 +637,7 @@ function buildDashboardData({
   alerts: CalibrationAlert[];
   summary: CalibrationSummary;
   metrics: MetricsBoard | null;
-  source: "live" | "fixture";
+  source: "live" | "fixture" | "empty" | "unavailable";
   message: string;
 }): CalibrationDashboardData {
   const bands = buildBands(records);
@@ -639,7 +649,14 @@ function buildDashboardData({
 
   return {
     source,
-    sourceLabel: source === "live" ? "Live API data" : "Seeded fixture",
+    sourceLabel:
+      source === "live"
+        ? "Live API data"
+        : source === "fixture"
+          ? "Seeded fixture"
+          : source === "empty"
+            ? "No settled outcomes"
+            : "API unavailable",
     message,
     asOf: source === "fixture" ? STABLE_CALIBRATION_AS_OF : new Date().toISOString(),
     totalDecisions,

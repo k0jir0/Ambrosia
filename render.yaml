@@ -46,6 +46,24 @@ services:
         value: warning
       - key: REQUIRE_DATABASE
         value: "true"
+      - key: ALPHA_LAB_READ_ENABLED
+        value: "false"
+      - key: ALPHA_LAB_WRITES_ENABLED
+        value: "false"
+      - key: ALPHA_LAB_DEMO_SEED_ENABLED
+        value: "false"
+      - key: SIGNALS_LAB_READ_ENABLED
+        value: "false"
+      - key: SIGNALS_LAB_WRITES_ENABLED
+        value: "false"
+      - key: SIGNALS_VALIDATION_ENABLED
+        value: "false"
+      - key: SIGNALS_EXECUTION_HANDOFF_ENABLED
+        value: "false"
+      - key: MARKET_INTELLIGENCE_ENABLED
+        value: "false"
+      - key: REPORT_EXPORT_ENABLED
+        value: "false"
       - key: RBAC_ENABLED
         value: "true"
       - key: ALLOW_INSECURE_DEV_IDENTITY
@@ -81,6 +99,28 @@ services:
         value: production
       - key: NEXT_PUBLIC_API_URL
         value: https://ambrosia-api-69t6.onrender.com
+      - key: NEXT_PUBLIC_ENABLE_LABS
+        value: "false"
+      - key: NEXT_PUBLIC_ENABLE_MARKET_SCANNER
+        value: "false"
+      - key: NEXT_PUBLIC_ENABLE_MARKET_INTELLIGENCE
+        value: "false"
+      - key: NEXT_PUBLIC_ENABLE_MARKET_SCANNER_PROMOTION
+        value: "false"
+      - key: NEXT_PUBLIC_ENABLE_OPERATIONS
+        value: "false"
+      - key: NEXT_PUBLIC_ENABLE_CALIBRATION
+        value: "false"
+      - key: NEXT_PUBLIC_ENABLE_CALIBRATION_DEMO
+        value: "false"
+      - key: NEXT_PUBLIC_ENABLE_REVIEW_EXPORT
+        value: "false"
+      - key: NEXT_PUBLIC_ENABLE_ALPHA_LAB
+        value: "false"
+      - key: NEXT_PUBLIC_ENABLE_SIGNALS_LAB
+        value: "false"
+      - key: NEXT_PUBLIC_ENABLE_CLI_DESIGN
+        value: "false"
 
   # ============================================================
   # STAGING SERVICES (branch: staging)
@@ -105,6 +145,24 @@ services:
         value: info
       - key: REQUIRE_DATABASE
         value: "true"
+      - key: ALPHA_LAB_READ_ENABLED
+        value: "false"
+      - key: ALPHA_LAB_WRITES_ENABLED
+        value: "false"
+      - key: ALPHA_LAB_DEMO_SEED_ENABLED
+        value: "false"
+      - key: SIGNALS_LAB_READ_ENABLED
+        value: "false"
+      - key: SIGNALS_LAB_WRITES_ENABLED
+        value: "false"
+      - key: SIGNALS_VALIDATION_ENABLED
+        value: "false"
+      - key: SIGNALS_EXECUTION_HANDOFF_ENABLED
+        value: "false"
+      - key: MARKET_INTELLIGENCE_ENABLED
+        value: "false"
+      - key: REPORT_EXPORT_ENABLED
+        value: "false"
       - key: RBAC_ENABLED
         value: "true"
       - key: ALLOW_INSECURE_DEV_IDENTITY
@@ -140,3 +198,25 @@ services:
         value: staging
       - key: NEXT_PUBLIC_API_URL
         value: https://ambrosia-api-staging.onrender.com
+      - key: NEXT_PUBLIC_ENABLE_LABS
+        value: "false"
+      - key: NEXT_PUBLIC_ENABLE_MARKET_SCANNER
+        value: "true"
+      - key: NEXT_PUBLIC_ENABLE_MARKET_INTELLIGENCE
+        value: "false"
+      - key: NEXT_PUBLIC_ENABLE_MARKET_SCANNER_PROMOTION
+        value: "false"
+      - key: NEXT_PUBLIC_ENABLE_OPERATIONS
+        value: "false"
+      - key: NEXT_PUBLIC_ENABLE_CALIBRATION
+        value: "false"
+      - key: NEXT_PUBLIC_ENABLE_CALIBRATION_DEMO
+        value: "false"
+      - key: NEXT_PUBLIC_ENABLE_REVIEW_EXPORT
+        value: "false"
+      - key: NEXT_PUBLIC_ENABLE_ALPHA_LAB
+        value: "false"
+      - key: NEXT_PUBLIC_ENABLE_SIGNALS_LAB
+        value: "false"
+      - key: NEXT_PUBLIC_ENABLE_CLI_DESIGN
+        value: "true"

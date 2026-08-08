@@ -1,4 +1,6 @@
 import { MarketIntelligencePage } from "@/components/market-intelligence-page";
+import { normalizeCompareSymbols, normalizeMarketTicker } from "@/lib/market-intelligence";
+import { notFound } from "next/navigation";
 
 export default async function MarketsTickerPage({
   params,
@@ -9,6 +11,8 @@ export default async function MarketsTickerPage({
 }) {
   const { ticker } = await params;
   const { compare } = await searchParams;
-  const peers = compare ? compare.split(",").map((item) => item.trim().toUpperCase()).filter(Boolean) : [];
-  return <MarketIntelligencePage ticker={ticker} compare={peers} />;
+  const normalizedTicker = normalizeMarketTicker(ticker);
+  if (!normalizedTicker) notFound();
+  const peers = normalizeCompareSymbols(compare?.split(",") ?? [], normalizedTicker);
+  return <MarketIntelligencePage ticker={normalizedTicker} compare={peers} />;
 }

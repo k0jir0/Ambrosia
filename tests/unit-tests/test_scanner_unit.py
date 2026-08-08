@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from services.api.app import scanner
 from services.api.app.models import MarketSnapshot, ScannerRunRequest, TechnicalIndicators
 
@@ -101,4 +103,40 @@ def test_run_scanner_respects_signal_filter_and_volume_gate(monkeypatch) -> None
     assert result.totalScanned == 3
     assert [candidate.ticker for candidate in result.candidates] == ["MSFT"]
     assert result.candidates[0].signal == "mean_reversion_up"
+
+
+def test_scanner_request_normalizes_and_deduplicates_universe() -> None:
+    request = ScannerRunRequest(universe=[" aapl ", "AAPL", "brk.b", "BTC/USD"])
+
+    assert request.universe == ["AAPL", "BRK.B", "BTC/USD"]
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"universe": ["AAPL!"]},
+        {"universe": [f"TICKER{index}" for index in range(51)]},
+        {"minVolume": -1},
+    ],
+)
+def test_scanner_request_rejects_unbounded_or_invalid_input(payload) -> None:
+    with pytest.raises(ValueError):
+        ScannerRunRequest(**payload)
+
+
+def test_scanner_summary_is_fallback_when_candidate_sources_are_mixed(monkeypatch) -> None:
+    live = _snapshot(210)
+    live.dataSourceConfidence = "live"
+    snapshots = {"AAPL": live, "MSFT": _snapshot(430)}
+    technicals = {
+        "AAPL": _technicals(60, "uptrend"),
+        "MSFT": _technicals(28, "sideways"),
+    }
+    monkeypatch.setattr(scanner, "build_market_snapshot", lambda ticker: snapshots[ticker])
+    monkeypatch.setattr(scanner, "build_technicals", lambda ticker: technicals[ticker])
+
+    result = scanner.run_scanner(ScannerRunRequest(universe=["AAPL", "MSFT"], minVolume=0))
+
+    assert {candidate.dataMode for candidate in result.candidates} == {"live", "fallback"}
+    assert result.dataMode == "fallback"
 

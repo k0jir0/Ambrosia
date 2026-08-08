@@ -8,6 +8,7 @@
     "start": "node index.js",
     "start:render": "node index.js",
     "lint": "eslint . --max-warnings=0",
+    "test:routes": "node scripts/test-route-availability.mjs",
     "test:e2e": "node scripts/test-e2e.mjs"
   },
   "dependencies": {

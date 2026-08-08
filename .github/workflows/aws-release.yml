@@ -60,6 +60,17 @@ jobs:
           docker build --pull -f services/api/Dockerfile -t ambrosia-api:validation .
           docker build --pull -f apps/web/Dockerfile \
             --build-arg "NEXT_PUBLIC_API_BASE_URL=https://api-staging.example.com" \
+            --build-arg "NEXT_PUBLIC_ENABLE_LABS=false" \
+            --build-arg "NEXT_PUBLIC_ENABLE_MARKET_SCANNER=true" \
+            --build-arg "NEXT_PUBLIC_ENABLE_MARKET_INTELLIGENCE=false" \
+            --build-arg "NEXT_PUBLIC_ENABLE_MARKET_SCANNER_PROMOTION=false" \
+            --build-arg "NEXT_PUBLIC_ENABLE_OPERATIONS=false" \
+            --build-arg "NEXT_PUBLIC_ENABLE_CALIBRATION=false" \
+            --build-arg "NEXT_PUBLIC_ENABLE_CALIBRATION_DEMO=false" \
+            --build-arg "NEXT_PUBLIC_ENABLE_REVIEW_EXPORT=false" \
+            --build-arg "NEXT_PUBLIC_ENABLE_ALPHA_LAB=false" \
+            --build-arg "NEXT_PUBLIC_ENABLE_SIGNALS_LAB=false" \
+            --build-arg "NEXT_PUBLIC_ENABLE_CLI_DESIGN=true" \
             -t ambrosia-web:validation .
 
   plan:
@@ -209,6 +220,17 @@ jobs:
           docker build --pull -f services/api/Dockerfile -t "$API_REPOSITORY:$GITHUB_SHA" .
           docker build --pull -f apps/web/Dockerfile \
             --build-arg "NEXT_PUBLIC_API_BASE_URL=$API_BASE_URL" \
+            --build-arg "NEXT_PUBLIC_ENABLE_LABS=false" \
+            --build-arg "NEXT_PUBLIC_ENABLE_MARKET_SCANNER=true" \
+            --build-arg "NEXT_PUBLIC_ENABLE_MARKET_INTELLIGENCE=false" \
+            --build-arg "NEXT_PUBLIC_ENABLE_MARKET_SCANNER_PROMOTION=false" \
+            --build-arg "NEXT_PUBLIC_ENABLE_OPERATIONS=false" \
+            --build-arg "NEXT_PUBLIC_ENABLE_CALIBRATION=false" \
+            --build-arg "NEXT_PUBLIC_ENABLE_CALIBRATION_DEMO=false" \
+            --build-arg "NEXT_PUBLIC_ENABLE_REVIEW_EXPORT=false" \
+            --build-arg "NEXT_PUBLIC_ENABLE_ALPHA_LAB=false" \
+            --build-arg "NEXT_PUBLIC_ENABLE_SIGNALS_LAB=false" \
+            --build-arg "NEXT_PUBLIC_ENABLE_CLI_DESIGN=true" \
             --build-arg "NEXT_PUBLIC_SITE_URL=$SITE_URL" \
             -t "$WEB_REPOSITORY:$GITHUB_SHA" .
 

@@ -713,6 +713,17 @@ resource "aws_ecs_task_definition" "api" {
       { name = "PUBLIC_WEB_URL", value = local.public_web_url },
       { name = "ALLOWED_ORIGINS", value = join(",", concat([local.public_web_url], var.extra_allowed_origins)) },
       { name = "AWS_REGION", value = var.aws_region },
+      { name = "MARKET_SCANNER_ENABLED", value = "true" },
+      { name = "MARKET_INTELLIGENCE_ENABLED", value = "false" },
+      { name = "MARKET_SCANNER_PROMOTION_ENABLED", value = "false" },
+      { name = "ALPHA_LAB_READ_ENABLED", value = "false" },
+      { name = "ALPHA_LAB_WRITES_ENABLED", value = "false" },
+      { name = "ALPHA_LAB_DEMO_SEED_ENABLED", value = "false" },
+      { name = "SIGNALS_LAB_READ_ENABLED", value = "false" },
+      { name = "SIGNALS_LAB_WRITES_ENABLED", value = "false" },
+      { name = "SIGNALS_VALIDATION_ENABLED", value = "false" },
+      { name = "SIGNALS_EXECUTION_HANDOFF_ENABLED", value = "false" },
+      { name = "REPORT_EXPORT_ENABLED", value = "false" },
       { name = "SELECTIVE_INTEGRATION_ENABLED", value = "true" },
       { name = "SELECTIVE_INTEGRATION_ENFORCED", value = "true" },
       { name = "ARTIFACT_BUCKET", value = aws_s3_bucket.artifacts.id },
@@ -749,7 +760,16 @@ resource "aws_ecs_task_definition" "web" {
     image                  = var.web_image != "" ? var.web_image : "${aws_ecr_repository.web.repository_url}:bootstrap"
     essential              = true
     portMappings           = [{ containerPort = 3000, hostPort = 3000, protocol = "tcp" }]
-    environment            = [{ name = "PORT", value = "3000" }]
+    environment = [
+      { name = "PORT", value = "3000" },
+      { name = "NEXT_PUBLIC_ENABLE_LABS", value = "false" },
+      { name = "NEXT_PUBLIC_ENABLE_MARKET_INTELLIGENCE", value = "false" },
+      { name = "NEXT_PUBLIC_ENABLE_MARKET_SCANNER_PROMOTION", value = "false" },
+      { name = "NEXT_PUBLIC_ENABLE_CALIBRATION_DEMO", value = "false" },
+      { name = "NEXT_PUBLIC_ENABLE_REVIEW_EXPORT", value = "false" },
+      { name = "NEXT_PUBLIC_ENABLE_ALPHA_LAB", value = "false" },
+      { name = "NEXT_PUBLIC_ENABLE_SIGNALS_LAB", value = "false" },
+    ]
     readonlyRootFilesystem = true
     linuxParameters        = { initProcessEnabled = true }
     logConfiguration = {

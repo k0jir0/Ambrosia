@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from ambrosia_sdk import AmbrosiaApiError, AmbrosiaClient
+from ambrosia_cli.guide_registry import add_guide_evidence
 
 DEFAULT_VERSION = "0.1.0"
 DEFAULT_API_URL = "http://127.0.0.1:8001"
@@ -786,20 +787,20 @@ def get_command_catalog() -> list[dict[str, Any]]:
 
         if nested is None:
             catalog.append(
-                {
+                add_guide_evidence({
                     "index": len(catalog) + 1,
                     "command": f"ambrosia {resource_name}",
                     "resource": resource_name,
                     "workflow": command_workflow(resource_name),
                     "summary": (getattr(resource_parser, "description", None) or "").strip(),
-                }
+                })
             )
             continue
 
         for action_name, action_parser in nested.choices.items():
             usage = (action_parser.format_usage() or "").strip().replace("usage: ", "")
             catalog.append(
-                {
+                add_guide_evidence({
                     "index": len(catalog) + 1,
                     "command": f"ambrosia {resource_name} {action_name}",
                     "resource": resource_name,
@@ -807,7 +808,7 @@ def get_command_catalog() -> list[dict[str, Any]]:
                     "workflow": command_workflow(resource_name),
                     "summary": (getattr(action_parser, "description", None) or "").strip(),
                     "usage": usage,
-                }
+                })
             )
 
     return catalog

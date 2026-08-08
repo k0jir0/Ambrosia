@@ -2,15 +2,16 @@
 
 import { useMemo, useState } from "react";
 import { Command, Search } from "lucide-react";
+import { isRouteAvailable } from "@/lib/route-availability";
 
 type ActionItem = {
   id: string;
   label: string;
   hint: string;
-  run: () => void;
+  href: string;
 };
 
-export function CommandPalette({ open, onClose }: { open: boolean; onClose: () => void }) {
+export function CommandPalette({ open, onClose, role }: { open: boolean; onClose: () => void; role: string }) {
   const [query, setQuery] = useState("");
 
   function navigateTo(url: string) {
@@ -22,25 +23,20 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
     const maybeTicker = /^[A-Z]{1,5}$/.test(value) ? value : null;
 
     const base: ActionItem[] = [
-      { id: "new-review", label: "New Review", hint: "Open thesis intake", run: () => navigateTo("/review/new") },
-      { id: "dashboard", label: "Dashboard", hint: "Go to command center", run: () => navigateTo("/") },
-      { id: "market-intelligence", label: "Market Intelligence", hint: "Open AAPL market workspace", run: () => navigateTo("/markets/AAPL") },
-      { id: "market-scanner", label: "Market Scanner", hint: "Scan watchlists for ranked trade candidates", run: () => navigateTo("/market-scanner") },
-      { id: "signals", label: "Signals", hint: "Open signal lifecycle monitor", run: () => navigateTo("/signals") },
-      { id: "platform", label: "Platform", hint: "Open Index84 platform overview", run: () => navigateTo("/platform") },
-      { id: "alpha-lab", label: "Alpha Lab", hint: "Open hypothesis and decay monitor", run: () => navigateTo("/alpha") },
-      { id: "execution-intelligence", label: "Execution Intelligence", hint: "Open warm-path and execution diagnostics", run: () => navigateTo("/execution-intelligence") },
-      { id: "history", label: "Decision History", hint: "Open archive", run: () => navigateTo("/history") },
-      { id: "calibration", label: "Calibration", hint: "Open performance analytics", run: () => navigateTo("/calibration") },
-      { id: "relay-benchmarks", label: "Relay + Benchmarks", hint: "Open relay and benchmark evidence", run: () => navigateTo("/relay-benchmarks") },
-      { id: "cli-design", label: "CLI Design", hint: "Open CLI architecture and command surface", run: () => navigateTo("/cli-design") },
-      { id: "enterprise", label: "Enterprise", hint: "Open enterprise readiness and governance", run: () => navigateTo("/enterprise") },
-      { id: "team", label: "Team", hint: "Open collaboration workspace", run: () => navigateTo("/team") },
-      { id: "admin", label: "Admin", hint: "Open operational controls", run: () => navigateTo("/admin") },
-      { id: "advanced", label: "Advanced", hint: "Open advanced module directory", run: () => navigateTo("/advanced") },
-      { id: "reports-export", label: "Reports Export", hint: "Open report export for the seeded review", run: () => navigateTo("/reports/export?id=atr-003") },
-      { id: "discovery", label: "Discovery", hint: "Open discovery scanner", run: () => navigateTo("/discovery") },
-      { id: "governance-team-management", label: "Governance Team Management", hint: "Open team membership controls", run: () => navigateTo("/governance/team-management") }
+      { id: "new-review", label: "New Review", hint: "Open thesis intake", href: "/review/new" },
+      { id: "dashboard", label: "Dashboard", hint: "Go to command center", href: "/app" },
+      { id: "market-intelligence", label: "Market Intelligence", hint: "Open AAPL market workspace", href: "/markets/AAPL" },
+      { id: "market-scanner", label: "Market Scanner", hint: "Scan watchlists for ranked trade candidates", href: "/market-scanner" },
+      { id: "signals", label: "Signals", hint: "Open signal lifecycle monitor", href: "/signals" },
+      { id: "operations", label: "Operations", hint: "Open the operational control plane", href: "/operations" },
+      { id: "alpha-lab", label: "Alpha Lab", hint: "Open hypothesis and decay monitor", href: "/alpha" },
+      { id: "execution-intelligence", label: "Execution Intelligence", hint: "Open warm-path and execution diagnostics", href: "/execution-intelligence" },
+      { id: "history", label: "Decision History", hint: "Open archive", href: "/history" },
+      { id: "calibration", label: "Calibration", hint: "Open performance analytics", href: "/calibration" },
+      { id: "relay-benchmarks", label: "Relay + Benchmarks", hint: "Open relay and benchmark evidence", href: "/relay-benchmarks" },
+      { id: "cli-design", label: "CLI Guide", hint: "Open CLI and SDK reference", href: "/cli-design" },
+      { id: "team", label: "Team", hint: "Open collaboration workspace", href: "/team" },
+      { id: "admin", label: "Admin", hint: "Open account and organization controls", href: "/admin" },
     ];
 
     if (maybeTicker) {
@@ -48,7 +44,7 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
         id: `ticker-${maybeTicker}`,
         label: `Open ${maybeTicker} intelligence`,
         hint: "Jump to /markets/:ticker",
-        run: () => navigateTo(`/markets/${maybeTicker}`)
+        href: `/markets/${maybeTicker}`
       });
     }
 
@@ -63,13 +59,18 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
           id: `compare-${symbols.join("-")}`,
           label: `Compare ${symbols.join(" vs ")}`,
           hint: "Open compare mode",
-          run: () => navigateTo(`/markets/${primary}?compare=${peers.join(",")}`)
+          href: `/markets/${primary}?compare=${peers.join(",")}`
         });
       }
     }
 
-    return base.filter((item) => item.label.toLowerCase().includes(query.toLowerCase()) || item.hint.toLowerCase().includes(query.toLowerCase()) || query.trim().length === 0);
-  }, [query]);
+    return base.filter((item) => {
+      const available = isRouteAvailable(item.href.split("?")[0], role);
+      const matches = item.label.toLowerCase().includes(query.toLowerCase()) ||
+        item.hint.toLowerCase().includes(query.toLowerCase()) || query.trim().length === 0;
+      return available && matches;
+    });
+  }, [query, role]);
 
   if (!open) return null;
 
@@ -97,7 +98,7 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
                 type="button"
                 className="focus-ring w-full rounded-md border border-line/70 px-3 py-2 text-left hover:bg-white/5"
                 onClick={() => {
-                  action.run();
+                  navigateTo(action.href);
                   onClose();
                 }}
               >

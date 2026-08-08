@@ -1,0 +1,48 @@
+{
+  "schemaVersion": "index133-render-baseline.v1",
+  "observedAt": "2026-08-08T04:05:56.1617160Z",
+  "environment": "render-staging-reference",
+  "checks": {
+    "webHome": {
+      "url": "https://ambrosia-web-staging.onrender.com/",
+      "status": 200
+    },
+    "apiHealth": {
+      "url": "https://ambrosia-api-staging.onrender.com/health",
+      "status": 200,
+      "reportedStatus": "ok"
+    },
+    "apiLive": {
+      "url": "https://ambrosia-api-staging.onrender.com/live",
+      "status": 200,
+      "reportedStatus": "alive"
+    },
+    "apiReady": {
+      "url": "https://ambrosia-api-staging.onrender.com/ready",
+      "status": 200,
+      "reportedStatus": "ready",
+      "reportedChecks": [
+        "persistence",
+        "identity",
+        "auditPersistence"
+      ]
+    },
+    "signupRoute": {
+      "url": "https://ambrosia-web-staging.onrender.com/signup",
+      "status": 404
+    },
+    "loginRoute": {
+      "url": "https://ambrosia-web-staging.onrender.com/login",
+      "status": 404
+    },
+    "onboardingRoute": {
+      "url": "https://ambrosia-web-staging.onrender.com/onboarding",
+      "status": 404
+    }
+  },
+  "decision": {
+    "rollbackReferenceHealthy": true,
+    "investorDemoReady": false,
+    "reason": "The public health surfaces pass, but the required signup, login, and onboarding routes are not deployed on the Render staging web service."
+  }
+}

@@ -337,7 +337,7 @@ test("discovery create thesis opens real review intake prefill", async ({ page }
     page.getByRole("button", { name: "Create Thesis" }).first().click(),
   ]);
   await expect(page.getByText("Prefilled from Market Scanner candidate")).toBeVisible();
-  await expect(page.getByLabel("Ticker / instrument")).toHaveCount(0);
+  await expect(page.getByLabel("Ticker / instrument")).toHaveValue("SPY");
 });
 
 test("governance team management edits and removes members", async ({ page }) => {

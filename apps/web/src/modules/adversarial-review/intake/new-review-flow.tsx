@@ -14,7 +14,7 @@ type NewReviewFlowProps = {
 };
 
 const STEPS = [
-  { id: 1, label: "Scope" },
+  { id: 1, label: "Instrument" },
   { id: 2, label: "Thesis" },
   { id: 3, label: "Sources" }
 ] as const;
@@ -88,7 +88,7 @@ export function NewReviewFlow({ initialParams }: NewReviewFlowProps) {
   }, [initialParams]);
 
   const [step, setStep] = useState<Step>(1);
-  const ticker = intakeContext?.ticker ?? "GENERAL";
+  const [ticker, setTicker] = useState(intakeContext?.ticker ?? "AAPL");
   const [assetClass, setAssetClass] = useState(intakeContext?.assetClass ?? "Equities");
   const [timeHorizon, setTimeHorizon] = useState(intakeContext?.timeHorizon ?? "2-6 weeks");
   const [expression, setExpression] = useState(intakeContext?.expression ?? "Long via equity");
@@ -98,7 +98,7 @@ export function NewReviewFlow({ initialParams }: NewReviewFlowProps) {
   const [creating, setCreating] = useState(false);
   const [createMessage, setCreateMessage] = useState<string | null>(null);
 
-  const canContinueStep1 = assetClass.trim() && timeHorizon.trim() && expression.trim();
+  const canContinueStep1 = ticker.trim() && assetClass.trim() && timeHorizon.trim() && expression.trim();
   const canCreateReview = canContinueStep1 && thesis.trim().length > 0;
   const claimCount = useMemo(() => thesis.split(/[.!?]/).filter((item) => item.trim().length > 12).length, [thesis]);
 
@@ -116,7 +116,7 @@ export function NewReviewFlow({ initialParams }: NewReviewFlowProps) {
     const { review, source } = await createReviewRecord(
       {
         thesis,
-        ticker: ticker.toUpperCase(),
+        ticker: ticker.trim().toUpperCase(),
         assetClass,
         timeHorizon,
         intendedExpression: expression,
@@ -174,12 +174,13 @@ export function NewReviewFlow({ initialParams }: NewReviewFlowProps) {
         <Panel className="p-5">
           <h2 className="text-lg font-semibold">What are you reviewing?</h2>
           <div className="mt-4 grid gap-3 md:grid-cols-2">
+            <LabeledInput label="Ticker / instrument" value={ticker} onChange={setTicker} />
             <LabeledInput label="Asset class" value={assetClass} onChange={setAssetClass} />
             <LabeledInput label="Time horizon" value={timeHorizon} onChange={setTimeHorizon} />
             <LabeledInput label="Intended expression" value={expression} onChange={setExpression} />
           </div>
           <div className="mt-4 flex items-center justify-between text-sm text-ink/65">
-            <p>Describe the review scope and intended expression.</p>
+            <p>Type any ticker. Market intelligence will load after continue.</p>
             <button
               type="button"
               className="focus-ring inline-flex items-center gap-1 rounded-md bg-teal px-3 py-2 font-semibold text-fog disabled:opacity-50"
@@ -200,7 +201,7 @@ export function NewReviewFlow({ initialParams }: NewReviewFlowProps) {
             value={thesis}
             onChange={(event) => setThesis(event.target.value)}
             className="focus-ring mt-4 h-52 w-full rounded-md border border-line bg-fog/80 p-3"
-            placeholder="State why this decision is actionable."
+            placeholder="State why this instrument is actionable."
           />
           <div className="mt-3 flex items-center justify-between text-sm text-ink/65">
             <p>

@@ -1,0 +1,29 @@
+{
+  "schemaVersion": "dependency-audit-exceptions.v1",
+  "exceptions": [
+    {
+      "advisory": "GHSA-5p2g-fcmc-qvqq",
+      "package": "image-size",
+      "severity": "high",
+      "status": "upstream_unfixed",
+      "scope": "Expo and Metro mobile build dependency; not present in the AWS web or API runtime images",
+      "control": "Only repository-controlled mobile assets may enter the build; no user-uploaded image parsing is exposed",
+      "owner": "security-release",
+      "approvedAt": "2026-08-07",
+      "expiresAt": "2026-09-07",
+      "removalCondition": "Upgrade immediately when an upstream fixed release is available"
+    },
+    {
+      "advisory": "GHSA-w3rx-r6r6-pgpr",
+      "package": "image-size",
+      "severity": "high",
+      "status": "upstream_unfixed",
+      "scope": "Expo and Metro mobile build dependency; not present in the AWS web or API runtime images",
+      "control": "Only repository-controlled mobile assets may enter the build; no user-uploaded image parsing is exposed",
+      "owner": "security-release",
+      "approvedAt": "2026-08-07",
+      "expiresAt": "2026-09-07",
+      "removalCondition": "Upgrade immediately when an upstream fixed release is available"
+    }
+  ]
+}

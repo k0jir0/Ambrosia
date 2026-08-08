@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { Activity, Clock3, LoaderCircle, Play, RefreshCw, Send, SlidersHorizontal } from "lucide-react";
-import { getJobStatus, listJobs, listScannerCandidatePromotions, promoteScannerCandidateToAlpha, runScanner, runScannerAsync, validateSignal } from "@/lib/api";
+import { getJobStatus, listJobs, listScannerCandidatePromotions, runScanner, runScannerAsync, validateSignal } from "@/lib/api";
 import type { JobRecord, ScannerCandidate, ScannerCandidatePromotion, ScannerResult, ScannerRunRequest, ScannerSignal } from "@/lib/types";
 import { Badge, Panel, SectionTitle, cn } from "@/components/ui";
 import { RouteNotice, RouteStatusBadge, type RouteStatus } from "@/components/route-state";
@@ -174,39 +174,6 @@ export default function MarketScannerPage() {
     setMessage(job.result.candidates.length === 0 ? "Queued scan completed with no matching candidates." : "Queued scan completed.");
   }
 
-  async function promoteCandidate(candidate: ScannerCandidate) {
-    const busyKey = scannerPromotionKey(candidate.ticker, candidate.signal);
-    setCandidateBusyKey(busyKey);
-    try {
-      const scannerRunId = result.scannedAt || candidate.scannedAt;
-      await promoteScannerCandidateToAlpha({
-        ticker: candidate.ticker,
-        signal: candidate.signal,
-        thesisSuggestion: candidate.thesisSuggestion,
-        score: candidate.score,
-        price: candidate.price,
-        trend: candidate.trend,
-        rsi: candidate.rsi,
-        volume: candidate.volume24h,
-        scannerRunId,
-        universe: selectedUniverse,
-        horizon: "2-6 weeks",
-        costModel: "10 bps round-trip",
-        benchmark: "SPY",
-        owner: "research",
-        promotedBy: "scanner-ui",
-      });
-      await refreshPromotions();
-      setStatus("success");
-      setMessage(`Alpha hypothesis created for ${candidate.ticker}.`);
-    } catch (error) {
-      setStatus("error");
-      setMessage(error instanceof Error ? error.message : "Failed to promote scanner candidate.");
-    } finally {
-      setCandidateBusyKey(null);
-    }
-  }
-
   async function queueValidation(candidate: ScannerCandidate, promotion: ScannerCandidatePromotion | null) {
     if (!promotion?.signalId) {
       setStatus("error");
@@ -370,7 +337,6 @@ export default function MarketScannerPage() {
                   candidate={candidate}
                   promotion={promotionByCandidate.get(scannerPromotionKey(candidate.ticker, candidate.signal)) ?? null}
                   busyKey={candidateBusyKey}
-                  onPromote={promoteCandidate}
                   onQueueValidation={queueValidation}
                 />
               ))}
@@ -446,16 +412,13 @@ function CandidateRow({
   candidate,
   promotion,
   busyKey,
-  onPromote,
   onQueueValidation,
 }: {
   candidate: ScannerCandidate;
   promotion: ScannerCandidatePromotion | null;
   busyKey: string | null;
-  onPromote: (candidate: ScannerCandidate) => Promise<void>;
   onQueueValidation: (candidate: ScannerCandidate, promotion: ScannerCandidatePromotion | null) => Promise<void>;
 }) {
-  const promoteBusy = busyKey === scannerPromotionKey(candidate.ticker, candidate.signal);
   const validateBusy = busyKey === `${scannerPromotionKey(candidate.ticker, candidate.signal)}:validate`;
 
   return (
@@ -486,16 +449,6 @@ function CandidateRow({
         {typeof promotion?.linkedReviewCount === "number" ? <span>reviews {promotion.linkedReviewCount}</span> : null}
       </div>
       <div className="mt-3 flex flex-wrap gap-2">
-        <button
-          type="button"
-          onClick={() => void onPromote(candidate)}
-          disabled={promoteBusy || !scannerPromotionEnabled}
-          title={scannerPromotionEnabled ? undefined : "Promotion is disabled until tenant-isolated lifecycle storage is certified."}
-          className="focus-ring inline-flex items-center gap-1 rounded-md bg-teal px-2 py-1 text-xs font-semibold text-fog disabled:opacity-60"
-        >
-          {promoteBusy ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : null}
-          Create Alpha Hypothesis
-        </button>
         <Link href={buildReviewHref(candidate, promotion)} className="focus-ring rounded-md border border-line bg-paper px-2 py-1 text-xs font-semibold text-ink/85">
           Create Review
         </Link>

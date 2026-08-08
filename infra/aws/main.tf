@@ -713,6 +713,8 @@ resource "aws_ecs_task_definition" "api" {
       { name = "PUBLIC_WEB_URL", value = local.public_web_url },
       { name = "ALLOWED_ORIGINS", value = join(",", concat([local.public_web_url], var.extra_allowed_origins)) },
       { name = "AWS_REGION", value = var.aws_region },
+      { name = "MARKET_SCANNER_ENABLED", value = "true" },
+      { name = "MARKET_SCANNER_PROMOTION_ENABLED", value = "false" },
       { name = "SELECTIVE_INTEGRATION_ENABLED", value = "true" },
       { name = "SELECTIVE_INTEGRATION_ENFORCED", value = "true" },
       { name = "ARTIFACT_BUCKET", value = aws_s3_bucket.artifacts.id },

@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { Activity, Clock3, LoaderCircle, Play, RefreshCw, Send, SlidersHorizontal } from "lucide-react";
-import { listJobs, listScannerCandidatePromotions, promoteScannerCandidateToAlpha, runScanner, runScannerAsync, validateSignal } from "@/lib/api";
+import { getJobStatus, listJobs, listScannerCandidatePromotions, promoteScannerCandidateToAlpha, runScanner, runScannerAsync, validateSignal } from "@/lib/api";
 import type { JobRecord, ScannerCandidate, ScannerCandidatePromotion, ScannerResult, ScannerRunRequest, ScannerSignal } from "@/lib/types";
 import { Badge, Panel, SectionTitle, cn } from "@/components/ui";
 import { RouteNotice, RouteStatusBadge, type RouteStatus } from "@/components/route-state";
@@ -23,6 +23,8 @@ const DEFAULT_RESULT: ScannerResult = {
   totalScanned: 0,
   dataMode: "demo"
 };
+
+const scannerPromotionEnabled = process.env.NEXT_PUBLIC_ENABLE_MARKET_SCANNER_PROMOTION === "true";
 
 export default function MarketScannerPage() {
   const [status, setStatus] = useState<RouteStatus>("loading");
@@ -119,11 +121,30 @@ export default function MarketScannerPage() {
 
   async function queueScan() {
     setActiveAction("queue");
+    setStatus("loading");
+    setMessage("Queueing scanner job...");
     try {
-      const job = await runScannerAsync(requestBody);
+      let job = await runScannerAsync(requestBody);
       setJobs((current) => [job, ...current.filter((item) => item.id !== job.id)]);
-      setMessage(`Queued scanner job ${job.id}.`);
-      setStatus(result.candidates.length === 0 ? "empty" : "success");
+      setMessage(`Scanner job ${job.id} is ${job.state}.`);
+
+      for (let attempt = 0; attempt < 30 && (job.state === "queued" || job.state === "running"); attempt += 1) {
+        await new Promise((resolve) => window.setTimeout(resolve, 1_000));
+        job = await getJobStatus(job.id);
+        setJobs((current) => [job, ...current.filter((item) => item.id !== job.id)]);
+        setMessage(`Scanner job ${job.id} is ${job.state}.`);
+      }
+
+      if (job.state === "failed") {
+        throw new Error(job.error || `Scanner job ${job.id} failed.`);
+      }
+      if (job.state !== "completed" || !isScannerResult(job.result)) {
+        throw new Error(`Scanner job ${job.id} did not return a valid result before the polling deadline.`);
+      }
+
+      setResult(job.result);
+      setStatus(job.result.candidates.length === 0 ? "empty" : "success");
+      setMessage(job.result.candidates.length === 0 ? "Queued scan completed with no matching candidates." : "Queued scan completed.");
     } catch (error) {
       setStatus("error");
       setMessage(error instanceof Error ? error.message : "Unable to queue scanner job.");
@@ -228,18 +249,20 @@ export default function MarketScannerPage() {
           <div>
             <SectionTitle eyebrow="Market Intelligence" title="Market Scanner" />
             <p className="mt-3 max-w-3xl text-sm leading-6 text-ink/75">
-              Scan liquid watchlists for momentum and mean-reversion candidates, then create reviews or formalize the strongest setups as Alpha Lab hypotheses.
+              Scan liquid watchlists for momentum and mean-reversion candidates, then move the strongest setups into governed review. Alpha promotion remains gated until tenant lifecycle storage is certified.
             </p>
           </div>
           <div className="flex items-center gap-2">
             <RouteStatusBadge status={status} />
-            <button type="button" onClick={() => void runScan()} className="focus-ring inline-flex items-center gap-2 rounded-md border border-line bg-fog/70 px-3 py-2 text-sm font-semibold text-ink/80">
+            <button type="button" onClick={() => void runScan()} disabled={activeAction !== null} aria-busy={activeAction === "scan"} className="focus-ring inline-flex items-center gap-2 rounded-md border border-line bg-fog/70 px-3 py-2 text-sm font-semibold text-ink/80 disabled:opacity-60">
               {activeAction === "scan" ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
               Refresh
             </button>
           </div>
         </div>
       </Panel>
+
+      <p className="sr-only" aria-live="polite">{message}</p>
 
       {showNotice ? <RouteNotice status={status} message={message} retry={() => void runScan()} /> : null}
 
@@ -294,11 +317,11 @@ export default function MarketScannerPage() {
             </div>
 
             <div className="grid gap-2 sm:grid-cols-2">
-              <button type="button" onClick={() => void runScan()} className="focus-ring inline-flex items-center justify-center gap-2 rounded-md bg-teal px-3 py-2 font-semibold text-fog">
+              <button type="button" onClick={() => void runScan()} disabled={activeAction !== null} aria-busy={activeAction === "scan"} className="focus-ring inline-flex items-center justify-center gap-2 rounded-md bg-teal px-3 py-2 font-semibold text-fog disabled:opacity-60">
                 {activeAction === "scan" ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
                 Run scan
               </button>
-              <button type="button" onClick={() => void queueScan()} className="focus-ring inline-flex items-center justify-center gap-2 rounded-md border border-line bg-fog/70 px-3 py-2 font-semibold text-ink/80">
+              <button type="button" onClick={() => void queueScan()} disabled={activeAction !== null} aria-busy={activeAction === "queue"} className="focus-ring inline-flex items-center justify-center gap-2 rounded-md border border-line bg-fog/70 px-3 py-2 font-semibold text-ink/80 disabled:opacity-60">
                 {activeAction === "queue" ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
                 Queue job
               </button>
@@ -344,7 +367,7 @@ export default function MarketScannerPage() {
         <Panel className="p-5">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <SectionTitle eyebrow="Jobs" title="Scanner queue" />
-            <button type="button" onClick={() => void refreshJobs()} className="focus-ring inline-flex items-center gap-2 rounded-md border border-line bg-fog/70 px-3 py-2 text-sm font-semibold text-ink/80">
+            <button type="button" onClick={() => void refreshJobs()} disabled={activeAction !== null} aria-busy={activeAction === "jobs"} className="focus-ring inline-flex items-center gap-2 rounded-md border border-line bg-fog/70 px-3 py-2 text-sm font-semibold text-ink/80 disabled:opacity-60">
               {activeAction === "jobs" ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
               Refresh jobs
             </button>
@@ -422,7 +445,7 @@ function CandidateRow({
           <span>{candidate.trend}</span>
         </div>
         <div className="flex items-center justify-between gap-2">
-          <span className="text-sm font-semibold text-ink">{Math.round(candidate.score * 100)}%</span>
+          <span className="text-sm font-semibold text-ink" title="Deterministic scanner rule score, not return probability" aria-label={`Rule score ${Math.round(candidate.score * 100)} out of 100`}>Rule {Math.round(candidate.score * 100)}</span>
           <Badge tone={promotion ? promotionTone(promotion.status) : "neutral"}>{promotion ? promotionLabel(promotion.status) : "Not promoted"}</Badge>
         </div>
       </div>
@@ -431,6 +454,7 @@ function CandidateRow({
         <span>{formatCompact(candidate.volume24h)} volume</span>
         <span>{candidate.dataSource}</span>
         <Badge tone={candidate.dataMode === "live" ? "good" : candidate.dataMode === "fallback" ? "warn" : "neutral"}>{candidate.dataMode}</Badge>
+        <span>as of {formatTime(candidate.scannedAt)}</span>
         {promotion?.latestDecisionState ? <span>decision {promotion.latestDecisionState}</span> : null}
         {typeof promotion?.linkedReviewCount === "number" ? <span>reviews {promotion.linkedReviewCount}</span> : null}
       </div>
@@ -438,7 +462,8 @@ function CandidateRow({
         <button
           type="button"
           onClick={() => void onPromote(candidate)}
-          disabled={promoteBusy}
+          disabled={promoteBusy || !scannerPromotionEnabled}
+          title={scannerPromotionEnabled ? undefined : "Promotion is disabled until tenant-isolated lifecycle storage is certified."}
           className="focus-ring inline-flex items-center gap-1 rounded-md bg-teal px-2 py-1 text-xs font-semibold text-fog disabled:opacity-60"
         >
           {promoteBusy ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : null}
@@ -450,7 +475,8 @@ function CandidateRow({
         <button
           type="button"
           onClick={() => void onQueueValidation(candidate, promotion)}
-          disabled={validateBusy || !promotion?.signalId}
+          disabled={validateBusy || !promotion?.signalId || !scannerPromotionEnabled}
+          title={scannerPromotionEnabled ? undefined : "Validation is disabled until tenant-isolated lifecycle storage is certified."}
           className="focus-ring inline-flex items-center gap-1 rounded-md border border-line bg-paper px-2 py-1 text-xs font-semibold text-ink/85 disabled:opacity-50"
         >
           {validateBusy ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : null}
@@ -508,7 +534,7 @@ function buildReviewHref(candidate: ScannerCandidate, promotion: ScannerCandidat
     timeHorizon: "2-6 weeks",
     expression: "Long via equity",
     thesis: candidate.thesisSuggestion,
-    sourcePointer: `scanner:${candidate.ticker}:${candidate.signal}:${candidate.scannedAt}`
+    sourcePointer: `scanner:${candidate.ticker}:${candidate.signal}:${candidate.dataMode}:${candidate.dataSource}:${candidate.scannedAt}`
   });
 
   if (promotion?.signalId) {
@@ -567,4 +593,16 @@ function formatTime(value: string) {
 
 function formatCompact(value: number) {
   return Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 }).format(value);
+}
+
+function isScannerResult(value: unknown): value is ScannerResult {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Partial<ScannerResult>;
+  return Boolean(
+    Array.isArray(candidate.candidates) &&
+    Array.isArray(candidate.universe) &&
+    typeof candidate.scannedAt === "string" &&
+    typeof candidate.totalScanned === "number" &&
+    ["live", "fallback", "demo"].includes(String(candidate.dataMode)),
+  );
 }

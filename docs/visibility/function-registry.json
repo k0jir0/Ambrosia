@@ -283,7 +283,7 @@
     "method": "POST",
     "path": "/scanner/run",
     "exposure": "advanced",
-    "frontendRoute": "/advanced",
+    "frontendRoute": "/market-scanner",
     "requiredRole": "analyst",
     "auditEvent": "scanner.run.write"
   },
@@ -291,7 +291,7 @@
     "method": "POST",
     "path": "/scanner/run/async",
     "exposure": "advanced",
-    "frontendRoute": "/advanced",
+    "frontendRoute": "/market-scanner",
     "requiredRole": "analyst",
     "auditEvent": "scanner.run.async.write"
   },

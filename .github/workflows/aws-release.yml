@@ -60,6 +60,8 @@ jobs:
           docker build --pull -f services/api/Dockerfile -t ambrosia-api:validation .
           docker build --pull -f apps/web/Dockerfile \
             --build-arg "NEXT_PUBLIC_API_BASE_URL=https://api-staging.example.com" \
+            --build-arg "NEXT_PUBLIC_ENABLE_MARKET_SCANNER=true" \
+            --build-arg "NEXT_PUBLIC_ENABLE_MARKET_SCANNER_PROMOTION=false" \
             -t ambrosia-web:validation .
 
   plan:
@@ -209,6 +211,8 @@ jobs:
           docker build --pull -f services/api/Dockerfile -t "$API_REPOSITORY:$GITHUB_SHA" .
           docker build --pull -f apps/web/Dockerfile \
             --build-arg "NEXT_PUBLIC_API_BASE_URL=$API_BASE_URL" \
+            --build-arg "NEXT_PUBLIC_ENABLE_MARKET_SCANNER=true" \
+            --build-arg "NEXT_PUBLIC_ENABLE_MARKET_SCANNER_PROMOTION=false" \
             --build-arg "NEXT_PUBLIC_SITE_URL=$SITE_URL" \
             -t "$WEB_REPOSITORY:$GITHUB_SHA" .
 

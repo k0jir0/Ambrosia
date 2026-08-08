@@ -353,6 +353,11 @@ def _require_role(
     return role
 
 
+def _require_market_scanner_enabled() -> None:
+    if os.getenv("MARKET_SCANNER_ENABLED", "true").strip().lower() not in {"1", "true", "yes", "on"}:
+        raise HTTPException(status_code=503, detail="Market Scanner is temporarily unavailable")
+
+
 @app.get("/health")
 def health() -> dict:
     return {
@@ -1826,6 +1831,7 @@ def scanner_run(
     body: ScannerRunRequest,
     x_ambrosia_role: str | None = Header(default=None, alias="X-Ambrosia-Role"),
 ) -> ScannerResult:
+    _require_market_scanner_enabled()
     _require_role(ADVANCED_ROLES, x_ambrosia_role, scope="advanced")
     return run_scanner(body)
 
@@ -1836,6 +1842,7 @@ def scanner_run_async(
     x_ambrosia_role: str | None = Header(default=None, alias="X-Ambrosia-Role"),
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
 ) -> JobRecord:
+    _require_market_scanner_enabled()
     _require_role(ADVANCED_ROLES, x_ambrosia_role, scope="advanced")
     universe_label = ",".join(body.universe) if body.universe else "default-nyse"
     job = store.enqueue_job(

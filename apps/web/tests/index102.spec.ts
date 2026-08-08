@@ -1,5 +1,7 @@
-import { expect, test } from "@playwright/test";
-import { fulfillAuthenticatedAccount, LOCAL_API_ROUTE } from "./helpers";
+import { expect, test, type Route } from "@playwright/test";
+import { fulfillAuthenticatedAccount, LOCAL_API_ROUTE, SAME_ORIGIN_API_ROUTE } from "./helpers";
+
+const API_ROUTE_PATTERNS = [LOCAL_API_ROUTE, SAME_ORIGIN_API_ROUTE];
 
 const teamMembers = [
   { user_id: "usr-001", name: "Owner", role: "owner", active: true },
@@ -8,10 +10,12 @@ const teamMembers = [
 ];
 
 test.beforeEach(async ({ page }) => {
-  await page.route(LOCAL_API_ROUTE, async (route) => {
-    if (await fulfillAuthenticatedAccount(route)) return;
-    await route.abort();
-  });
+  for (const routePattern of API_ROUTE_PATTERNS) {
+    await page.route(routePattern, async (route) => {
+      if (await fulfillAuthenticatedAccount(route)) return;
+      await route.abort();
+    });
+  }
 });
 
 test("reports export uses query review id and email recipient contract", async ({ page }) => {
@@ -72,7 +76,7 @@ test.describe("mobile navigation", () => {
     await page.goto("/app");
     await page.getByRole("button", { name: /More/i }).click();
 
-    for (const label of ["Intake", "Decision Packets", "Review Queue", "Outcomes & Memory", "Team", "Admin"]) {
+    for (const label of ["Intake", "Decision Packets", "Review Queue", "Market Scanner", "Outcomes & Memory", "Team", "Admin"]) {
       await expect(page.getByRole("link", { name: label, exact: true }).last()).toBeVisible();
     }
   });
@@ -86,13 +90,15 @@ test("public landing keeps internal modules out of the product promise", async (
 });
 
 test("market scanner presents Alpha as a hypothesis workflow", async ({ page }) => {
-  await page.unroute(LOCAL_API_ROUTE);
-  await page.route(LOCAL_API_ROUTE, async (route) => {
+  for (const routePattern of API_ROUTE_PATTERNS) await page.unroute(routePattern);
+  let jobPolls = 0;
+  const handleScannerRoute = async (route: Route) => {
     if (await fulfillAuthenticatedAccount(route)) return;
     const request = route.request();
     const url = new URL(request.url());
+    const pathname = url.pathname.replace(/^\/api(?=\/)/, "");
 
-    if (request.method() === "POST" && url.pathname === "/scanner/run") {
+    if (request.method() === "POST" && pathname === "/scanner/run") {
       await route.fulfill({
         status: 200,
         contentType: "application/json",
@@ -121,24 +127,120 @@ test("market scanner presents Alpha as a hypothesis workflow", async ({ page }) 
       return;
     }
 
-    if (request.method() === "GET" && url.pathname === "/jobs") {
+    if (request.method() === "POST" && pathname === "/scanner/run/async") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          id: "job-scanner-001",
+          jobType: "scanner.run",
+          state: "queued",
+          queuedAt: "2026-07-06T00:01:00.000Z",
+          startedAt: null,
+          completedAt: null,
+          inputSummary: "universe=AAPL,MSFT",
+          result: null,
+          error: null,
+        }),
+      });
+      return;
+    }
+
+    if (request.method() === "GET" && pathname === "/jobs/job-scanner-001") {
+      jobPolls += 1;
+      const completed = jobPolls > 1;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          id: "job-scanner-001",
+          jobType: "scanner.run",
+          state: completed ? "completed" : "running",
+          queuedAt: "2026-07-06T00:01:00.000Z",
+          startedAt: "2026-07-06T00:01:01.000Z",
+          completedAt: completed ? "2026-07-06T00:01:02.000Z" : null,
+          inputSummary: "universe=AAPL,MSFT",
+          result: completed ? {
+            candidates: [{
+              ticker: "MSFT",
+              signal: "mean_reversion_up",
+              thesisSuggestion: "MSFT reached a bounded mean-reversion setup.",
+              score: 0.74,
+              price: 430.12,
+              trend: "sideways",
+              rsi: 31,
+              volume24h: 21000000,
+              dataSource: "test-fixture",
+              dataMode: "fallback",
+              scannedAt: "2026-07-06T00:01:02.000Z",
+            }],
+            scannedAt: "2026-07-06T00:01:02.000Z",
+            universe: ["AAPL", "MSFT"],
+            totalScanned: 2,
+            dataMode: "fallback",
+          } : null,
+          error: null,
+        }),
+      });
+      return;
+    }
+
+    if (request.method() === "GET" && pathname === "/jobs") {
       await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([]) });
       return;
     }
 
-    if (request.method() === "GET" && url.pathname === "/scanner/candidates/promotions") {
+    if (request.method() === "GET" && pathname === "/scanner/candidates/promotions") {
       await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([]) });
       return;
     }
 
     await route.abort();
-  });
+  };
+  for (const routePattern of API_ROUTE_PATTERNS) await page.route(routePattern, handleScannerRoute);
 
   await page.goto("/market-scanner");
   await expect(page.getByRole("heading", { name: "Market Scanner" })).toBeVisible();
-  await expect(page.getByText("formalize the strongest setups as Alpha Lab hypotheses")).toBeVisible();
-  await expect(page.getByRole("button", { name: "Create Alpha Hypothesis" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Market Scanner", exact: true }).first()).toBeVisible();
+  await expect(page.getByText(/move the strongest setups into governed review/)).toBeVisible();
+  await expect(page.getByText("Rule 82")).toBeVisible();
+  await expect(page.getByText("test-fixture")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Create Alpha Hypothesis" })).toBeDisabled();
+  await expect(page.getByRole("link", { name: "Create Review" })).toHaveAttribute(
+    "href",
+    /sourcePointer=scanner%3AAAPL%3Amomentum_up%3Ademo%3Atest-fixture%3A/,
+  );
   await expect(page.getByText("Promote to Alpha")).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Queue job" }).click();
+  await expect(page.getByText("MSFT").first()).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByText("Queued scan completed.")).toBeAttached();
+});
+
+test("viewer cannot discover or deep-link into Market Scanner", async ({ page }) => {
+  for (const routePattern of API_ROUTE_PATTERNS) await page.unroute(routePattern);
+  const handleViewerRoute = async (route: Route) => {
+    const url = new URL(route.request().url());
+    const pathname = url.pathname.replace(/^\/api(?=\/)/, "");
+    if (pathname === "/auth/me") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          user: { id: "user-e2e-viewer", email: "viewer@example.com" },
+          organization: { id: "org-e2e", name: "Northstar Capital", role: "viewer" },
+          session: { id: "session-e2e-viewer" },
+        }),
+      });
+      return;
+    }
+    await route.abort();
+  };
+  for (const routePattern of API_ROUTE_PATTERNS) await page.route(routePattern, handleViewerRoute);
+
+  await page.goto("/market-scanner");
+  await expect(page).toHaveURL(/\/app$/);
+  await expect(page.getByRole("link", { name: "Market Scanner", exact: true })).toHaveCount(0);
 });
 
 test("market intelligence labels fallback provenance", async ({ page }) => {

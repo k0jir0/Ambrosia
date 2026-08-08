@@ -188,9 +188,13 @@ evidence. That failure is a safety property, not missing repository work.
 
 ## Current limitations
 
-- The default production navigation exposes the governed decision loop; market,
-  scanner, signal, alpha, calibration, execution, enterprise, and platform labs
-  remain hidden unless `NEXT_PUBLIC_ENABLE_LABS=true`.
+- The default production navigation exposes the governed decision loop. Market
+  Scanner and ticker intelligence now use the dedicated
+  `NEXT_PUBLIC_ENABLE_MARKET_SCANNER` boundary; unrelated signal, alpha,
+  calibration, execution, enterprise, and platform labs remain hidden unless
+  `NEXT_PUBLIC_ENABLE_LABS=true`. AWS release builds enable scanner discovery
+  and review intake while keeping scanner promotion disabled until tenant-
+  isolated lifecycle storage is certified.
 - AWS staging enforces governed selective integration, while the mobile client
   still uses a legacy direct decision endpoint. Mobile parity requires an
   enforced-mode compatibility update and test.

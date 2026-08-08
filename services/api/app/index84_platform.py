@@ -12,6 +12,7 @@ from fastapi import APIRouter, Header, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from .db import PostgresReviewStore
+from .operations import current_principal
 from .project_paths import PROJECT_ROOT
 
 
@@ -64,6 +65,21 @@ if _database_url:
 
 def _now() -> str:
     return datetime.now().isoformat()
+
+
+def _require_scanner_promotion_enabled() -> None:
+    enabled = os.getenv("MARKET_SCANNER_PROMOTION_ENABLED", "true").strip().lower()
+    if enabled not in {"1", "true", "yes", "on"}:
+        raise HTTPException(
+            status_code=503,
+            detail="Scanner promotion is unavailable until tenant lifecycle storage is certified",
+        )
+
+
+def _require_scanner_role() -> None:
+    principal = current_principal()
+    if principal is None or principal.role not in {"analyst", "reviewer", "owner", "admin", "service"}:
+        raise HTTPException(status_code=403, detail="Advanced role required for scanner promotion access")
 
 
 def _stable_id(prefix: str, seed: str | None = None) -> str:
@@ -1061,6 +1077,8 @@ def promote_scanner_candidate_to_alpha(
     request: ScannerCandidatePromoteRequest,
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
 ) -> dict:
+    _require_scanner_role()
+    _require_scanner_promotion_enabled()
     endpoint = _endpoint_key("/scanner/candidates/promote-alpha")
     cached = _idempotency_lookup(endpoint, idempotency_key)
     if cached is not None:
@@ -1193,6 +1211,8 @@ def promote_scanner_candidate_to_alpha(
 
 @router.get("/scanner/candidates/promotions")
 def list_scanner_candidate_promotions() -> list[dict]:
+    _require_scanner_role()
+    _require_scanner_promotion_enabled()
     records = sorted(_scanner_promotions.values(), key=lambda item: item.get("promotedAt", ""), reverse=True)
     return [_scanner_promotion_summary(record) for record in records]
 

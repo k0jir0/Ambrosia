@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from enum import Enum
 from typing import Literal
 
@@ -665,10 +666,24 @@ class RetrievalResponse(BaseModel):
 
 
 class ScannerRunRequest(BaseModel):
-    universe: list[str] | None = None
+    universe: list[str] | None = Field(default=None, max_length=50)
     maxCandidates: int = Field(default=10, ge=1, le=50)
-    minVolume: float = 1_000_000.0
+    minVolume: float = Field(default=1_000_000.0, ge=0)
     signalFilter: Literal["momentum", "mean_reversion", "breadth", "all"] = "all"
+
+    @field_validator("universe")
+    @classmethod
+    def normalize_universe(cls, universe: list[str] | None) -> list[str] | None:
+        if universe is None:
+            return None
+        normalized: list[str] = []
+        for raw_ticker in universe:
+            ticker = raw_ticker.strip().upper()
+            if not re.fullmatch(r"[A-Z0-9][A-Z0-9.^/-]{0,14}", ticker):
+                raise ValueError(f"Invalid ticker symbol: {raw_ticker!r}")
+            if ticker not in normalized:
+                normalized.append(ticker)
+        return normalized
 
 
 class ScannerCandidate(BaseModel):

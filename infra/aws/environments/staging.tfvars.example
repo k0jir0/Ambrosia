@@ -1,0 +1,12 @@
+environment                    = "staging"
+aws_region                     = "ca-central-1"
+domain_name                    = "example.com"
+hosted_zone_id                 = "Z0000000000000000000"
+alb_certificate_arn            = "arn:aws:acm:ca-central-1:000000000000:certificate/replace-me"
+cloudfront_certificate_arn     = "arn:aws:acm:us-east-1:000000000000:certificate/replace-me"
+api_image                      = "000000000000.dkr.ecr.ca-central-1.amazonaws.com/ambrosia-api@sha256:replace-me"
+web_image                      = "000000000000.dkr.ecr.ca-central-1.amazonaws.com/ambrosia-web@sha256:replace-me"
+api_desired_count              = 1
+web_desired_count              = 1
+db_instance_class              = "db.t4g.small"
+redis_node_type                = "cache.t4g.small"

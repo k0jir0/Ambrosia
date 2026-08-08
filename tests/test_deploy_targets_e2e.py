@@ -25,16 +25,16 @@ def _normalize_base(url: str) -> str:
 
 
 def _build_targets() -> list[DeployTarget]:
-    staging_web = _normalize_base(os.getenv("STAGING_WEB_URL", "https://ambrosia-web-staging.onrender.com"))
-    staging_api = _normalize_base(os.getenv("STAGING_API_URL", "https://ambrosia-api-staging.onrender.com"))
+    targets: list[DeployTarget] = []
+    staging_web = _normalize_base(os.getenv("STAGING_WEB_URL", ""))
+    staging_api = _normalize_base(os.getenv("STAGING_API_URL", ""))
+    if staging_web:
+        targets.append(DeployTarget(name="staging", web_url=staging_web, api_url=staging_api or None))
 
-    production_web = _normalize_base(os.getenv("PRODUCTION_WEB_URL", "https://ambrosia-5aec.onrender.com"))
-    production_api = _normalize_base(os.getenv("PRODUCTION_API_URL", "https://ambrosia-api-69t6.onrender.com"))
-
-    targets: list[DeployTarget] = [
-        DeployTarget(name="staging", web_url=staging_web, api_url=staging_api),
-        DeployTarget(name="production", web_url=production_web, api_url=production_api),
-    ]
+    production_web = _normalize_base(os.getenv("PRODUCTION_WEB_URL", ""))
+    production_api = _normalize_base(os.getenv("PRODUCTION_API_URL", ""))
+    if production_web:
+        targets.append(DeployTarget(name="production", web_url=production_web, api_url=production_api or None))
 
     default_targets = "staging,production"
     if _env_flag("CI") and os.getenv("GITHUB_REF_NAME", "").strip().lower() == "staging":

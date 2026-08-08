@@ -122,7 +122,10 @@ class TestPhase4Workspaces:
         assert r.status_code == 200
         ws = r.json()
         assert ws["id"].startswith("ws-")
-        assert ws["ownerId"] == "user-alice"
+        # Ownership is derived from the authenticated principal. The client
+        # field remains accepted for wire compatibility but cannot select an
+        # arbitrary owner.
+        assert ws["ownerId"] == "local-developer"
         assert len(ws["members"]) == 1
         assert ws["members"][0]["role"] == "owner"
 
@@ -130,7 +133,7 @@ class TestPhase4Workspaces:
         assert get.status_code == 200
         assert get.json()["name"] == "Alpha Team"
 
-        listed = client.get("/workspaces", params={"owner_id": "user-alice"})
+        listed = client.get("/workspaces", params={"owner_id": "local-developer"})
         assert listed.status_code == 200
         assert any(w["id"] == ws["id"] for w in listed.json())
 

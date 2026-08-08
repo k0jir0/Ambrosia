@@ -1,5 +1,9 @@
 # 🚀 INDEX52 STAGING DEPLOYMENT — INITIATED
 
+> [!WARNING]
+> Historical status snapshot, not evidence of a current environment. Verify
+> actual state through the Index132 external-evidence process.
+
 **Status**: ✅ **DEPLOYED TO STAGING**  
 **Branch**: `staging`  
 **Commit**: e19940b  

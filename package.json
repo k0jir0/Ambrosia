@@ -8,7 +8,7 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "corepack prepare pnpm@9.12.0 --activate && pnpm install --frozen-lockfile --force && pnpm build:web",
+    "build": "pnpm build:web",
     "start": "node index.js",
     "dev": "pnpm dev:web",
     "local:serve": "powershell -ExecutionPolicy Bypass -File scripts/local-stack.ps1 serve",
@@ -43,8 +43,8 @@
     "local:api:restart": "powershell -ExecutionPolicy Bypass -File scripts/local-api.ps1 restart",
     "local:api:status": "powershell -ExecutionPolicy Bypass -File scripts/local-api.ps1 status",
     "dev:api": "cd services/api && uv run uvicorn app.main:app --reload --port 8000",
-    "test:api": "cd services/api && uv run pytest",
-    "lint:api": "cd services/api && uv run ruff check app tests",
+    "test:api": "cd services/api && uv run --frozen pytest",
+    "lint:api": "cd services/api && uv run --frozen ruff check app tests",
     "evals": "cd services/api && uv run python ../../packages/evals/run_evals.py",
     "evals:ablation": "cd services/api && uv run python ../../packages/evals/run_provider_ablation.py",
     "evals:retrieval": "cd services/api && uv run python ../../packages/evals/run_retrieval_benchmark.py",
@@ -80,10 +80,11 @@
     "m1:readiness": "python scripts/generate-m1-readiness.py",
     "synthetic:monitor": "python scripts/synthetic-monitor.py",
     "test:stack": "python -m unittest discover -s tests",
-    "test:unit": "python -m pytest tests/unit-tests -q",
-    "test:deploy:e2e": "python -m pytest tests/test_deploy_targets_e2e.py -q",
-    "test:cli:e2e": "python -m pytest tests/test_cli_design_e2e.py -q",
-    "test:cli:live": "python -m pytest tests/test_cli_live_function_matrix.py -q",
+    "test:unit": "uv run --project services/api --frozen pytest tests/unit-tests -q",
+    "test:deploy:e2e": "uv run --project services/api --frozen pytest tests/test_deploy_targets_e2e.py -q",
+    "test:cli:e2e": "uv run --project services/api --frozen pytest tests/test_cli_design_e2e.py -q",
+    "test:cli:live": "uv run --project services/api --frozen pytest tests/test_cli_live_function_matrix.py -q",
+    "test:release": "uv run --project services/api --frozen pytest tests/unit-tests -q && cd services/api && uv run --frozen pytest -q",
     "cli:install": "cd packages/cli && uv sync",
     "cli:build": "powershell -ExecutionPolicy Bypass -File scripts/build-ambrosia-cli.ps1",
     "cli:build:exe": "powershell -ExecutionPolicy Bypass -File scripts/build-ambrosia-cli-exe.ps1",
@@ -106,14 +107,5 @@
   "packageManager": "pnpm@9.12.0",
   "engines": {
     "node": ">=20.0.0"
-  },
-  "pnpm": {
-    "overrides": {
-      "brace-expansion": "5.0.7",
-      "js-yaml": "4.3.0",
-      "postcss": "8.5.10",
-      "sharp": "0.35.3",
-      "uuid": "11.1.1"
-    }
   }
 }

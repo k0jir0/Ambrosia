@@ -1,11 +1,12 @@
 name: CI
 
-# Branch strategy:
-#   main     = production  → auto-deploys to Render production services
-#   staging  = staging     → auto-deploys to Render staging services
-#   feat/*   = feature dev → CI only, no Render deploy
-#   fix/*    = hotfix dev  → CI only, no Render deploy
-#   chore/*  = maintenance → CI only, no Render deploy
+# AWS releases are manual, environment-protected operations in aws-release.yml.
+# Legacy Render hooks below are disabled unless an operator explicitly enables
+# RENDER_ROLLBACK_DEPLOY_ENABLED during the time-bounded rollback window.
+
+# Branch strategy: all branches run CI only. AWS release is a protected manual
+# workflow. The two jobs at the bottom are time-bounded Render rollback hooks
+# and remain inert unless RENDER_ROLLBACK_DEPLOY_ENABLED is explicitly enabled.
 
 on:
   push:
@@ -39,10 +40,10 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v3
         with:
-          version: "latest"
+          version: "0.11.32"
 
       - name: Install dependencies
-        run: uv sync
+        run: uv sync --frozen
 
       - name: Run lint (ruff)
         run: uv run ruff check app tests
@@ -68,7 +69,7 @@ jobs:
           cache: "pnpm"
 
       - name: Install dependencies
-        run: pnpm install
+        run: pnpm install --frozen-lockfile
 
       - name: Lint web
         run: pnpm lint:web
@@ -95,7 +96,7 @@ jobs:
           cache: "pnpm"
 
       - name: Install dependencies
-        run: pnpm install
+        run: pnpm install --frozen-lockfile
 
       - name: Typecheck mobile
         run: pnpm typecheck:mobile
@@ -132,16 +133,15 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v3
         with:
-          version: "latest"
+          version: "0.11.32"
 
       - name: Install root dependencies
-        run: uv sync --project services/api
+        run: uv sync --project services/api --frozen
 
       - name: Run stack contract tests
         run: |
           cd services/api
-          uv run pytest ../../tests/test_stack_contract.py --tb=short -q
-        continue-on-error: true
+          uv run --frozen pytest ../../tests/test_stack_contract.py --tb=short -q
 
   # -------------------------------------------------------------------------
   # Gate 4: Function registry + frontend visibility matrix
@@ -192,10 +192,10 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v3
         with:
-          version: "latest"
+          version: "0.11.32"
 
       - name: Install dependencies
-        run: uv sync
+        run: uv sync --frozen
 
       - name: Generate Index84 route inventory artifact
         run: uv run python ../../scripts/generate-index84-route-inventory.py --write
@@ -377,12 +377,12 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v3
         with:
-          version: "latest"
+          version: "0.11.32"
 
       - name: Install API dependencies
         run: |
           cd services/api
-          uv sync
+          uv sync --frozen
 
       - name: Regenerate Index84 evidence artifacts
         run: |
@@ -444,10 +444,10 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v3
         with:
-          version: "latest"
+          version: "0.11.32"
 
       - name: Install dependencies
-        run: uv sync
+        run: uv sync --frozen
 
       - name: Generate provider ablation artifacts
         run: uv run python ../../packages/evals/run_provider_ablation.py
@@ -477,10 +477,10 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v3
         with:
-          version: "latest"
+          version: "0.11.32"
 
       - name: Install dependencies
-        run: uv sync
+        run: uv sync --frozen
 
       - name: Generate retrieval benchmark artifacts
         run: uv run python ../../packages/evals/run_retrieval_benchmark.py
@@ -506,6 +506,41 @@ jobs:
       - name: Verify migration/versioning contracts
         run: python scripts/verify-migrations.py
 
+  postgres-tenant-integration:
+    name: PostgreSQL migration and tenant isolation
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: ambrosia
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d ambrosia"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/ambrosia
+      RUNTIME_DATABASE_URL: postgresql://ambrosia_app:integration-runtime-password-2026@127.0.0.1:5432/ambrosia
+      RUNTIME_DATABASE_USER: ambrosia_app
+      RUNTIME_DATABASE_PASSWORD: integration-runtime-password-2026
+      AUTH_TOKEN_PEPPER: integration-test-pepper-value-32-characters
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+        with:
+          version: "0.11.32"
+      - name: Install locked API dependencies
+        run: uv sync --project services/api --frozen
+      - name: Bootstrap and migrate PostgreSQL
+        run: uv run --project services/api --frozen python scripts/migrate_database.py --bootstrap-if-empty
+      - name: Verify runtime RLS and identity transaction
+        run: uv run --project services/api --frozen pytest -q services/api/tests/test_postgres_tenant_integration.py
+
   # -------------------------------------------------------------------------
   # Gate 8: Scorecard runtime verification
   # Ensures /metrics, /scorecard, and /health/detailed are coherent and complete.
@@ -524,10 +559,10 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v3
         with:
-          version: "latest"
+          version: "0.11.32"
 
       - name: Install dependencies
-        run: uv sync
+        run: uv sync --frozen
 
       - name: Verify scorecard runtime contracts
         run: uv run python ../../scripts/verify-scorecard-runtime.py
@@ -554,12 +589,12 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v3
         with:
-          version: "latest"
+          version: "0.11.32"
 
       - name: Install API dependencies
         run: |
           cd services/api
-          uv sync
+          uv sync --frozen
 
       - name: Generate Milestone M1 readiness artifacts
         run: python scripts/generate-m1-readiness.py
@@ -589,10 +624,10 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v3
         with:
-          version: "latest"
+          version: "0.11.32"
 
       - name: Install dependencies
-        run: uv sync
+        run: uv sync --frozen
 
       - name: Generate scanner benchmark artifacts
         run: uv run python ../../packages/evals/run_scanner_benchmark.py
@@ -604,63 +639,82 @@ jobs:
           path: artifacts/scanner-benchmark.*
           if-no-files-found: error
 
+  # Repository readiness and the frozen Ollama protocol are machine-readable.
+  # The report intentionally remains NO_GO while deployment/customer/legal
+  # evidence in the external template is pending.
+  index132-evidence:
+    name: Index132 repository and external-gate ledger
+    runs-on: ubuntu-latest
+    needs: [api-tests, web-build, postgres-tenant-integration, migration-check]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate frozen Ollama protocol without claiming model performance
+        run: python packages/evals/run_ollama_disconfirmation_eval.py
+      - name: Generate honest Index132 readiness decision
+        run: python scripts/generate-index132-readiness.py
+      - name: Upload Index132 evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: index132-readiness
+          path: |
+            artifacts/index132-readiness.json
+            artifacts/ollama-evaluation.json
+          if-no-files-found: error
+
   # -------------------------------------------------------------------------
-  # Deploy to STAGING (branch: staging only)
-  # Triggers after all gates pass. Uses Render deploy hooks stored as secrets.
+  # Legacy rollback deploy to STAGING (branch: staging only)
   # -------------------------------------------------------------------------
   deploy-staging:
-    name: Deploy → Staging
+    name: Rollback deploy → Render staging
     runs-on: ubuntu-latest
     needs: [api-tests, web-build, stack-contract, visibility-proof, provider-ablation, retrieval-benchmark, migration-check, scorecard-runtime, m1-readiness, scanner-benchmark]
-    if: github.ref == 'refs/heads/staging' && github.event_name == 'push'
+    if: github.ref == 'refs/heads/staging' && github.event_name == 'push' && vars.RENDER_ROLLBACK_DEPLOY_ENABLED == 'true'
 
     steps:
       - name: Trigger staging API deploy
-        if: vars.RENDER_HOOK_STAGING_API != ''
+        env:
+          RENDER_HOOK: ${{ secrets.RENDER_HOOK_STAGING_API }}
         run: |
-          curl -s -X POST "${{ vars.RENDER_HOOK_STAGING_API }}" \
+          curl -s -X POST "$RENDER_HOOK" \
             -H "Content-Type: application/json" \
             --fail-with-body
-        continue-on-error: true
 
       - name: Trigger staging Web deploy
-        if: vars.RENDER_HOOK_STAGING_WEB != ''
+        env:
+          RENDER_HOOK: ${{ secrets.RENDER_HOOK_STAGING_WEB }}
         run: |
-          curl -s -X POST "${{ vars.RENDER_HOOK_STAGING_WEB }}" \
+          curl -s -X POST "$RENDER_HOOK" \
             -H "Content-Type: application/json" \
             --fail-with-body
-        continue-on-error: true
 
       - name: Staging deploy triggered
         run: echo "Staging deploy hooks fired. Monitor at https://dashboard.render.com"
 
   # -------------------------------------------------------------------------
-  # Deploy to PRODUCTION (branch: main only)
-  # Only runs on main after all gates pass. Production deploys are gated by
-  # the same CI suite + Render health checks before traffic cutover.
+  # Legacy rollback deploy to PRODUCTION (branch: main only)
   # -------------------------------------------------------------------------
   deploy-production:
-    name: Deploy → Production
+    name: Rollback deploy → Render production
     runs-on: ubuntu-latest
     needs: [api-tests, web-build, stack-contract, visibility-proof, provider-ablation, retrieval-benchmark, migration-check, scorecard-runtime, m1-readiness, scanner-benchmark]
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push' && vars.RENDER_ROLLBACK_DEPLOY_ENABLED == 'true'
 
     steps:
       - name: Trigger production API deploy
-        if: vars.RENDER_HOOK_PROD_API != ''
+        env:
+          RENDER_HOOK: ${{ secrets.RENDER_HOOK_PROD_API }}
         run: |
-          curl -s -X POST "${{ vars.RENDER_HOOK_PROD_API }}" \
+          curl -s -X POST "$RENDER_HOOK" \
             -H "Content-Type: application/json" \
             --fail-with-body
-        continue-on-error: true
 
       - name: Trigger production Web deploy
-        if: vars.RENDER_HOOK_PROD_WEB != ''
+        env:
+          RENDER_HOOK: ${{ secrets.RENDER_HOOK_PROD_WEB }}
         run: |
-          curl -s -X POST "${{ vars.RENDER_HOOK_PROD_WEB }}" \
+          curl -s -X POST "$RENDER_HOOK" \
             -H "Content-Type: application/json" \
             --fail-with-body
-        continue-on-error: true
 
       - name: Production deploy triggered
         run: echo "Production deploy hooks fired. Monitor at https://dashboard.render.com"

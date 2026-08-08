@@ -16,7 +16,7 @@ import type {
   TradeReview
 } from "./types";
 
-const DEFAULT_API_URL = "https://ambrosia-api-69t6.onrender.com";
+const DEFAULT_API_URL = "http://127.0.0.1:8000";
 
 type MobileTodayPayload = {
   source?: "api";

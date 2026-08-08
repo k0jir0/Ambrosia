@@ -1,5 +1,9 @@
 # Ambrosia Deployment and Rollback Guide
 
+> [!WARNING]
+> Legacy Render procedure retained only for the time-bounded rollback window.
+> New releases follow `docs/operations/AWS_MIGRATION_RUNBOOK.md`.
+
 **Last Updated**: 2026-06-25  
 **Scope**: Production deployments on Render  
 **Status**: This document covers the zero-downtime deployment validation (Index52 Todo 1)

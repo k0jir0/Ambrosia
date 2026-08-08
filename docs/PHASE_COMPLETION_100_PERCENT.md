@@ -1,5 +1,9 @@
 # 🎉 Ambrosia 100% Completion Achievement
 
+> [!WARNING]
+> Superseded historical record. Percent-complete and live-service claims below
+> are not current evidence and must not be used externally.
+
 **Date:** 2026-06-24  
 **Status:** ✅ **PRODUCTION READY - 100% COMPLETE**  
 **Deployment:** Automatic via Render CI/CD pipeline

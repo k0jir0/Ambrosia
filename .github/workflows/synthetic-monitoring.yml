@@ -9,6 +9,8 @@ jobs:
   synthetic-probes:
     name: Production synthetic probes
     runs-on: ubuntu-latest
+    env:
+      AMBROSIA_API_BASE_URL: ${{ vars.AMBROSIA_SYNTHETIC_API_BASE_URL }}
 
     steps:
       - uses: actions/checkout@v4
@@ -18,10 +20,11 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Require an approved synthetic target
+        run: test -n "$AMBROSIA_API_BASE_URL"
+
       - name: Run synthetic monitor probes (retry)
         continue-on-error: true
-        env:
-          AMBROSIA_API_BASE_URL: ${{ vars.AMBROSIA_SYNTHETIC_API_BASE_URL || 'https://ambrosia-api-69t6.onrender.com' }}
         run: |
           for attempt in 1 2 3; do
             echo "Synthetic monitor attempt ${attempt}/3"

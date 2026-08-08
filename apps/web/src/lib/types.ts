@@ -509,6 +509,8 @@ export interface ReportArtifact {
   provenanceLabel: string;
   marketDataSource: string | null;
   marketDataFreshnessSeconds: number | null;
+  artifactId?: string | null;
+  storageStatus?: string;
 }
 
 // ---------------------------------------------------------------------------

@@ -89,14 +89,14 @@ goto menu
 :choose_target
 echo.
 echo [L] Local API       http://127.0.0.1:8001
-echo [S] Staging API     https://ambrosia-api-staging.onrender.com
-echo [P] Production API  https://ambrosia-api-69t6.onrender.com
+echo [S] Staging API     %AMBROSIA_STAGING_API_URL%
+echo [P] Production API  %AMBROSIA_PRODUCTION_API_URL%
 echo [C] Custom URL
 set "TARGET_CHOICE="
 set /p TARGET_CHOICE=Choose target:
 if /I "%TARGET_CHOICE%"=="L" set "AMBROSIA_API_URL=http://127.0.0.1:8001"
-if /I "%TARGET_CHOICE%"=="S" set "AMBROSIA_API_URL=https://ambrosia-api-staging.onrender.com"
-if /I "%TARGET_CHOICE%"=="P" set "AMBROSIA_API_URL=https://ambrosia-api-69t6.onrender.com"
+if /I "%TARGET_CHOICE%"=="S" set "AMBROSIA_API_URL=%AMBROSIA_STAGING_API_URL%"
+if /I "%TARGET_CHOICE%"=="P" set "AMBROSIA_API_URL=%AMBROSIA_PRODUCTION_API_URL%"
 if /I "%TARGET_CHOICE%"=="C" goto custom_target
 if "%AMBROSIA_API_URL%"=="" (
   echo [WARN] No target selected.

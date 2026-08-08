@@ -1,5 +1,9 @@
 # 🚀 DEPLOY INDEX52 TO STAGING NOW
 
+> [!WARNING]
+> Superseded historical instruction. Do not execute this Render deployment
+> procedure; use the protected AWS release and Index132 migration runbook.
+
 **Status**: ✅ All 4 todos complete and production-ready  
 **Next Step**: Deploy to Render staging environment  
 **Time Required**: 15-30 minutes total  

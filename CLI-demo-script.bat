@@ -18,8 +18,8 @@ ROOT = Path(__file__).resolve().parent
 CLI_DIR = ROOT / "packages" / "cli"
 SDK_DIR = ROOT / "packages" / "sdk-python"
 CLI_MAIN = "from ambrosia_cli.main import main; raise SystemExit(main())"
-DEFAULT_API_URL = "https://ambrosia-api-staging.onrender.com"
-PRODUCTION_HINTS = ("ambrosia-api-69t6", "production", "prod")
+DEFAULT_API_URL = "http://127.0.0.1:8001"
+PRODUCTION_HINTS = ("production", "prod")
 
 
 @dataclass

@@ -14,6 +14,8 @@ REQUIRED_FILES = [
     "services/api/app/resilience.py",
     "services/api/tests/test_index119_operations.py",
     "infra/db/migrations/V0006__production_operations.sql",
+    "infra/db/migrations/V0008__identity_tenancy_and_llm_catalog.sql",
+    "infra/aws/main.tf",
     "infra/monitoring/index119-alerts.yaml",
     "docs/operations/PRODUCTION_STANDARD.md",
     "docs/operations/INCIDENT_RUNBOOK.md",
@@ -26,7 +28,7 @@ REQUIRED_FILES = [
 REQUIRED_MARKERS = {
     "services/api/app/main.py": ["ProductionBoundaryMiddleware", "register_readiness_check"],
     "services/api/app/operations.py": [
-        "AMBROSIA_API_KEYS_JSON", "HashChainAuditLog", "SlidingWindowRateLimiter",
+        "AMBROSIA_API_KEYS_JSON", "HashChainAuditLog", "DistributedSlidingWindowRateLimiter",
         'router.get("/ready")', 'router.get("/operational/metrics")',
     ],
     "services/hotpath-rs/src/main.rs": [
@@ -56,8 +58,8 @@ def main() -> int:
                 failures.append(f"{relative} missing marker: {marker}")
 
     schema = json.loads((ROOT / "infra/db/schema-version.json").read_text(encoding="utf-8"))
-    if schema.get("dbSchemaVersion") != "v0006":
-        failures.append("database schema version is not v0006")
+    if schema.get("dbSchemaVersion") != "v0008":
+        failures.append("database schema version is not v0008")
 
     if failures:
         print("Index119 repository readiness: FAIL")

@@ -708,6 +708,8 @@ class ReportArtifact(BaseModel):
     provenanceLabel: str
     marketDataSource: str | None = None
     marketDataFreshnessSeconds: int | None = None
+    artifactId: str | None = None
+    storageStatus: str = "development_not_persisted"
 
 
 class JobRecord(BaseModel):
@@ -733,6 +735,7 @@ class JobRecord(BaseModel):
 
 class WorkspaceMemberRole(str, Enum):
     owner = "owner"
+    admin = "admin"
     analyst = "analyst"
     reviewer = "reviewer"
     viewer = "viewer"

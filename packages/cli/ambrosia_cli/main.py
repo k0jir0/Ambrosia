@@ -11,8 +11,6 @@ from ambrosia_sdk import AmbrosiaApiError, AmbrosiaClient
 
 DEFAULT_VERSION = "0.1.0"
 DEFAULT_API_URL = "http://127.0.0.1:8001"
-STAGING_API_URL = "https://ambrosia-api-staging.onrender.com"
-PRODUCTION_API_URL = "https://ambrosia-api-69t6.onrender.com"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -77,7 +75,7 @@ def build_parser() -> argparse.ArgumentParser:
     subcommands.add_parser("status", help="Show CLI, profile, token, and API target status")
 
     quickstart = subcommands.add_parser("quickstart", help="Show or write first-run target configuration")
-    quickstart.add_argument("--target", choices=["local", "staging", "production", "custom"], default="staging")
+    quickstart.add_argument("--target", choices=["local", "staging", "production", "custom"], default="local")
     quickstart.add_argument("--api-url", dest="quickstart_api_url", default=None, help="API URL when --target custom is used")
     quickstart.add_argument("--write-profile", action="store_true", help="Write the selected API URL to ~/.ambrosia/config.json")
     quickstart.add_argument("--check", action="store_true", help="Check the selected API target health")
@@ -607,9 +605,19 @@ def quickstart_api_url(args: argparse.Namespace) -> str:
     if args.target == "local":
         return DEFAULT_API_URL
     if args.target == "staging":
-        return STAGING_API_URL
+        configured = os.getenv("AMBROSIA_STAGING_API_URL", "").strip()
+        if configured:
+            return configured.rstrip("/")
+        raise AmbrosiaApiError(
+            "AMBROSIA_STAGING_API_URL is required for the staging target"
+        )
     if args.target == "production":
-        return PRODUCTION_API_URL
+        configured = os.getenv("AMBROSIA_PRODUCTION_API_URL", "").strip()
+        if configured:
+            return configured.rstrip("/")
+        raise AmbrosiaApiError(
+            "AMBROSIA_PRODUCTION_API_URL is required for the production target"
+        )
     if args.quickstart_api_url:
         return args.quickstart_api_url
     raise AmbrosiaApiError("--api-url is required when --target custom is used")
@@ -645,17 +653,27 @@ def error_payload(exc: AmbrosiaApiError, *, args: argparse.Namespace, context: d
 def recovery_hints(context: dict[str, Any], *, target: str | None = None, command: argparse.Namespace | None = None) -> list[dict[str, str]]:
     command_text = command_example(command) if command is not None else "ambrosia health --detailed"
     tried = target or str(context.get("apiUrl") or DEFAULT_API_URL)
-    return [
+    hints = [
         {
-            "label": "Use staging for this command",
-            "command": command_text.replace("ambrosia ", f"ambrosia --api-url {STAGING_API_URL} ", 1),
-        },
-        {"label": "Make staging the default in new Windows terminals", "command": f"setx AMBROSIA_API_URL {STAGING_API_URL}"},
-        {
-            "label": "Start the local API from C:\\Users\\user\\Desktop\\ARC",
-            "command": f"uv run uvicorn --app-dir Ambrosia services.api.app.main:app --host 127.0.0.1 --port 8001  # attempted {tried}",
+            "label": "Start the local API",
+            "command": f"uv run --project services/api uvicorn app.main:app --host 127.0.0.1 --port 8001  # attempted {tried}",
         },
     ]
+    staging_url = os.getenv("AMBROSIA_STAGING_API_URL", "").strip().rstrip("/")
+    if staging_url:
+        hints.extend([
+            {
+                "label": "Use configured staging for this command",
+                "command": command_text.replace(
+                    "ambrosia ", f"ambrosia --api-url {staging_url} ", 1
+                ),
+            },
+            {
+                "label": "Make staging the default in new Windows terminals",
+                "command": f"setx AMBROSIA_API_URL {staging_url}",
+            },
+        ])
+    return hints
 
 
 def command_example(command: argparse.Namespace) -> str:
@@ -736,10 +754,10 @@ def package_version(package_name: str) -> str:
 def get_examples() -> list[dict[str, str]]:
     return [
         {"description": "Show current target/profile status", "command": "ambrosia status"},
-        {"description": "Configure hosted staging target", "command": "ambrosia quickstart --target staging --write-profile"},
+        {"description": "Configure a hosted target", "command": "ambrosia quickstart --target custom --api-url https://api.example.com --write-profile"},
         {"description": "Show the command catalog", "command": "ambrosia commands list"},
         {"description": "Read API health", "command": "ambrosia health --detailed"},
-        {"description": "Read hosted market data", "command": f"ambrosia --api-url {STAGING_API_URL} market snapshot GOOG"},
+        {"description": "Read market data from the active profile", "command": "ambrosia market snapshot GOOG"},
         {"description": "List signals as JSON", "command": "ambrosia --json signals list"},
         {"description": "Run the scanner", "command": "ambrosia scanner run --universe AAPL,MSFT,SPY --max-candidates 5"},
         {"description": "Create a signal", "command": "ambrosia signals create --name Momentum --formula \"close/close_20d-1\""},

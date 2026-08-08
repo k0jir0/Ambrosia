@@ -11,11 +11,11 @@ const CLI_PILLARS = [
   },
   {
     title: "Recover quickly",
-    detail: "API-unavailable failures now report the attempted target and show concrete staging, setx, and local server recovery commands."
+    detail: "API-unavailable failures report the attempted target and show configured-host and local server recovery commands."
   },
   {
     title: "Prove positive function",
-    detail: "CLI-demo-script.bat runs a full staging demonstration across discovery, lifecycle, execution, and enterprise commands with a generated report."
+    detail: "CLI-demo-script.bat runs a configured-target demonstration across discovery, lifecycle, execution, and enterprise commands with a generated report."
   }
 ];
 
@@ -40,8 +40,8 @@ const ARCHITECTURE_LAYERS = [
 const INSTALL_PATHS = [
   {
     title: "Fast hosted use",
-    commands: ["setx AMBROSIA_API_URL https://ambrosia-api-staging.onrender.com", "ambrosia status", "ambrosia market snapshot GOOG"],
-    note: "The simplest non-developer path is to target staging, open a new terminal, and verify the CLI/API connection with status and a market snapshot."
+    commands: ["setx AMBROSIA_API_URL https://api.example.com", "ambrosia status", "ambrosia market snapshot GOOG"],
+    note: "Use the approved environment URL, open a new terminal, and verify the CLI/API connection with status and a market snapshot."
   },
   {
     title: "Guided first run",
@@ -69,7 +69,7 @@ const COMMAND_EXAMPLES = [
   "ambrosia status",
   "ambrosia quickstart --target staging --write-profile",
   "ambrosia health",
-  "ambrosia --api-url https://ambrosia-api-staging.onrender.com market snapshot GOOG",
+  "ambrosia --api-url https://api.example.com market snapshot GOOG",
   "ambrosia scanner run --universe AAPL,MSFT,SPY --max-candidates 5",
   "ambrosia signals list",
   "ambrosia signals create --name Momentum --formula \"close/close_20d-1\"",
@@ -91,7 +91,7 @@ const CONFIG_PRIORITY = ["Explicit flags", "Environment variables", "Profile con
 
 const ERROR_RULES = [
   "API unavailable with attempted URL",
-  "Concrete staging/local recovery commands",
+  "Concrete configured-target/local recovery commands",
   "Invalid token",
   "Missing required flag",
   "Endpoint returned non-JSON response",
@@ -286,8 +286,9 @@ const DEVELOPER_FLOW = [
 ];
 
 const PYTHON_EXAMPLE = [
+  "import os",
   "from ambrosia_sdk import AmbrosiaClient",
-  "client = AmbrosiaClient(base_url=\"https://ambrosia-api-staging.onrender.com\")",
+  "client = AmbrosiaClient(base_url=os.environ[\"AMBROSIA_API_URL\"])",
   "signals = client.list_signals()"
 ];
 
@@ -469,7 +470,7 @@ export default function CliDesignPage() {
           ))}
         </div>
         <p className="mt-4 text-xs leading-5 text-ink/55">
-          Latest observed run: 59 commands passed against https://ambrosia-api-staging.onrender.com with zero failed or blocked steps. The script writes reports under .local/cli-demo/&lt;timestamp&gt;/.
+          Historical command counts are not release evidence. Run the matrix against the approved target and retain its timestamped report under .local/cli-demo/.
         </p>
       </Panel>
 

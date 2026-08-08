@@ -6,10 +6,17 @@ import hashlib
 import hmac
 import time
 
+import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.operations import HashChainAuditLog, SlidingWindowRateLimiter
+from app.operations import (
+    DistributedSlidingWindowRateLimiter,
+    HashChainAuditLog,
+    RateLimiterUnavailable,
+    SlidingWindowRateLimiter,
+    rate_limiter,
+)
 from app.store import ReviewStore
 
 
@@ -38,6 +45,12 @@ def test_boundary_adds_security_and_correlation_headers() -> None:
     assert response.headers["cache-control"] == "no-store"
 
 
+def test_same_origin_api_prefix_reaches_the_canonical_route() -> None:
+    response = client.get("/api/health")
+    assert response.status_code == 200
+    assert response.headers["x-content-type-options"] == "nosniff"
+
+
 def test_production_fails_closed_without_identity(monkeypatch) -> None:
     monkeypatch.setenv("ENVIRONMENT", "production")
     monkeypatch.delenv("AMBROSIA_API_KEYS_JSON", raising=False)
@@ -47,11 +60,18 @@ def test_production_fails_closed_without_identity(monkeypatch) -> None:
 
 def test_production_identity_and_route_policy(monkeypatch) -> None:
     monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setattr(rate_limiter, "allow", lambda *_args, **_kwargs: (True, 299))
     monkeypatch.setenv(
         "AMBROSIA_API_KEYS_JSON",
         json.dumps({
-            "viewer-token-at-least-16": {"subject": "viewer-1", "role": "viewer"},
-            "admin-token-at-least-16x": {"subject": "admin-1", "role": "admin"},
+            "viewer-token-at-least-16": {
+                "subject": "viewer-1", "role": "viewer",
+                "organization_id": "00000000-0000-0000-0000-000000000002",
+            },
+            "admin-token-at-least-16x": {
+                "subject": "admin-1", "role": "admin",
+                "organization_id": "00000000-0000-0000-0000-000000000002",
+            },
         }),
     )
     denied = client.post(
@@ -69,6 +89,7 @@ def test_production_identity_and_route_policy(monkeypatch) -> None:
 
 def test_authenticated_role_replaces_spoofable_legacy_header(monkeypatch) -> None:
     monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setattr(rate_limiter, "allow", lambda *_args, **_kwargs: (True, 299))
     monkeypatch.setenv("RBAC_ENABLED", "true")
     monkeypatch.setenv(
         "AMBROSIA_API_KEYS_JSON",
@@ -99,12 +120,14 @@ def test_readiness_requires_production_identity(monkeypatch) -> None:
 def test_production_accepts_scoped_hs256_identity(monkeypatch) -> None:
     secret = "a-production-test-secret-that-is-long-enough"
     monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setattr(rate_limiter, "allow", lambda *_args, **_kwargs: (True, 299))
     monkeypatch.setenv("AMBROSIA_JWT_HS256_SECRET", secret)
     monkeypatch.setenv("AMBROSIA_JWT_ISSUER", "ambrosia")
     monkeypatch.setenv("AMBROSIA_JWT_AUDIENCE", "ambrosia-api")
     token = _jwt(secret, {
         "sub": "analyst-1", "role": "analyst", "iss": "ambrosia",
         "aud": "ambrosia-api", "exp": int(time.time()) + 60,
+        "org": "00000000-0000-0000-0000-000000000002",
     })
     response = client.get("/packets", headers={"Authorization": f"Bearer {token}"})
     assert response.status_code == 200
@@ -143,6 +166,14 @@ def test_rate_limiter_is_bounded() -> None:
     assert limiter.allow("actor", 2)[0] is True
     assert limiter.allow("actor", 2)[0] is True
     assert limiter.allow("actor", 2)[0] is False
+
+
+def test_distributed_rate_limiter_fails_closed_without_redis_in_production(monkeypatch) -> None:
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.delenv("REDIS_URL", raising=False)
+    limiter = DistributedSlidingWindowRateLimiter()
+    with pytest.raises(RateLimiterUnavailable):
+        limiter.allow("actor", 2)
 
 
 def test_job_creation_is_idempotent_and_tracks_attempts() -> None:

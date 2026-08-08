@@ -4,7 +4,7 @@ import json
 import hashlib
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from uuid import NAMESPACE_URL, uuid5
+from uuid import NAMESPACE_URL, uuid4, uuid5
 
 import psycopg
 from psycopg.rows import dict_row
@@ -23,9 +23,14 @@ from .models import (
     RoadmapOutcomeRecord,
     RoadmapPlanRecord,
     TradeReview,
+    WorkspaceCreateRequest,
+    WorkspaceMember,
+    WorkspaceMemberRole,
+    WorkspaceRecord,
 )
 from .feedback import FeedbackRecord
 from .selective_integration import create_packet_audit_event, packet_content_hash
+from .tenant_context import apply_tenant_context
 
 
 @dataclass
@@ -43,12 +48,102 @@ class PostgresReviewStore:
         return str(uuid5(NAMESPACE_URL, f"ambrosia-review:{review_id}"))
 
     def _connect(self) -> psycopg.Connection:
-        return psycopg.connect(self.database_url, row_factory=dict_row)
+        connection = psycopg.connect(self.database_url, row_factory=dict_row)
+        apply_tenant_context(connection)
+        return connection
 
     def healthcheck(self) -> None:
         with self._connect() as connection:
             with connection.cursor() as cursor:
                 cursor.execute("SELECT 1")
+
+    @staticmethod
+    def _workspace_from_rows(workspace: dict, members: list[dict], packet_ids: list[str]) -> WorkspaceRecord:
+        owner = next((row for row in members if row["role"] == "owner"), None)
+        return WorkspaceRecord(
+            id=str(workspace["id"]),
+            name=workspace["name"],
+            description=workspace["description"],
+            createdAt=workspace["created_at"].isoformat(),
+            ownerId=str(owner["user_id"] if owner else workspace["created_by_user_id"]),
+            members=[
+                WorkspaceMember(
+                    userId=str(row["user_id"]),
+                    role=WorkspaceMemberRole(row["role"]),
+                    addedAt=row["created_at"].isoformat(),
+                )
+                for row in members
+            ],
+            packetIds=packet_ids,
+        )
+
+    def create_workspace(self, request: WorkspaceCreateRequest) -> WorkspaceRecord:
+        workspace_id = str(uuid4())
+        with self._connect() as connection:
+            with connection.transaction():
+                row = connection.execute(
+                    """
+                    INSERT INTO workspaces (id, created_by_user_id, name, description)
+                    VALUES (%s, %s, %s, %s)
+                    RETURNING id, name, description, created_at, created_by_user_id
+                    """,
+                    (workspace_id, request.ownerId, request.name, request.description),
+                ).fetchone()
+                members = connection.execute(
+                    """
+                    SELECT user_id, role, created_at FROM organization_memberships
+                    WHERE organization_id = ambrosia_current_organization_id()
+                      AND status = 'active' ORDER BY created_at
+                    """
+                ).fetchall()
+        return self._workspace_from_rows(row, list(members), [])
+
+    def get_workspace(self, workspace_id: str) -> WorkspaceRecord | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT id, name, description, created_at, created_by_user_id
+                FROM workspaces WHERE id = %s
+                """,
+                (workspace_id,),
+            ).fetchone()
+            if not row:
+                return None
+            members = connection.execute(
+                """
+                SELECT user_id, role, created_at FROM organization_memberships
+                WHERE organization_id = ambrosia_current_organization_id()
+                  AND status = 'active' ORDER BY created_at
+                """
+            ).fetchall()
+            packets = connection.execute(
+                "SELECT packet_id FROM review_packet WHERE workspace_id = %s ORDER BY created_at",
+                (workspace_id,),
+            ).fetchall()
+        return self._workspace_from_rows(row, list(members), [item["packet_id"] for item in packets])
+
+    def list_workspaces(self) -> list[WorkspaceRecord]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT id, name, description, created_at, created_by_user_id
+                FROM workspaces ORDER BY created_at DESC
+                """
+            ).fetchall()
+        return [workspace for row in rows if (workspace := self.get_workspace(str(row["id"]))) is not None]
+
+    def add_packet_to_workspace(self, workspace_id: str, packet_id: str) -> WorkspaceRecord | None:
+        with self._connect() as connection:
+            result = connection.execute(
+                """
+                UPDATE review_packet SET workspace_id = %s, updated_at = now()
+                WHERE packet_id = %s
+                """,
+                (workspace_id, packet_id),
+            )
+            if result.rowcount != 1:
+                return None
+        return self.get_workspace(workspace_id)
 
     @staticmethod
     def _job_from_row(row: dict) -> JobRecord:
@@ -744,7 +839,9 @@ class PostgresPacketStore:
         self.database_url = database_url
 
     def _connect(self) -> psycopg.Connection:
-        return psycopg.connect(self.database_url, row_factory=dict_row)
+        connection = psycopg.connect(self.database_url, row_factory=dict_row)
+        apply_tenant_context(connection)
+        return connection
 
     def healthcheck(self) -> None:
         with self._connect() as connection:

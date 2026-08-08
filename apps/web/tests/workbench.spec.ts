@@ -1,17 +1,20 @@
-import { expect, test, type Page, type Route } from "@playwright/test";
-
-const LOCAL_API_ROUTE = "http://localhost:8000/**";
+import { expect, test, type Route } from "@playwright/test";
+import { fulfillAuthenticatedAccount, LOCAL_API_ROUTE } from "./helpers";
 
 test.beforeEach(async ({ page }) => {
-  await page.route(LOCAL_API_ROUTE, (route) => route.abort());
+  await page.route(LOCAL_API_ROUTE, async (route) => {
+    if (await fulfillAuthenticatedAccount(route)) return;
+    await route.abort();
+  });
 });
 
-test("dashboard is the default entry point", async ({ page }) => {
+test("public landing and private decision home are distinct", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByText("Ambrosia", { exact: true })).toBeVisible();
-  await expect(page.getByRole("heading", { name: /Good morning\./i })).toBeVisible();
-  await expect(page.getByText("Needs Your Attention")).toBeVisible();
-  await expect(page.getByText("Recent Reviews", { exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: /Turn an investment thesis into a decision/i })).toBeVisible();
+  await page.goto("/app");
+  await expect(page.getByRole("heading", { name: /Turn one thesis into a decision/i })).toBeVisible();
+  await expect(page.getByText("Recent packets", { exact: true })).toBeVisible();
 });
 
 test("new review creates an archive record and can be reopened", async ({ page }) => {
@@ -27,12 +30,8 @@ test("new review creates an archive record and can be reopened", async ({ page }
   ]);
   await expect(page.getByRole("heading", { name: /NVDA adversarial review/i })).toBeVisible();
 
-  await page.goto("/");
+  await page.goto("/app");
   await expect(page.getByText("NVDA adversarial review", { exact: true })).toBeVisible();
-  await expect(page.getByText("Agentic AI for Investments:")).toBeVisible();
-  await expect(page.getByText("Investment Trading Decisions:")).toBeVisible();
-  await expect(page.getByText("Swarm Intelligence:")).toBeVisible();
-  await expect(page.getByText("Agentic Swarm:")).toBeVisible();
 
   await page.goto("/history");
   await page.getByRole("textbox", { name: "Search", exact: true }).fill("NVDA");
@@ -84,6 +83,7 @@ test("soft-policy advisories allow a safe needs-more-data decision", async ({ pa
   const governedPackets = new Map<string, JsonRecord>();
   await page.unroute(LOCAL_API_ROUTE);
   await page.route(LOCAL_API_ROUTE, async (route) => {
+    if (await fulfillAuthenticatedAccount(route)) return;
     if (await fulfillGovernedPacketRequest(route, governedPackets)) return;
     if (route.request().url().endsWith("/signals/signal-e2e-alpha-decay/alpha-decay")) {
       await route.fulfill({
@@ -132,6 +132,7 @@ test("signal proposal recreates stale linked signal before writeback", async ({ 
 
   await page.unroute(LOCAL_API_ROUTE);
   await page.route(LOCAL_API_ROUTE, async (route) => {
+    if (await fulfillAuthenticatedAccount(route)) return;
     const request = route.request();
     const url = request.url();
 
@@ -197,7 +198,7 @@ test("signal proposal recreates stale linked signal before writeback", async ({ 
   await page.goto("/review/atr-003");
   await page.getByRole("button", { name: "Watch" }).click();
   await page.getByRole("button", { name: "Write HOLD to Signal" }).click();
-  await expect(page.getByText("Signal updated: HOLD / execution_blocked.")).toBeVisible();
+  await expect(page.getByText("Signal updated: HOLD / not_executable.")).toBeVisible();
   expect(staleLinkAttempted).toBe(true);
   expect(replacementSignalCreated).toBe(true);
   expect(writebackDecisionAction).toBe("HOLD");
@@ -209,6 +210,7 @@ test("signal proposal sanitizes short generated signal fields", async ({ page })
 
   await page.unroute(LOCAL_API_ROUTE);
   await page.route(LOCAL_API_ROUTE, async (route) => {
+    if (await fulfillAuthenticatedAccount(route)) return;
     const request = route.request();
     const url = request.url();
 
@@ -289,51 +291,19 @@ test("signal proposal sanitizes short generated signal fields", async ({ page })
 
   await page.goto("/review/atr-short-fields");
   await page.getByRole("button", { name: "Create Signal + Write HOLD" }).click();
-  await expect(page.getByText("Signal updated: HOLD / execution_blocked.")).toBeVisible();
+  await expect(page.getByText("Signal updated: HOLD / not_executable.")).toBeVisible();
   expect(createdSignalFormula).toBe("review_expression:TS");
 });
 
-test("sidebar navigation reaches core routes", async ({ page }) => {
-  test.slow();
-  await page.goto("/");
-  await openSidebarRoute(page, "Decision History", "/history");
-  await expect(page.getByRole("heading", { name: /^Archive \(\d+ total\)$/ })).toBeVisible();
-
-  await openSidebarRoute(page, "Calibration", "/calibration");
-  await expect(page.getByRole("heading", { name: "Model outcome calibration" })).toBeVisible();
-});
-
-test("index89 routes are accessible from sidebar navigation", async ({ page }) => {
-  test.slow();
-  await page.goto("/");
-
-  await openSidebarRoute(page, "Platform", "/platform");
-  await expect(page.getByRole("heading", { name: "Platform", exact: true })).toBeVisible();
-
-  await openSidebarRoute(page, "Alpha Lab", "/alpha");
-  await expect(page.getByRole("heading", { name: "Alpha Lab", exact: true })).toBeVisible();
-
-  await openSidebarRoute(page, "Execution Intelligence", "/execution-intelligence");
-  await expect(page.getByRole("heading", { name: "Execution Intelligence", exact: true })).toBeVisible();
-
-  await openSidebarRoute(page, "Relay + Benchmarks", "/relay-benchmarks");
-  await expect(page.getByRole("heading", { name: "Relay + Benchmarks", exact: true })).toBeVisible();
-
-  await openSidebarRoute(page, "CLI Design", "/cli-design");
-  await expect(page.getByRole("heading", { name: "CLI Design", exact: true })).toBeVisible();
-
-  await openSidebarRoute(page, "Enterprise", "/enterprise");
-  await expect(page.getByRole("heading", { name: "Enterprise", exact: true })).toBeVisible();
-});
-
-test("command palette opens and routes ticker jump", async ({ page }) => {
-  await page.goto("/");
-  await page.keyboard.press("Control+k");
-  const input = page.getByPlaceholder("Search actions or type ticker (AAPL)");
-  await expect(input).toBeVisible();
-  await input.fill("AAPL");
-  await page.getByRole("button", { name: /Open AAPL intelligence/i }).click();
-  await expect(page).toHaveURL(/\/markets\/AAPL/);
+test("signed-in navigation is limited to the six sellable-product areas", async ({ page }) => {
+  await page.goto("/app");
+  const sidebar = page.locator("aside");
+  for (const label of ["Intake", "Decision Packets", "Review Queue", "Outcomes & Memory", "Team", "Admin"]) {
+    await expect(sidebar.getByRole("link", { name: label, exact: true })).toBeVisible();
+  }
+  for (const hidden of ["Platform", "Alpha Lab", "Execution Intelligence", "Relay + Benchmarks", "CLI Design", "Enterprise"]) {
+    await expect(sidebar.getByRole("link", { name: hidden, exact: true })).toHaveCount(0);
+  }
 });
 
 test("markets compare mode displays peer symbols", async ({ page }) => {
@@ -347,16 +317,6 @@ test("dark mode is the default visual mode", async ({ page }) => {
   await expect(page.locator("html")).toHaveCSS("color-scheme", "dark");
   await expect(page.locator("body")).toHaveCSS("background-color", "rgb(16, 24, 32)");
 });
-
-async function openSidebarRoute(page: Page, label: string, path: string) {
-  const link = page.locator("aside").getByRole("link", { name: label });
-  await expect(link).toHaveAttribute("href", path);
-  await expect(link).toBeVisible();
-  await Promise.all([
-    page.waitForURL(new RegExp(`${escapeRegExp(path)}(?:$|[?#])`), { timeout: 20000 }),
-    link.click()
-  ]);
-}
 
 type JsonRecord = Record<string, unknown>;
 
@@ -458,8 +418,4 @@ async function fulfillGovernedPacketRequest(
   }
 
   return false;
-}
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }

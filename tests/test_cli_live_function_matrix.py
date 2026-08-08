@@ -27,7 +27,7 @@ def _env_flag(name: str, default: str = "false") -> bool:
 
 RUN_CLI_LIVE_E2E = _env_flag("RUN_CLI_LIVE_E2E")
 STRICT_CLI_LIVE_E2E = _env_flag("STRICT_CLI_LIVE_E2E")
-API_URL = os.getenv("CLI_LIVE_API_URL", "https://ambrosia-api-staging.onrender.com").rstrip("/")
+API_URL = os.getenv("CLI_LIVE_API_URL", "").rstrip("/")
 COMMAND_TIMEOUT = float(os.getenv("CLI_LIVE_COMMAND_TIMEOUT_SECONDS", "30"))
 
 
@@ -190,6 +190,8 @@ def _record(results: list[CommandResult], result: CommandResult) -> Any:
 def test_ambrosia_cli_live_function_matrix() -> None:
     if not RUN_CLI_LIVE_E2E:
         pytest.skip("Set RUN_CLI_LIVE_E2E=true to run live Ambrosia CLI function matrix.")
+    if not API_URL:
+        pytest.fail("CLI_LIVE_API_URL is required when RUN_CLI_LIVE_E2E=true")
 
     state = MatrixState()
     results: list[CommandResult] = []

@@ -2,178 +2,145 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { Activity, BarChart3, Binary, Building2, ClipboardPlus, Command, FlaskConical, History, Home, Layers3, Menu, Radar, Search, Signal, Settings, SlidersHorizontal, TerminalSquare, Users, X } from "lucide-react";
+import { usePathname } from "next/navigation";
+import {
+  ClipboardCheck,
+  ClipboardPlus,
+  History,
+  LayoutDashboard,
+  LogOut,
+  Menu,
+  Settings,
+  Users,
+  X,
+} from "lucide-react";
+
+import { getAccountSession, logoutAccount, type AccountSession } from "@/lib/api";
 import { cn } from "./ui";
-import { CommandPalette } from "./command-palette";
 
-type NavItem = {
-  href: string;
-  label: string;
-  icon: React.ComponentType<{ className?: string }>;
-  group: "top" | "middle" | "bottom";
-};
+const PUBLIC_PATHS = new Set([
+  "/",
+  "/signup",
+  "/login",
+  "/forgot-password",
+  "/reset-password",
+  "/verify-email",
+  "/accept-invite",
+  "/terms",
+  "/privacy",
+  "/company-proof",
+]);
 
-const NAV_ITEMS: NavItem[] = [
-  { href: "/", label: "Dashboard", icon: Home, group: "top" },
-  { href: "/review/new", label: "New Review", icon: ClipboardPlus, group: "top" },
-  { href: "/markets/AAPL", label: "Market Intelligence", icon: Activity, group: "middle" },
-  { href: "/market-scanner", label: "Market Scanner", icon: Search, group: "middle" },
-  { href: "/signals", label: "Signals", icon: Signal, group: "middle" },
-  { href: "/alpha", label: "Alpha Lab", icon: FlaskConical, group: "middle" },
-  { href: "/history", label: "Decision History", icon: History, group: "middle" },
-  { href: "/calibration", label: "Calibration", icon: BarChart3, group: "middle" },
-  { href: "/relay-benchmarks", label: "Relay + Benchmarks", icon: Binary, group: "middle" },
-  { href: "/cli-design", label: "CLI Design", icon: TerminalSquare, group: "middle" },
-  { href: "/execution-intelligence", label: "Execution Intelligence", icon: Radar, group: "middle" },
-  { href: "/enterprise", label: "Enterprise", icon: Building2, group: "bottom" },
-  { href: "/team", label: "Team", icon: Users, group: "bottom" },
-  { href: "/admin", label: "Admin", icon: Settings, group: "bottom" },
-  { href: "/advanced", label: "Advanced", icon: SlidersHorizontal, group: "bottom" },
-  { href: "/platform", label: "Platform", icon: Layers3, group: "bottom" }
-];
+const NAV_ITEMS = [
+  { href: "/review/new", label: "Intake", icon: ClipboardPlus },
+  { href: "/app", label: "Decision Packets", icon: LayoutDashboard },
+  { href: "/review", label: "Review Queue", icon: ClipboardCheck },
+  { href: "/history", label: "Outcomes & Memory", icon: History },
+  { href: "/team", label: "Team", icon: Users },
+  { href: "/admin", label: "Admin", icon: Settings },
+] as const;
 
-const MOBILE_ITEMS = [
-  { href: "/", label: "Dashboard", icon: Home },
-  { href: "/review/new", label: "New", icon: ClipboardPlus },
-  { href: "/markets/AAPL", label: "Markets", icon: Activity },
-  { href: "/history", label: "History", icon: History }
-];
+const LAB_PATH_PREFIXES = [
+  "/advanced",
+  "/alpha",
+  "/calibration",
+  "/cli-design",
+  "/discovery",
+  "/enterprise",
+  "/execution-intelligence",
+  "/governance",
+  "/market-scanner",
+  "/markets",
+  "/platform",
+  "/relay-benchmarks",
+  "/reports",
+  "/signals",
+] as const;
 
-function isActivePath(pathname: string | null, href: string) {
-  if (!pathname) return href === "/";
-  if (href === "/") return pathname === "/";
+const labsEnabled =
+  process.env.NEXT_PUBLIC_ENABLE_LABS === "true" ||
+  (process.env.NEXT_PUBLIC_ENABLE_LABS === undefined && process.env.NODE_ENV !== "production");
+
+function activePath(pathname: string, href: string) {
   return pathname === href || pathname.startsWith(`${href}/`);
 }
 
 export function AppShell({ children }: { children: React.ReactNode }) {
-  const [pathname, setPathname] = useState<string>(typeof window === "undefined" ? "/" : window.location.pathname);
-  const [paletteOpen, setPaletteOpen] = useState(false);
+  const pathname = usePathname() || "/";
+  const isPublic = PUBLIC_PATHS.has(pathname);
+  const isHiddenLab = LAB_PATH_PREFIXES.some(
+    (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`),
+  );
+  const [profile, setProfile] = useState<AccountSession | null>(null);
+  const [checking, setChecking] = useState(!isPublic);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   useEffect(() => {
-    function onKeyDown(event: KeyboardEvent) {
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
-        event.preventDefault();
-        setPaletteOpen(true);
-      }
-      if (event.key === "Escape") {
-        setPaletteOpen(false);
-      }
+    if (isPublic) {
+      setChecking(false);
+      return;
     }
-
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, []);
-
-  useEffect(() => {
-    function updatePath() {
-      setPathname(window.location.pathname);
+    if (isHiddenLab && !labsEnabled) {
+      window.location.replace("/app");
+      return;
     }
-
-    updatePath();
-    window.addEventListener("popstate", updatePath);
-    window.addEventListener("hashchange", updatePath);
-
+    let active = true;
+    setChecking(true);
+    getAccountSession()
+      .then((session) => {
+        if (active) setProfile(session);
+      })
+      .catch(() => {
+        const returnTo = encodeURIComponent(pathname);
+        window.location.assign(`/login?returnTo=${returnTo}`);
+      })
+      .finally(() => {
+        if (active) setChecking(false);
+      });
     return () => {
-      window.removeEventListener("popstate", updatePath);
-      window.removeEventListener("hashchange", updatePath);
+      active = false;
     };
-  }, []);
+  }, [isHiddenLab, isPublic, pathname]);
 
-  const top = NAV_ITEMS.filter((item) => item.group === "top");
-  const middle = NAV_ITEMS.filter((item) => item.group === "middle");
-  const bottom = NAV_ITEMS.filter((item) => item.group === "bottom");
+  if (isPublic) return <>{children}</>;
+
+  if (checking || !profile) {
+    return (
+      <main className="grid min-h-screen place-items-center bg-fog px-6 text-ink">
+        <div className="text-center">
+          <div className="mx-auto h-8 w-8 animate-spin rounded-full border-2 border-teal/25 border-t-teal" />
+          <p className="mt-4 text-sm text-ink/65">Opening your decision workspace…</p>
+        </div>
+      </main>
+    );
+  }
+
+  async function signOut() {
+    await logoutAccount();
+    window.location.assign("/");
+  }
 
   return (
     <div className="min-h-screen bg-fog text-ink">
       <div className="mx-auto flex w-full max-w-[1600px]">
-        <aside className="hidden min-h-screen w-64 shrink-0 border-r border-line/80 bg-paper/90 p-4 lg:block">
-          <div className="mb-4 flex items-center justify-between">
-            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-teal">Ambrosia</p>
-            <button
-              type="button"
-              onClick={() => setPaletteOpen(true)}
-              className="focus-ring inline-flex items-center gap-1 rounded border border-line px-2 py-1 text-[11px] text-ink/70"
-            >
-              <Command className="h-3.5 w-3.5" /> K
-            </button>
-          </div>
-          <div className="space-y-6">
-            <NavSection items={top} pathname={pathname} />
-            <NavSection items={middle} pathname={pathname} />
-            <NavSection items={bottom} pathname={pathname} />
-            <OperatingModelPanel />
-          </div>
-        </aside>
+        <aside className="hidden min-h-screen w-64 shrink-0 border-r border-line/80 bg-paper/90 p-4 lg:flex lg:flex-col">
+          <Link href="/app" className="focus-ring rounded-md px-2 py-2">
+            <p className="text-xs font-semibold uppercase tracking-[0.22em] text-teal">Ambrosia</p>
+            <p className="mt-1 text-xs text-ink/55">Governed investment decisions</p>
+          </Link>
 
-        <main className="min-h-screen flex-1 p-4 pb-24 lg:p-8 lg:pb-8">{children}</main>
-      </div>
-
-      <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-line bg-paper/95 p-2 backdrop-blur lg:hidden">
-        <ul className="grid grid-cols-5 gap-1">
-          {MOBILE_ITEMS.map((item) => {
-            const active = isActivePath(pathname, item.href);
-            const Icon = item.icon;
-            return (
-              <li key={item.href}>
-                <Link
-                  href={item.href}
-                  className={cn(
-                    "focus-ring flex flex-col items-center gap-1 rounded-md px-2 py-2 text-[11px] font-medium transition",
-                    active ? "bg-teal/15 text-teal" : "text-ink/75 hover:bg-white/5"
-                  )}
-                >
-                  <Icon className="h-4 w-4" />
-                  <span>{item.label}</span>
-                </Link>
-              </li>
-            );
-          })}
-          <li>
-            <button
-              type="button"
-              onClick={() => setMobileMenuOpen(true)}
-              className={cn(
-                "focus-ring flex w-full flex-col items-center gap-1 rounded-md px-2 py-2 text-[11px] font-medium transition",
-                mobileMenuOpen ? "bg-teal/15 text-teal" : "text-ink/75 hover:bg-white/5"
-              )}
-            >
-              <Menu className="h-4 w-4" />
-              <span>More</span>
-            </button>
-          </li>
-        </ul>
-      </nav>
-
-      {mobileMenuOpen ? (
-        <div className="fixed inset-0 z-50 bg-black/45 p-3 lg:hidden" onClick={() => setMobileMenuOpen(false)}>
-          <section
-            className="ml-auto flex max-h-[calc(100vh-1.5rem)] w-full max-w-sm flex-col rounded-lg border border-line bg-paper p-3 shadow-xl"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <div className="mb-3 flex items-center justify-between">
-              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-teal">Modules</p>
-              <button
-                type="button"
-                onClick={() => setMobileMenuOpen(false)}
-                className="focus-ring rounded border border-line p-2 text-ink/70"
-                aria-label="Close module navigation"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </div>
-            <ul className="grid gap-1 overflow-y-auto pb-2">
+          <nav className="mt-7 flex-1">
+            <ul className="space-y-1">
               {NAV_ITEMS.map((item) => {
-                const active = isActivePath(pathname, item.href);
                 const Icon = item.icon;
+                const active = activePath(pathname, item.href);
                 return (
                   <li key={item.href}>
                     <Link
                       href={item.href}
-                      onClick={() => setMobileMenuOpen(false)}
                       className={cn(
                         "focus-ring flex items-center gap-3 rounded-md px-3 py-2.5 text-sm transition",
-                        active ? "bg-teal/10 text-teal" : "text-ink/80 hover:bg-white/5 hover:text-ink"
+                        active ? "bg-teal/10 text-teal" : "text-ink/75 hover:bg-white/5 hover:text-ink",
                       )}
                     >
                       <Icon className="h-4 w-4" />
@@ -183,58 +150,96 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 );
               })}
             </ul>
+          </nav>
+
+          <section className="rounded-lg border border-line bg-fog/70 p-3">
+            <p className="truncate text-sm font-medium text-ink">{profile.organization.name}</p>
+            <p className="mt-0.5 truncate text-xs text-ink/55">{profile.user.email}</p>
+            <div className="mt-3 flex items-center justify-between">
+              <span className="rounded-full bg-teal/10 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-teal">
+                {profile.organization.role}
+              </span>
+              <button
+                type="button"
+                onClick={signOut}
+                className="focus-ring rounded-md p-2 text-ink/55 hover:bg-white/5 hover:text-ink"
+                aria-label="Sign out"
+              >
+                <LogOut className="h-4 w-4" />
+              </button>
+            </div>
+          </section>
+        </aside>
+
+        <main className="min-h-screen min-w-0 flex-1 p-4 pb-24 lg:p-8 lg:pb-8">{children}</main>
+      </div>
+
+      <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-line bg-paper/95 p-2 backdrop-blur lg:hidden">
+        <ul className="grid grid-cols-5 gap-1">
+          {NAV_ITEMS.slice(0, 4).map((item) => {
+            const Icon = item.icon;
+            const active = activePath(pathname, item.href);
+            return (
+              <li key={item.href}>
+                <Link
+                  href={item.href}
+                  className={cn(
+                    "focus-ring flex flex-col items-center gap-1 rounded-md px-1 py-2 text-[10px] font-medium",
+                    active ? "bg-teal/10 text-teal" : "text-ink/70",
+                  )}
+                >
+                  <Icon className="h-4 w-4" />
+                  <span className="max-w-full truncate">{item.label.split(" ")[0]}</span>
+                </Link>
+              </li>
+            );
+          })}
+          <li>
+            <button
+              type="button"
+              onClick={() => setMobileMenuOpen(true)}
+              className="focus-ring flex w-full flex-col items-center gap-1 rounded-md px-1 py-2 text-[10px] font-medium text-ink/70"
+            >
+              <Menu className="h-4 w-4" />
+              <span>More</span>
+            </button>
+          </li>
+        </ul>
+      </nav>
+
+      {mobileMenuOpen ? (
+        <div className="fixed inset-0 z-50 bg-black/60 p-3 lg:hidden" onClick={() => setMobileMenuOpen(false)}>
+          <section
+            className="ml-auto w-full max-w-sm rounded-xl border border-line bg-paper p-4 shadow-2xl"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="mb-4 flex items-center justify-between">
+              <div>
+                <p className="text-sm font-semibold text-ink">{profile.organization.name}</p>
+                <p className="text-xs text-ink/55">{profile.user.email}</p>
+              </div>
+              <button className="focus-ring rounded-md p-2" onClick={() => setMobileMenuOpen(false)} aria-label="Close menu">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <ul className="space-y-1">
+              {NAV_ITEMS.map((item) => {
+                const Icon = item.icon;
+                return (
+                  <li key={item.href}>
+                    <Link href={item.href} onClick={() => setMobileMenuOpen(false)} className="focus-ring flex items-center gap-3 rounded-md px-3 py-3 text-sm text-ink/80 hover:bg-white/5">
+                      <Icon className="h-4 w-4" /> {item.label}
+                    </Link>
+                  </li>
+                );
+              })}
+            </ul>
+            <button type="button" onClick={signOut} className="focus-ring mt-4 flex w-full items-center justify-center gap-2 rounded-md border border-line px-3 py-2.5 text-sm text-ink/75">
+              <LogOut className="h-4 w-4" /> Sign out
+            </button>
           </section>
         </div>
       ) : null}
-
-      <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
     </div>
-  );
-}
-
-function OperatingModelPanel() {
-  return (
-    <section className="rounded-lg border border-line bg-fog/70 p-3 text-[11px] leading-5 text-ink/70">
-      <p className="text-xs font-semibold uppercase tracking-wide text-teal">Operating Model</p>
-      <div className="mt-2 space-y-2">
-        <p>
-          <span className="font-semibold text-ink">Agentic AI for Investments:</span> Ambrosia turns a raw thesis into a stateful workflow with intake, retrieval, market context, critique, validation, confidence, audit, and outcome memory.
-        </p>
-        <p>
-          <span className="font-semibold text-ink">Investment Trading Decisions:</span> every review is structured around the human choice to pursue, watch, reject, or request more data before capital is put at risk.
-        </p>
-        <p>
-          <span className="font-semibold text-ink">Swarm Intelligence:</span> specialist lenses like market data, technicals, sentiment, bear case, risk, and synthesis work together instead of relying on one generic answer.
-        </p>
-        <p>
-          <span className="font-semibold text-ink">Agentic Swarm:</span> those specialist lenses participate in a coordinated packet workflow, producing bounded outputs that improve the decision surface.
-        </p>
-      </div>
-    </section>
-  );
-}
-
-function NavSection({ items, pathname }: { items: NavItem[]; pathname: string }) {
-  return (
-    <ul className="space-y-1">
-      {items.map((item) => {
-        const active = isActivePath(pathname, item.href);
-        const Icon = item.icon;
-        return (
-          <li key={item.href}>
-            <Link
-              href={item.href}
-              className={cn(
-                "focus-ring flex items-center gap-3 rounded-md px-3 py-2 text-sm transition",
-                active ? "bg-teal/10 text-teal" : "text-ink/80 hover:bg-white/5 hover:text-ink"
-              )}
-            >
-              <Icon className="h-4 w-4" />
-              <span>{item.label}</span>
-            </Link>
-          </li>
-        );
-      })}
-    </ul>
   );
 }

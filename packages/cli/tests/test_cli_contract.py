@@ -7,8 +7,12 @@ ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "packages" / "cli"))
 sys.path.insert(0, str(ROOT / "packages" / "sdk-python"))
 
-from ambrosia_cli.main import build_parser, dispatch, main
-from ambrosia_sdk import AmbrosiaClient, SignalCreate, SignalDecisionWriteback
+from ambrosia_cli.main import build_parser, dispatch, main  # noqa: E402
+from ambrosia_sdk import (  # noqa: E402
+    AmbrosiaClient,
+    SignalCreate,
+    SignalDecisionWriteback,
+)
 
 
 def fake_transport(method: str, path: str, body: dict | None, headers: dict[str, str], timeout: float):
@@ -74,14 +78,15 @@ def test_status_dispatch_reports_context_and_health() -> None:
     assert result["apiHealth"]["path"] == "/health"
 
 
-def test_quickstart_dry_run_returns_staging_commands() -> None:
+def test_quickstart_dry_run_returns_staging_commands(monkeypatch) -> None:
+    monkeypatch.setenv("AMBROSIA_STAGING_API_URL", "https://staging.ambrosia.example/api")
     parser = build_parser()
     args = parser.parse_args(["quickstart", "--target", "staging"])
     result = dispatch(args, make_client())
 
     assert result["status"] == "ready"
     assert result["target"] == "staging"
-    assert result["apiUrl"] == "https://ambrosia-api-staging.onrender.com"
+    assert result["apiUrl"] == "https://staging.ambrosia.example/api"
     assert result["writeProfile"] is False
     assert "ambrosia status" in result["nextCommands"]
 

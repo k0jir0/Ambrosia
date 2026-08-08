@@ -3,12 +3,12 @@
 Ambrosia CLI for Index84/Index85 automation. Supports read and write operations
 for relay evaluation, signals, backtests, paper trades, and enterprise controls.
 
-## Fastest hosted use
+## Hosted use
 
-For immediate hosted operation, point the CLI at staging and verify status:
+Point the CLI at an approved environment URL and verify status:
 
 ```powershell
-setx AMBROSIA_API_URL https://ambrosia-api-staging.onrender.com
+setx AMBROSIA_API_URL https://api.example.com
 ambrosia status
 ambrosia market snapshot GOOG
 ```
@@ -17,13 +17,13 @@ Open a new terminal after `setx`. For a one-command override, put the target on
 the command itself:
 
 ```powershell
-ambrosia --api-url https://ambrosia-api-staging.onrender.com market snapshot GOOG
+ambrosia --api-url https://api.example.com market snapshot GOOG
 ```
 
 The CLI also includes a first-run helper:
 
 ```powershell
-ambrosia quickstart --target staging --write-profile
+ambrosia quickstart --target custom --api-url https://api.example.com --write-profile
 ambrosia status
 ```
 

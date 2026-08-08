@@ -11,6 +11,23 @@ from .providers import ProviderSelection
 from .resilience import resilient_urlopen
 
 
+SPECIALIST_RESPONSE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "summary": {"type": "string", "minLength": 1, "maxLength": 1200},
+        "keyPoints": {
+            "type": "array",
+            "items": {"type": "string", "minLength": 1, "maxLength": 500},
+            "minItems": 3,
+            "maxItems": 3,
+        },
+        "score": {"type": "integer", "minimum": 0, "maximum": 100},
+    },
+    "required": ["summary", "keyPoints", "score"],
+    "additionalProperties": False,
+}
+
+
 def _ts() -> str:
     return datetime.now(UTC).isoformat()
 
@@ -88,7 +105,13 @@ def _call_openai(prompt: str) -> str:
 def _call_ollama(prompt: str) -> str:
     base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434").rstrip("/")
     model = os.getenv("OLLAMA_MODEL", "llama3.1:8b")
-    payload = {"model": model, "prompt": prompt, "stream": False, "format": "json"}
+    payload = {
+        "model": model,
+        "prompt": prompt,
+        "stream": False,
+        "format": SPECIALIST_RESPONSE_SCHEMA,
+        "options": {"temperature": 0, "seed": 42},
+    }
     request = urllib.request.Request(
         f"{base_url}/api/generate",
         data=json.dumps(payload).encode("utf-8"),

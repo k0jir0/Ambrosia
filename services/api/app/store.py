@@ -107,7 +107,6 @@ class ReviewStore:
                 self._review_db = review_db
                 self._packet_db = packet_db
                 self._db_enabled = True
-                review_db.requeue_expired_jobs()
                 try:
                     existing_feedback = review_db.list_feedback_records(limit=5000)
                     self._feedback_records = {record.id: record for record in existing_feedback}
@@ -748,6 +747,9 @@ class ReviewStore:
         with self._job_lock:
             if self._db_enabled and self._review_db is not None:
                 try:
+                    # Recovery must run after request authentication has installed
+                    # the organization context consumed by PostgreSQL RLS.
+                    self._review_db.requeue_expired_jobs()
                     job = self._review_db.get_job(job_id)
                     if job is not None:
                         self._jobs[job.id] = job
@@ -760,6 +762,7 @@ class ReviewStore:
         with self._job_lock:
             if self._db_enabled and self._review_db is not None:
                 try:
+                    self._review_db.requeue_expired_jobs()
                     jobs = self._review_db.list_jobs(job_type)
                     self._jobs.update({job.id: job for job in jobs})
                     return jobs
@@ -858,6 +861,11 @@ class ReviewStore:
     # ------------------------------------------------------------------
 
     def create_workspace(self, req: WorkspaceCreateRequest) -> WorkspaceRecord:
+        if self._db_enabled and self._review_db is not None:
+            try:
+                return self._review_db.create_workspace(req)
+            except Exception as exc:  # pragma: no cover - environment dependent
+                self._disable_db(exc)
         workspace = WorkspaceRecord(
             id=f"ws-{uuid4().hex[:10]}",
             name=req.name,
@@ -877,15 +885,30 @@ class ReviewStore:
         return workspace
 
     def get_workspace(self, workspace_id: str) -> WorkspaceRecord | None:
+        if self._db_enabled and self._review_db is not None:
+            try:
+                return self._review_db.get_workspace(workspace_id)
+            except Exception as exc:  # pragma: no cover - environment dependent
+                self._disable_db(exc)
         return self._workspaces.get(workspace_id)
 
     def list_workspaces(self, owner_id: str | None = None) -> list[WorkspaceRecord]:
+        if self._db_enabled and self._review_db is not None:
+            try:
+                return self._review_db.list_workspaces()
+            except Exception as exc:  # pragma: no cover - environment dependent
+                self._disable_db(exc)
         workspaces = list(self._workspaces.values())
         if owner_id:
             workspaces = [w for w in workspaces if w.ownerId == owner_id or any(m.userId == owner_id for m in w.members)]
         return sorted(workspaces, key=lambda w: w.createdAt, reverse=True)
 
     def add_packet_to_workspace(self, workspace_id: str, packet_id: str) -> WorkspaceRecord | None:
+        if self._db_enabled and self._review_db is not None:
+            try:
+                return self._review_db.add_packet_to_workspace(workspace_id, packet_id)
+            except Exception as exc:  # pragma: no cover - environment dependent
+                self._disable_db(exc)
         workspace = self._workspaces.get(workspace_id)
         if workspace is None:
             return None

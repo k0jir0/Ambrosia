@@ -1,0 +1,247 @@
+name: AWS release
+
+on:
+  pull_request:
+    paths:
+      - "infra/aws/**"
+      - "services/api/Dockerfile"
+      - "apps/web/Dockerfile"
+      - ".github/workflows/aws-release.yml"
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Deployment environment
+        type: choice
+        options: [staging, production]
+        default: staging
+      apply:
+        description: Build, migrate, and deploy after validation
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: aws-${{ inputs.environment || 'validate' }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
+        with:
+          terraform_version: 1.15.8
+      - name: Terraform format
+        run: terraform -chdir=infra/aws fmt -check -recursive
+      - name: Terraform validate
+        run: |
+          terraform -chdir=infra/aws init -backend=false
+          terraform -chdir=infra/aws validate
+      - name: Container definitions are present
+        run: |
+          test -f services/api/Dockerfile
+          test -f apps/web/Dockerfile
+          test -f scripts/migrate_database.py
+      - name: Build release containers
+        run: |
+          docker build --pull -f services/api/Dockerfile -t ambrosia-api:validation .
+          docker build --pull -f apps/web/Dockerfile \
+            --build-arg "NEXT_PUBLIC_API_BASE_URL=https://api-staging.example.com" \
+            -t ambrosia-web:validation .
+
+  deploy:
+    if: github.event_name == 'workflow_dispatch' && inputs.apply
+    needs: validate
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
+        with:
+          terraform_version: 1.15.8
+      - uses: aws-actions/configure-aws-credentials@ff717079ee2060e4bcee96c4779b553acc87447c # v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - uses: aws-actions/amazon-ecr-login@d539f0932e70871a027e9d5a9d8fc38589180a64 # v2
+
+      - name: Initialize remote state
+        run: >-
+          terraform -chdir=infra/aws init
+          -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}"
+          -backend-config="key=ambrosia/${{ inputs.environment }}/terraform.tfstate"
+          -backend-config="region=${{ vars.AWS_REGION }}"
+          -backend-config="encrypt=true"
+          -backend-config="use_lockfile=true"
+
+      - name: Create immutable registries
+        run: >-
+          terraform -chdir=infra/aws apply -auto-approve
+          -target=aws_ecr_repository.api
+          -target=aws_ecr_repository.web
+          -var="environment=${{ inputs.environment }}"
+          -var="aws_region=${{ vars.AWS_REGION }}"
+          -var="domain_name=${{ vars.DOMAIN_NAME }}"
+          -var="hosted_zone_id=${{ vars.HOSTED_ZONE_ID }}"
+          -var="alb_certificate_arn=${{ secrets.ALB_CERTIFICATE_ARN }}"
+          -var="cloudfront_certificate_arn=${{ secrets.CLOUDFRONT_CERTIFICATE_ARN }}"
+
+      - name: Read repository URLs
+        id: repositories
+        shell: bash
+        run: |
+          echo "api=$(terraform -chdir=infra/aws output -raw api_ecr_repository)" >> "$GITHUB_OUTPUT"
+          echo "web=$(terraform -chdir=infra/aws output -raw web_ecr_repository)" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push immutable images
+        id: build
+        shell: bash
+        env:
+          API_REPOSITORY: ${{ steps.repositories.outputs.api }}
+          WEB_REPOSITORY: ${{ steps.repositories.outputs.web }}
+          WEB_HOST: ${{ inputs.environment == 'production' && vars.DOMAIN_NAME || format('staging.{0}', vars.DOMAIN_NAME) }}
+        run: |
+          docker build --pull -f services/api/Dockerfile -t "$API_REPOSITORY:${GITHUB_SHA}" .
+          docker build --pull -f apps/web/Dockerfile \
+            --build-arg "NEXT_PUBLIC_API_BASE_URL=https://${WEB_HOST}/api" \
+            --build-arg "NEXT_PUBLIC_SITE_URL=https://${WEB_HOST}" \
+            -t "$WEB_REPOSITORY:${GITHUB_SHA}" .
+
+      # Pin third-party security actions to immutable commits. This is
+      # especially important after the March 2026 Trivy tag compromise.
+      - name: Scan API image for critical or high vulnerabilities
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        with:
+          image-ref: ${{ steps.repositories.outputs.api }}:${{ github.sha }}
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          vuln-type: os,library
+          severity: CRITICAL,HIGH
+          version: v0.72.0
+
+      - name: Scan web image for critical or high vulnerabilities
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        with:
+          image-ref: ${{ steps.repositories.outputs.web }}:${{ github.sha }}
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          vuln-type: os,library
+          severity: CRITICAL,HIGH
+          version: v0.72.0
+
+      - name: Generate API SPDX SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
+        with:
+          image: ${{ steps.repositories.outputs.api }}:${{ github.sha }}
+          artifact-name: api-${{ github.sha }}.spdx.json
+          output-file: api.spdx.json
+          format: spdx-json
+          upload-release-assets: false
+
+      - name: Generate web SPDX SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
+        with:
+          image: ${{ steps.repositories.outputs.web }}:${{ github.sha }}
+          artifact-name: web-${{ github.sha }}.spdx.json
+          output-file: web.spdx.json
+          format: spdx-json
+          upload-release-assets: false
+
+      - name: Push scanned images
+        shell: bash
+        env:
+          API_REPOSITORY: ${{ steps.repositories.outputs.api }}
+          WEB_REPOSITORY: ${{ steps.repositories.outputs.web }}
+        run: |
+          docker push "$API_REPOSITORY:${GITHUB_SHA}"
+          docker push "$WEB_REPOSITORY:${GITHUB_SHA}"
+
+      - name: Resolve immutable ECR digests
+        id: images
+        shell: bash
+        env:
+          API_REPOSITORY: ${{ steps.repositories.outputs.api }}
+          WEB_REPOSITORY: ${{ steps.repositories.outputs.web }}
+        run: |
+          API_DIGEST=$(aws ecr describe-images --repository-name "${API_REPOSITORY#*/}" --image-ids imageTag="$GITHUB_SHA" --query 'imageDetails[0].imageDigest' --output text)
+          WEB_DIGEST=$(aws ecr describe-images --repository-name "${WEB_REPOSITORY#*/}" --image-ids imageTag="$GITHUB_SHA" --query 'imageDetails[0].imageDigest' --output text)
+          test "$API_DIGEST" != "None"
+          test "$WEB_DIGEST" != "None"
+          echo "api=${API_REPOSITORY}@${API_DIGEST}" >> "$GITHUB_OUTPUT"
+          echo "web=${WEB_REPOSITORY}@${WEB_DIGEST}" >> "$GITHUB_OUTPUT"
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      - name: Sign both image digests with GitHub OIDC
+        env:
+          API_IMAGE: ${{ steps.images.outputs.api }}
+          WEB_IMAGE: ${{ steps.images.outputs.web }}
+        run: |
+          cosign sign --yes "$API_IMAGE"
+          cosign sign --yes "$WEB_IMAGE"
+
+      - name: Provision with services stopped
+        shell: bash
+        env:
+          API_IMAGE: ${{ steps.images.outputs.api }}
+          WEB_IMAGE: ${{ steps.images.outputs.web }}
+        run: |
+          terraform -chdir=infra/aws apply -auto-approve \
+            -var="environment=${{ inputs.environment }}" \
+            -var="aws_region=${{ vars.AWS_REGION }}" \
+            -var="domain_name=${{ vars.DOMAIN_NAME }}" \
+            -var="hosted_zone_id=${{ vars.HOSTED_ZONE_ID }}" \
+            -var="alb_certificate_arn=${{ secrets.ALB_CERTIFICATE_ARN }}" \
+            -var="cloudfront_certificate_arn=${{ secrets.CLOUDFRONT_CERTIFICATE_ARN }}" \
+            -var="api_image=${API_IMAGE}" \
+            -var="web_image=${WEB_IMAGE}" \
+            -var="enable_services=false"
+
+      - name: Run schema migration task
+        shell: bash
+        run: |
+          CLUSTER=$(terraform -chdir=infra/aws output -raw ecs_cluster)
+          TASK=$(terraform -chdir=infra/aws output -raw migration_task_definition)
+          SUBNETS=$(terraform -chdir=infra/aws output -json application_subnet_ids | jq -r 'join(",")')
+          SG=$(terraform -chdir=infra/aws output -raw ecs_security_group_id)
+          TASK_ARN=$(aws ecs run-task --cluster "$CLUSTER" --task-definition "$TASK" --launch-type FARGATE \
+            --network-configuration "awsvpcConfiguration={subnets=[$SUBNETS],securityGroups=[$SG],assignPublicIp=DISABLED}" \
+            --query 'tasks[0].taskArn' --output text)
+          test "$TASK_ARN" != "None"
+          aws ecs wait tasks-stopped --cluster "$CLUSTER" --tasks "$TASK_ARN"
+          EXIT_CODE=$(aws ecs describe-tasks --cluster "$CLUSTER" --tasks "$TASK_ARN" --query 'tasks[0].containers[0].exitCode' --output text)
+          test "$EXIT_CODE" = "0"
+
+      - name: Enable services after migration
+        shell: bash
+        env:
+          API_IMAGE: ${{ steps.images.outputs.api }}
+          WEB_IMAGE: ${{ steps.images.outputs.web }}
+        run: |
+          terraform -chdir=infra/aws apply -auto-approve \
+            -var="environment=${{ inputs.environment }}" \
+            -var="aws_region=${{ vars.AWS_REGION }}" \
+            -var="domain_name=${{ vars.DOMAIN_NAME }}" \
+            -var="hosted_zone_id=${{ vars.HOSTED_ZONE_ID }}" \
+            -var="alb_certificate_arn=${{ secrets.ALB_CERTIFICATE_ARN }}" \
+            -var="cloudfront_certificate_arn=${{ secrets.CLOUDFRONT_CERTIFICATE_ARN }}" \
+            -var="api_image=${API_IMAGE}" \
+            -var="web_image=${WEB_IMAGE}" \
+            -var="enable_services=true"
+
+      - name: Wait for both services
+        shell: bash
+        run: |
+          CLUSTER=$(terraform -chdir=infra/aws output -raw ecs_cluster)
+          aws ecs wait services-stable --cluster "$CLUSTER" --services api web
+          curl --fail --retry 12 --retry-delay 10 "$(terraform -chdir=infra/aws output -raw api_url)/ready"
+          curl --fail --retry 12 --retry-delay 10 "$(terraform -chdir=infra/aws output -raw web_url)/"

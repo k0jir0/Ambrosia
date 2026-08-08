@@ -1,0 +1,24 @@
+{
+  "schemaVersion": "index132-external-evidence.v1",
+  "environment": "staging",
+  "updatedAt": null,
+  "owner": null,
+  "gates": {
+    "renderInventoryVerified": {"status": "pending", "evidence": []},
+    "awsAccountBaselineApproved": {"status": "pending", "evidence": []},
+    "awsStagingDeployed": {"status": "pending", "evidence": []},
+    "migrationRehearsalOne": {"status": "pending", "evidence": []},
+    "migrationRehearsalTwo": {"status": "pending", "evidence": []},
+    "rollbackRehearsal": {"status": "pending", "evidence": []},
+    "backupRestoreTest": {"status": "pending", "evidence": []},
+    "loadAndFaultTest": {"status": "pending", "evidence": []},
+    "sesProductionSending": {"status": "pending", "evidence": []},
+    "independentSecurityReview": {"status": "pending", "evidence": []},
+    "termsAndPrivacyCounselReview": {"status": "pending", "evidence": []},
+    "guidedUsabilityObserved": {"status": "pending", "evidence": []},
+    "ollamaReleaseEvaluation": {"status": "pending", "evidence": []},
+    "productionCutover": {"status": "pending", "evidence": []},
+    "seventyTwoHourBake": {"status": "pending", "evidence": []},
+    "paidDesignPartnerEvidence": {"status": "pending", "evidence": []}
+  }
+}

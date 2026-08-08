@@ -1,0 +1,36 @@
+{
+  "schemaVersion": "render-inventory.v1",
+  "capturedAt": null,
+  "capturedBy": null,
+  "dashboardWorkspace": null,
+  "services": [
+    {
+      "name": null,
+      "type": "web-or-api",
+      "serviceId": null,
+      "region": null,
+      "plan": null,
+      "repository": null,
+      "branch": null,
+      "buildCommand": null,
+      "startCommand": null,
+      "healthCheckPath": null,
+      "customDomains": [],
+      "environmentVariableNamesOnly": [],
+      "deployCommit": null
+    }
+  ],
+  "postgres": {
+    "databaseId": null,
+    "region": null,
+    "plan": null,
+    "postgresVersion": null,
+    "storageBytes": null,
+    "tableCountsArtifact": null,
+    "latestVerifiedBackupAt": null,
+    "extensions": []
+  },
+  "dns": {"provider": null, "recordsArtifact": null, "ttlSeconds": null},
+  "rollbackRetentionUntil": null,
+  "notes": "Never put secret values or database URLs in this file. Attach access-controlled evidence references."
+}

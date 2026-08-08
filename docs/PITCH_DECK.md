@@ -1,5 +1,10 @@
 # Ambrosia Quant Workflow Agent — Pitch Deck Outline
 
+> [!WARNING]
+> Historical draft; not approved for investors or diligence. URLs, traction,
+> performance, security, and completion statements are unverified. Use the
+> Index132 claims register and implementation ledger.
+
 **Date**: 2026-06-24  
 **Product**: Ambrosia  
 **Status**: End-of-Day-1 Prototype

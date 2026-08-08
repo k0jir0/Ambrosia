@@ -84,6 +84,7 @@ def main() -> None:
         "elasticloadbalancing.amazonaws.com",
         "rds.amazonaws.com",
         "elasticache.amazonaws.com",
+        "ecs.amazonaws.com",
     ):
         require(control_plane, service_name, f"{service_name} service-linked-role bootstrap")
     reject(

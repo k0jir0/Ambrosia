@@ -98,6 +98,7 @@ def main() -> None:
         "rds.amazonaws.com",
         "elasticache.amazonaws.com",
         "ecs.amazonaws.com",
+        "ecs.application-autoscaling.amazonaws.com",
     ):
         require(control_plane, service_name, f"{service_name} service-linked-role bootstrap")
     reject(

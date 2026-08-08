@@ -76,7 +76,8 @@ test("password recovery reports unavailable delivery without claiming success", 
     await route.abort();
   });
 
-  await page.goto("/forgot-password");
+  const forgotResponse = await page.goto("/forgot-password");
+  expect(forgotResponse?.headers()["referrer-policy"]).toBe("no-referrer");
   await page.getByLabel("Email").fill("owner@example.com");
   await page.getByRole("button", { name: "Send reset link" }).click();
   await expect(page.getByText("Password recovery is temporarily unavailable. Please try again later.", { exact: true })).toBeVisible();

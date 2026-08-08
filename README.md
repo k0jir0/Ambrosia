@@ -7,22 +7,44 @@ they never hold decision authority or mutate a live brokerage account.
 
 ## Current staging state
 
-AWS staging is deployed from commit
-`8fec6a0b162d611bc35f92200bc4292142437b95` at:
+AWS staging is deployed from the protected `staging` branch at:
 
 <https://d1c00nr674401f.cloudfront.net/>
 
-On August 8, 2026, the landing, login, signup, onboarding, `/api/live`, and
-`/api/ready` routes returned HTTP 200. Readiness reported healthy persistence,
-artifact storage, distributed rate limiting, account identity, and identity
-checks. The environment uses synthetic data, generated CloudFront addressing,
-one API task, and one web task in `ca-central-1`; no custom domain is enabled.
+The most recent applied AWS release before this README update was successful
+for staging commit `97f040d16be3a2c791750988c7592a707787a38b` in workflow run
+`31269029604`. On August 8, 2026, the landing, login, signup, onboarding,
+`/api/live`, and `/api/ready` routes returned HTTP 200. Readiness reported
+healthy persistence, artifact storage, distributed rate limiting, account
+identity, and identity checks. The environment uses synthetic data, generated
+CloudFront addressing, one API task, and one web task in `ca-central-1`; no
+website custom domain is enabled.
+
+Transactional email is qualified but not activated. The SES domain identity
+`agentresearchcompany.com` is verified in AWS account `111204669733` and
+`ca-central-1`; Easy DKIM RSA 2048 and signing report `SUCCESS`, DMARC monitoring
+is published with `p=none`, and a mailbox-simulator send succeeded through the
+`ambrosia-staging-transactional` configuration set. SES uses its default MAIL
+FROM domain so the existing Namecheap email-forwarding MX and SPF records
+remain intact. Account-level suppression covers bounces and complaints, and
+the enabled event destination publishes bounce, complaint, and reject events.
+
+AWS production access remains disabled while Support reviews case
+`178621567500544`. The SES API review status remains `DENIED`, while the console
+shows `More information needed` and contains the verified-domain response sent
+on August 8, 2026. `AUTH_EMAIL_FROM` and `AUTH_SES_IDENTITY_ARN` remain unset in
+the staging environment, so verification and password recovery continue to
+fail closed rather than claim deliverability. Do not set those variables until
+`ProductionAccessEnabled=true`; keep `CUSTOM_DOMAIN_ENABLED=false` because DNS
+remains authoritative in Namecheap rather than Route53.
 
 This proves that the current staging web and API are deployed and reachable. It
-does not prove production readiness, unrestricted public-beta readiness, model
-quality, security certification, backup recovery, or the complete
-signup-to-decision journey. The evidence-backed Index133 readiness generator
-still returns `NO_GO` with 25 pending external gates.
+also proves SES domain ownership, DKIM qualification, and sandbox submission.
+It does not prove SES production access, inbox placement, production readiness,
+unrestricted public-beta readiness, model quality, security certification,
+backup recovery, or the complete signup-to-decision journey. The evidence-backed
+Index133 readiness generator still returns `NO_GO` with 25 pending external
+gates.
 
 ## The first product journey
 

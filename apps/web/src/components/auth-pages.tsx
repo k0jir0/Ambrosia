@@ -93,8 +93,8 @@ export function SignupForm() {
     return (
       <div className="rounded-xl border border-teal/25 bg-teal/5 p-6">
         <CheckCircle2 className="h-7 w-7 text-teal" />
-        <h2 className="mt-5 text-xl font-semibold">{sent.deliveryFailed ? "Workspace created" : "Check your email"}</h2>
-        <p className="mt-2 text-sm leading-6 text-ink/60">{sent.deliveryFailed ? "Email delivery did not complete. Request a new link below; your pending workspace is safe." : <>We sent a verification link to <strong className="text-ink">{sent.email}</strong>. It expires in 30 minutes.</>}</p>
+        <h2 className="mt-5 text-xl font-semibold">{sent.token ? "Verify this account" : sent.deliveryFailed ? "Workspace created" : "Check your email"}</h2>
+        <p className="mt-2 text-sm leading-6 text-ink/60">{sent.token ? "Email delivery is disabled in this non-production environment. Use the single-use verification link below; it expires in 30 minutes." : sent.deliveryFailed ? "Email delivery did not complete. Request a new link below; your pending workspace is safe." : <>We sent a verification link to <strong className="text-ink">{sent.email}</strong>. It expires in 30 minutes.</>}</p>
         {sent.token ? (
           <Link href={`/verify-email?token=${encodeURIComponent(sent.token)}`} className="focus-ring mt-5 inline-flex items-center gap-2 rounded-md bg-teal px-4 py-3 text-sm font-bold text-[#071411]">
             Verify development account <ArrowRight className="h-4 w-4" />

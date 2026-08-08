@@ -45,7 +45,7 @@ test("visitor can complete signup, verification, and onboarding choice", async (
   await page.getByLabel("Password", { exact: true }).fill("a careful portfolio passphrase 2026");
   await page.getByText(/I accept the/).click();
   await page.getByRole("button", { name: "Create private workspace" }).click();
-  await expect(page.getByRole("heading", { name: "Check your email" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Verify this account" })).toBeVisible();
   await page.getByRole("link", { name: "Verify development account" }).click();
   await expect(page).toHaveURL(/\/onboarding$/, { timeout: 15000 });
   await expect(page.getByRole("heading", { name: /Make Ambrosia earn your trust/i })).toBeVisible();

@@ -12,10 +12,12 @@ from pydantic import BaseModel, Field
 from .identity import (
     CSRF_COOKIE,
     IssuedSession,
+    development_tokens_exposed,
     get_identity_service,
     is_production,
     session_cookie_name,
     utc_now,
+    verification_tokens_exposed,
 )
 
 router = APIRouter(prefix="/auth", tags=["identity"])
@@ -153,7 +155,7 @@ def signup(body: SignupRequest) -> dict:
         "organizationId": account.organization_id,
         "workspaceId": account.workspace_id,
     }
-    if not is_production() and os.getenv("AUTH_EXPOSE_DEVELOPMENT_TOKENS", "true").lower() == "true":
+    if verification_tokens_exposed():
         payload["developmentVerificationToken"] = verification_token
     return payload
 
@@ -175,9 +177,7 @@ def verify_email(body: TokenRequest, request: Request, response: Response) -> di
 def resend_verification(body: ForgotPasswordRequest) -> dict:
     token = get_identity_service().resend_verification(body.email)
     payload = {"message": "If an unverified account exists, a new link has been sent."}
-    if token and not is_production() and os.getenv(
-        "AUTH_EXPOSE_DEVELOPMENT_TOKENS", "true"
-    ).lower() == "true":
+    if token and verification_tokens_exposed():
         payload["developmentVerificationToken"] = token
     return payload
 
@@ -202,9 +202,7 @@ def forgot_password(body: ForgotPasswordRequest) -> dict:
     payload = {
         "message": "If an eligible account exists, a password-reset email has been sent."
     }
-    if token and not is_production() and os.getenv(
-        "AUTH_EXPOSE_DEVELOPMENT_TOKENS", "true"
-    ).lower() == "true":
+    if token and development_tokens_exposed():
         payload["developmentResetToken"] = token
     return payload
 

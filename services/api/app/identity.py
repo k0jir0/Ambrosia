@@ -110,6 +110,35 @@ def is_production() -> bool:
     return _environment() in {"production", "staging"}
 
 
+def _flag_enabled(name: str, *, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def staging_console_delivery_enabled() -> bool:
+    return (
+        _environment() == "staging"
+        and os.getenv("AUTH_EMAIL_MODE", "").strip().lower() == "console"
+        and _flag_enabled("AUTH_ALLOW_STAGING_CONSOLE_DELIVERY")
+    )
+
+
+def development_tokens_exposed() -> bool:
+    return _environment() == "development" and _flag_enabled(
+        "AUTH_EXPOSE_DEVELOPMENT_TOKENS",
+        default=True,
+    )
+
+
+def verification_tokens_exposed() -> bool:
+    return development_tokens_exposed() or (
+        staging_console_delivery_enabled()
+        and _flag_enabled("AUTH_EXPOSE_DEVELOPMENT_TOKENS")
+    )
+
+
 def session_cookie_name() -> str:
     return SESSION_COOKIE_PRODUCTION if is_production() else SESSION_COOKIE_DEVELOPMENT
 
@@ -975,6 +1004,10 @@ class EmailSender:
                 request["ConfigurationSetName"] = configuration_set
             client.send_email(**request)
             return
+        if staging_console_delivery_enabled():
+            # Domainless staging returns the single-use token only in the
+            # initiating response. Never write that token to shared logs.
+            return
         if is_production():
             raise RuntimeError("AUTH_EMAIL_MODE must be ses in production")
         LOGGER.info("development email to=%s subject=%s body=%s", email, subject, body)
@@ -988,7 +1021,11 @@ class IdentityService:
     def healthcheck(self) -> None:
         self.repository.healthcheck()
         _token_pepper()
-        if is_production() and os.getenv("AUTH_EMAIL_MODE", "").strip().lower() != "ses":
+        if (
+            is_production()
+            and os.getenv("AUTH_EMAIL_MODE", "").strip().lower() != "ses"
+            and not staging_console_delivery_enabled()
+        ):
             raise RuntimeError("production_email_not_configured")
 
     def signup(

@@ -253,27 +253,40 @@ class StackContractTests(unittest.TestCase):
         self.assertIn("@/modules/adversarial-review", new_review_page)
         self.assertIn("NewReviewFlow", new_review_page)
 
-    def test_operating_model_copy_is_global_sidebar_content(self) -> None:
+    def test_sellable_navigation_separates_product_from_labs(self) -> None:
         app_shell = read_text("apps/web/src/components/app-shell.tsx")
         advanced_page = read_text("apps/web/src/app/advanced/page.tsx")
         dashboard = read_text("apps/web/src/components/dashboard-page.tsx")
 
-        self.assertIn("<OperatingModelPanel />", app_shell)
-        self.assertIn('href: "/advanced"', app_shell)
-        self.assertIn("Module directory", advanced_page)
-        self.assertLess(app_shell.index('href: "/admin"'), app_shell.index('href: "/advanced"'))
-        self.assertLess(app_shell.index("NavSection items={bottom}"), app_shell.index("<OperatingModelPanel />"))
+        for href, label in [
+            ("/review/new", "Intake"),
+            ("/app", "Decision Packets"),
+            ("/review", "Review Queue"),
+            ("/history", "Outcomes & Memory"),
+            ("/team", "Team"),
+            ("/admin", "Admin"),
+        ]:
+            self.assertIn(f'{{ href: "{href}", label: "{label}"', app_shell)
+
         for expected in [
-            "Agentic AI for Investments",
-            "Investment Trading Decisions",
-            "Swarm Intelligence",
-            "Agentic Swarm",
+            "const LAB_PATH_PREFIXES",
+            '"/advanced"',
+            'process.env.NEXT_PUBLIC_ENABLE_LABS === "true"',
+            'window.location.replace("/app")',
+            "getAccountSession()",
+            "profile.organization.name",
+            "logoutAccount()",
         ]:
             self.assertIn(expected, app_shell)
 
+        self.assertIn("Module directory", advanced_page)
+
         for expected in [
-            "PROOF_CARDS",
-            "Known limitation",
+            "Run five-minute guided case",
+            "Human decision authority",
+            "One visible loop, no black-box approval",
+            "Tenant database",
+            "Local fallback",
         ]:
             self.assertIn(expected, dashboard)
 

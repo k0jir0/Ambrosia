@@ -19,10 +19,13 @@ locals {
   api_hostname    = local.production ? "api.${var.domain_name}" : "api-staging.${var.domain_name}"
   origin_hostname = local.production ? "origin.${var.domain_name}" : "origin-staging.${var.domain_name}"
   tags = {
-    Project     = var.project
-    Environment = var.environment
-    ManagedBy   = "terraform"
-    Roadmap     = "index132"
+    Project            = var.project
+    Environment        = var.environment
+    ManagedBy          = "terraform"
+    Roadmap            = "index133"
+    Owner              = var.owner
+    CostCenter         = var.cost_center
+    DataClassification = var.data_classification
   }
 }
 
@@ -838,6 +841,7 @@ resource "aws_ecs_service" "web" {
 }
 
 resource "aws_appautoscaling_target" "api" {
+  count              = var.enable_services ? 1 : 0
   max_capacity       = 8
   min_capacity       = local.production ? 2 : 1
   resource_id        = "service/${aws_ecs_cluster.main.name}/${aws_ecs_service.api.name}"
@@ -846,17 +850,36 @@ resource "aws_appautoscaling_target" "api" {
 }
 
 resource "aws_appautoscaling_policy" "api_cpu" {
+  count              = var.enable_services ? 1 : 0
   name               = "api-cpu"
   policy_type        = "TargetTrackingScaling"
-  resource_id        = aws_appautoscaling_target.api.resource_id
-  scalable_dimension = aws_appautoscaling_target.api.scalable_dimension
-  service_namespace  = aws_appautoscaling_target.api.service_namespace
+  resource_id        = aws_appautoscaling_target.api[0].resource_id
+  scalable_dimension = aws_appautoscaling_target.api[0].scalable_dimension
+  service_namespace  = aws_appautoscaling_target.api[0].service_namespace
   target_tracking_scaling_policy_configuration {
     target_value       = 55
     scale_in_cooldown  = 120
     scale_out_cooldown = 60
     predefined_metric_specification { predefined_metric_type = "ECSServiceAverageCPUUtilization" }
   }
+}
+
+resource "aws_cloudfront_function" "strip_api_prefix" {
+  name    = "${local.name}-strip-api-prefix"
+  runtime = "cloudfront-js-2.0"
+  comment = "Route same-origin /api requests to FastAPI root paths"
+  publish = true
+  code    = <<-JAVASCRIPT
+    function handler(event) {
+      var request = event.request;
+      if (request.uri === '/api') {
+        request.uri = '/';
+      } else if (request.uri.indexOf('/api/') === 0) {
+        request.uri = request.uri.substring(4);
+      }
+      return request;
+    }
+  JAVASCRIPT
 }
 
 resource "aws_wafv2_web_acl" "regional" {
@@ -1039,11 +1062,15 @@ resource "aws_cloudfront_distribution" "web" {
     cache_policy_id          = data.aws_cloudfront_cache_policy.disabled.id
     origin_request_policy_id = data.aws_cloudfront_origin_request_policy.all_except_host.id
     compress                 = true
+    function_association {
+      event_type   = "viewer-request"
+      function_arn = aws_cloudfront_function.strip_api_prefix.arn
+    }
   }
   default_cache_behavior {
     target_origin_id         = "alb-web"
     viewer_protocol_policy   = "redirect-to-https"
-    allowed_methods          = ["GET", "HEAD", "OPTIONS", "PUT", "POST", "PATCH", "DELETE"]
+    allowed_methods          = ["GET", "HEAD", "OPTIONS"]
     cached_methods           = ["GET", "HEAD"]
     cache_policy_id          = data.aws_cloudfront_cache_policy.disabled.id
     origin_request_policy_id = data.aws_cloudfront_origin_request_policy.all_except_host.id

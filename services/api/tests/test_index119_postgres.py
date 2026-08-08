@@ -8,6 +8,11 @@ import pytest
 
 from app.db import PostgresReviewStore
 from app.models import JobRecord, JobState
+from app.tenant_context import (
+    LEGACY_QUARANTINE_ORGANIZATION_ID,
+    reset_organization_id,
+    set_organization_id,
+)
 
 
 DATABASE_URL = os.getenv("INDEX119_TEST_DATABASE_URL")
@@ -15,6 +20,7 @@ pytestmark = pytest.mark.skipif(not DATABASE_URL, reason="INDEX119_TEST_DATABASE
 
 
 def test_durable_job_claim_idempotency_completion_and_recovery() -> None:
+    tenant_token = set_organization_id(LEGACY_QUARANTINE_ORGANIZATION_ID)
     database = PostgresReviewStore(DATABASE_URL or "")
     suffix = uuid4().hex
     job = JobRecord(
@@ -33,9 +39,15 @@ def test_durable_job_claim_idempotency_completion_and_recovery() -> None:
         assert completed.state == JobState.completed
         assert completed.result == {"verified": True}
     finally:
-        with database._connect() as connection:
-            with connection.cursor() as cursor:
-                cursor.execute("DELETE FROM durable_job WHERE idempotency_key = %s", (job.idempotencyKey,))
+        try:
+            with database._connect() as connection:
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        "DELETE FROM durable_job WHERE idempotency_key = %s",
+                        (job.idempotencyKey,),
+                    )
+        finally:
+            reset_organization_id(tenant_token)
 
 
 def test_security_audit_is_globally_hash_chained() -> None:

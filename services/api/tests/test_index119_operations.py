@@ -58,6 +58,30 @@ def test_production_fails_closed_without_identity(monkeypatch) -> None:
     assert response.status_code == 401
 
 
+def test_production_allows_cors_preflight_without_identity(monkeypatch) -> None:
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    response = client.options(
+        "/reviews",
+        headers={
+            "Origin": "http://localhost:3000",
+            "Access-Control-Request-Method": "GET",
+            "Access-Control-Request-Headers": "authorization,content-type",
+        },
+    )
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == "http://localhost:3000"
+    assert "authorization" in response.headers["access-control-allow-headers"].lower()
+
+
+def test_staging_origin_header_never_grants_identity(monkeypatch) -> None:
+    monkeypatch.setenv("ENVIRONMENT", "staging")
+    response = client.get(
+        "/market/SPY/snapshot",
+        headers={"Origin": "https://staging.ambrosia.example"},
+    )
+    assert response.status_code == 401
+
+
 def test_production_identity_and_route_policy(monkeypatch) -> None:
     monkeypatch.setenv("ENVIRONMENT", "production")
     monkeypatch.setattr(rate_limiter, "allow", lambda *_args, **_kwargs: (True, 299))

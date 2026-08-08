@@ -1,6 +1,7 @@
 # Render-to-AWS migration and rollback runbook
 
-This runbook implements Index132’s deployment sequence. It is an operator
+This runbook implements the Index132 migration sequence and Index133 AWS
+staging control plane. It is an operator
 procedure, not evidence that a deployment has occurred. Every execution must
 attach timestamps, command output, checksums, approvers, and incident links to a
 copy of `index132-external-evidence.template.json` stored in the controlled
@@ -34,28 +35,41 @@ issue, JSON evidence file, shell history, or screenshot.
 
 ## 2. Bootstrap AWS staging
 
-1. Create a dedicated AWS account or approved workload boundary, IAM Identity
-   Center access, budget alarms, CloudTrail/Config/GuardDuty policy, Terraform
-   state bucket, and state locking. These account controls are external gates.
-2. Create ACM certificates in the workload region for the ALB and in
-   `us-east-1` for CloudFront. The regional certificate must cover both the
-   environment API hostname (`api` or `api-staging`) and the dedicated web-origin
-   hostname (`origin` or `origin-staging`); the CloudFront certificate covers
-   the public web hostname. Validate DNS without moving production traffic.
-3. Populate GitHub environment variables `AWS_REGION`, `TF_STATE_BUCKET`,
-   `DOMAIN_NAME`, and `HOSTED_ZONE_ID`; add protected secrets
+1. Create a dedicated AWS account or approved workload boundary and configure
+   IAM Identity Center, CloudTrail/Config/GuardDuty/Access Analyzer, alternate
+   contacts, quotas, Cost Anomaly Detection, and an approved monthly budget.
+   Deploy `infra/aws/bootstrap/control-plane.yaml` in `ca-central-1`; it creates
+   KMS-encrypted/versioned state with a seven-day release-plan lifecycle,
+   GitHub OIDC trust scoped to `repo:k0jir0/Ambrosia:environment:staging`, a
+   bounded deploy role, budget thresholds, and the regional ALB certificate.
+2. Deploy `infra/aws/bootstrap/edge-certificate.yaml` in `us-east-1`. Wait for
+   both ACM certificates to be `ISSUED`. The regional certificate covers
+   `api-staging` and `origin-staging`; the edge certificate covers `staging`.
+3. Run `scripts/configure-github-aws-staging.ps1` to create a reviewed,
+   staging-branch-only GitHub environment and branch protection. Populate
+   environment variables `AWS_ACCOUNT_ID`, `AWS_REGION`, `TF_STATE_BUCKET`,
+   `TF_STATE_KMS_KEY_ARN`, `DOMAIN_NAME`, `HOSTED_ZONE_ID`,
+   `API_DESIRED_COUNT`, `WEB_DESIRED_COUNT`, `ALERT_EMAIL`, `OWNER`,
+   `COST_CENTER`, `DATA_CLASSIFICATION`, and `BUDGET_NAME`; add protected secrets
    `AWS_DEPLOY_ROLE_ARN`, `ALB_CERTIFICATE_ARN`, and
-   `CLOUDFRONT_CERTIFICATE_ARN`. The OIDC role must be scoped to this repository,
-   workflow, environment, Terraform state, ECR repositories, ECS services, and
-   the declared infrastructure.
+   `CLOUDFRONT_CERTIFICATE_ARN`. Re-run the script with `-VerifyOnly` and retain
+   its value-free output.
 4. Review `infra/aws/environments/staging.tfvars.example`, run `terraform fmt`,
    `init`, `validate`, and a saved plan. A second operator reviews the plan.
-5. Dispatch **AWS release** with `environment=staging`, `apply=true`. The
-   workflow builds both containers, blocks on high/critical fixed
-   vulnerabilities, emits SPDX SBOMs, pushes SHA tags, resolves ECR digests,
-   signs them with GitHub OIDC, provisions services at zero, runs the migration
-   task, then enables services.
-6. Verify the task definitions contain `repository@sha256:...`, not a tag.
+5. Record the exact merged `staging` SHA. Dispatch **AWS release** with
+   `environment=staging`, `apply=true`, `candidate_sha=<exact-staging-sha>`, and
+   `ref=staging`. The workflow asserts repository/ref/SHA/account/region/domain,
+   budget, state, certificates, and capacity; builds both containers; blocks on
+   fixed high/critical vulnerabilities; emits SPDX SBOMs; resolves and signs
+   immutable ECR digests; then stores a value-free foundation-plan summary and
+   the sensitive binary plan only in protected state storage.
+6. Review and approve the saved foundation plan. It applies ECS services at
+   zero and does not register Application Auto Scaling. After the one-off
+   migration exits zero, review and approve the separate service-enablement
+   plan. The final job enables services, waits for ECS stability, and verifies
+   `/api/ready` and the website root. Stop on any unexplained replacement of
+   RDS, Redis, KMS, Route53, identity, or state resources.
+7. Verify the task definitions contain `repository@sha256:...`, not a tag.
    Preserve Terraform plan/apply logs, image digests, signatures, SBOMs, ECS
    task ARNs, and `/ready` output.
 

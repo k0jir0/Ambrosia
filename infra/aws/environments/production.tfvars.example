@@ -1,4 +1,7 @@
 environment                    = "production"
+owner                          = "replace-with-owner"
+cost_center                    = "replace-with-cost-center"
+data_classification            = "approved-production"
 aws_region                     = "ca-central-1"
 domain_name                    = "example.com"
 hosted_zone_id                 = "Z0000000000000000000"

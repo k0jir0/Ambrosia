@@ -121,8 +121,9 @@ def test_ses_password_reset_uses_verified_sender_and_configuration_set(
     sent: list[dict] = []
 
     class FakeSesClient:
-        def send_email(self, **request) -> None:
+        def send_email(self, **request) -> dict:
             sent.append(request)
+            return {"MessageId": "ses-message-123"}
 
     monkeypatch.setenv("AUTH_EMAIL_MODE", "ses")
     monkeypatch.setenv("AUTH_EMAIL_FROM", "no-reply@example.com")
@@ -141,6 +142,27 @@ def test_ses_password_reset_uses_verified_sender_and_configuration_set(
         }},
         "ConfigurationSetName": "ambrosia-staging-transactional",
     }]
+
+
+def test_successful_password_reset_sends_one_security_notification(
+    identity_client: TestClient, monkeypatch,
+) -> None:
+    _signup(identity_client)
+    notifications: list[str] = []
+    monkeypatch.setattr(
+        "app.identity.EmailSender.send_password_changed",
+        lambda _sender, email: notifications.append(email),
+    )
+
+    requested = identity_client.post(
+        "/auth/forgot-password", json={"email": "owner@example.com"}
+    )
+    token = requested.json()["developmentResetToken"]
+    payload = {"token": token, "newPassword": "a replacement passphrase 2026"}
+
+    assert identity_client.post("/auth/reset-password", json=payload).status_code == 200
+    assert identity_client.post("/auth/reset-password", json=payload).status_code == 400
+    assert notifications == ["owner@example.com"]
 
 
 def test_ses_failure_does_not_disclose_account_existence(

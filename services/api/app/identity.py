@@ -237,7 +237,7 @@ class IdentityRepository(Protocol):
     def revoke_session(self, session_id: str, user_id: str, reason: str, now: datetime) -> bool: ...
     def revoke_all_sessions(self, user_id: str, reason: str, now: datetime) -> None: ...
     def create_password_reset(self, canonical_email: str, token_hash: str, now: datetime) -> str | None: ...
-    def consume_password_reset(self, token_hash: str, password_hash: str, now: datetime) -> bool: ...
+    def consume_password_reset(self, token_hash: str, password_hash: str, now: datetime) -> str | None: ...
     def create_verification(self, canonical_email: str, token_hash: str, now: datetime) -> str | None: ...
     def profile(self, user_id: str) -> dict | None: ...
     def update_profile(self, user_id: str, display_name: str, professional_role: str) -> dict | None: ...
@@ -616,19 +616,22 @@ class PostgresIdentityRepository:
                 )
                 return str(row["email"])
 
-    def consume_password_reset(self, token_hash: str, password_hash: str, now: datetime) -> bool:
+    def consume_password_reset(self, token_hash: str, password_hash: str, now: datetime) -> str | None:
         with self._connect() as connection:
             with connection.transaction():
                 row = connection.execute(
                     """
-                    SELECT id, user_id FROM password_reset_tokens
-                    WHERE token_hash = %s AND used_at IS NULL AND expires_at > %s
+                    SELECT reset.id, reset.user_id, users.email
+                    FROM password_reset_tokens AS reset
+                    JOIN users ON users.id = reset.user_id
+                    WHERE reset.token_hash = %s AND reset.used_at IS NULL
+                      AND reset.expires_at > %s
                     FOR UPDATE
                     """,
                     (token_hash, now),
                 ).fetchone()
                 if not row:
-                    return False
+                    return None
                 connection.execute(
                     "UPDATE password_reset_tokens SET used_at = %s WHERE id = %s",
                     (now, row["id"]),
@@ -650,7 +653,7 @@ class PostgresIdentityRepository:
                     """,
                     (now, row["user_id"]),
                 )
-                return True
+                return str(row["email"])
 
     def create_verification(
         self, canonical_email: str, token_hash: str, now: datetime
@@ -898,11 +901,11 @@ class InMemoryIdentityRepository:
             )
             return user.account.email
 
-    def consume_password_reset(self, token_hash: str, password_hash: str, now: datetime) -> bool:
+    def consume_password_reset(self, token_hash: str, password_hash: str, now: datetime) -> str | None:
         with self.lock:
             record = self.resets.pop(token_hash, None)
             if not record or record[1] <= now:
-                return False
+                return None
             user = self.users[record[0]]
             user.password_hash = password_hash
             user.failed = 0
@@ -910,7 +913,7 @@ class InMemoryIdentityRepository:
             if user.status == "locked":
                 user.status = "active"
             self.revoke_all_sessions(user.account.user_id, "password_reset", now)
-            return True
+            return user.account.email
 
     def create_verification(
         self, canonical_email: str, token_hash: str, now: datetime
@@ -986,6 +989,13 @@ class EmailSender:
             f"Reset your password: {self._public_url()}/reset-password?token={quote(token)}",
         )
 
+    def send_password_changed(self, email: str) -> None:
+        self._send(
+            email,
+            "Your Ambrosia password was changed",
+            "Your Ambrosia password was changed. If you did not make this change, contact support immediately.",
+        )
+
     def send_invitation(self, email: str, token: str, organization_name: str) -> None:
         self._send(
             email,
@@ -1011,7 +1021,13 @@ class EmailSender:
             configuration_set = os.getenv("AUTH_SES_CONFIGURATION_SET", "").strip()
             if configuration_set:
                 request["ConfigurationSetName"] = configuration_set
-            client.send_email(**request)
+            response = client.send_email(**request)
+            message_id = response.get("MessageId") if isinstance(response, dict) else None
+            LOGGER.info(
+                "identity email accepted by SES subject=%s message_id=%s",
+                subject,
+                message_id or "unavailable",
+            )
             return
         if staging_console_delivery_enabled():
             # Domainless staging returns the single-use token only in the
@@ -1175,9 +1191,16 @@ class IdentityService:
 
     def reset_password(self, token: str, new_password: str) -> bool:
         validate_password(new_password)
-        return self.repository.consume_password_reset(
+        delivery_email = self.repository.consume_password_reset(
             hash_token(token), PASSWORD_HASHER.hash(new_password), utc_now()
         )
+        if not delivery_email:
+            return False
+        try:
+            self.sender.send_password_changed(delivery_email)
+        except Exception:
+            LOGGER.exception("password change notification delivery failed")
+        return True
 
     def resend_verification(self, email: str) -> str | None:
         try:

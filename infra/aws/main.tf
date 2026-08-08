@@ -519,10 +519,10 @@ resource "aws_sns_topic_policy" "ses_events" {
 
 resource "aws_sesv2_configuration_set_event_destination" "transactional" {
   configuration_set_name = aws_sesv2_configuration_set.transactional.configuration_set_name
-  event_destination_name = "bounce-complaint-reject"
+  event_destination_name = "transactional-lifecycle"
   event_destination {
     enabled              = true
-    matching_event_types = ["BOUNCE", "COMPLAINT", "REJECT"]
+    matching_event_types = ["SEND", "DELIVERY", "DELIVERY_DELAY", "BOUNCE", "COMPLAINT", "REJECT", "RENDERING_FAILURE"]
     sns_destination { topic_arn = aws_sns_topic.ses_events.arn }
   }
 }

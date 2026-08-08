@@ -706,6 +706,8 @@ resource "aws_ecs_task_definition" "api" {
       { name = "REQUIRE_DATABASE", value = "true" },
       { name = "ALLOW_INSECURE_DEV_IDENTITY", value = "false" },
       { name = "AUTH_EMAIL_MODE", value = local.custom_domain ? "ses" : "console" },
+      { name = "AUTH_ALLOW_STAGING_CONSOLE_DELIVERY", value = !local.custom_domain && var.environment == "staging" ? "true" : "false" },
+      { name = "AUTH_EXPOSE_DEVELOPMENT_TOKENS", value = !local.custom_domain && var.environment == "staging" ? "true" : "false" },
       { name = "AUTH_EMAIL_FROM", value = local.custom_domain ? "no-reply@${var.domain_name}" : "" },
       { name = "AUTH_SES_CONFIGURATION_SET", value = local.custom_domain ? aws_sesv2_configuration_set.transactional.configuration_set_name : "" },
       { name = "PUBLIC_WEB_URL", value = local.public_web_url },

@@ -6,10 +6,14 @@ from fastapi.testclient import TestClient
 from app.identity import (
     CSRF_COOKIE,
     canonicalize_email,
+    development_tokens_exposed,
+    get_identity_service,
     reset_identity_service,
     validate_password,
+    verification_tokens_exposed,
 )
 from app.main import app
+from app.operations import rate_limiter
 from app.team_api import reset_team_service
 
 
@@ -49,6 +53,43 @@ def test_email_canonicalization_and_password_policy() -> None:
         validate_password("too short")
     with pytest.raises(ValueError, match="commonly used"):
         validate_password("passwordpassword")
+
+
+def test_domainless_staging_exposes_single_use_verification_with_explicit_opt_in(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("ENVIRONMENT", "staging")
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.setenv("AUTH_TOKEN_PEPPER", "x" * 32)
+    monkeypatch.setenv("AUTH_EMAIL_MODE", "console")
+    monkeypatch.setenv("AUTH_ALLOW_STAGING_CONSOLE_DELIVERY", "true")
+    monkeypatch.setenv("AUTH_EXPOSE_DEVELOPMENT_TOKENS", "true")
+    monkeypatch.setattr(rate_limiter, "allow", lambda *_args, **_kwargs: (True, 299))
+    reset_identity_service()
+
+    get_identity_service().healthcheck()
+    assert development_tokens_exposed() is False
+    assert verification_tokens_exposed() is True
+    with TestClient(app, base_url="https://staging.example") as client:
+        signup = _signup(client, email="staging-owner@example.com")
+    assert len(signup["developmentVerificationToken"]) >= 20
+    reset_identity_service()
+
+
+def test_production_never_accepts_staging_console_opt_in(monkeypatch) -> None:
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.setenv("AUTH_TOKEN_PEPPER", "x" * 32)
+    monkeypatch.setenv("AUTH_EMAIL_MODE", "console")
+    monkeypatch.setenv("AUTH_ALLOW_STAGING_CONSOLE_DELIVERY", "true")
+    monkeypatch.setenv("AUTH_EXPOSE_DEVELOPMENT_TOKENS", "true")
+    reset_identity_service()
+
+    assert development_tokens_exposed() is False
+    assert verification_tokens_exposed() is False
+    with pytest.raises(RuntimeError, match="production_email_not_configured"):
+        get_identity_service().healthcheck()
+    reset_identity_service()
 
 
 def test_signup_verification_session_and_logout(identity_client: TestClient) -> None:

@@ -26,9 +26,9 @@ from .identity import (
     PASSWORD_HASHER,
     _MemoryUser,
     canonicalize_email,
+    development_tokens_exposed,
     get_identity_service,
     hash_token,
-    is_production,
     utc_now,
     validate_password,
 )
@@ -472,9 +472,7 @@ def create_invitation(body: InvitationCreate) -> dict:
     except Exception:
         LOGGER.exception("invitation email delivery failed after invitation creation")
         invitation["deliveryStatus"] = "retry_required"
-    if not is_production() and os.getenv(
-        "AUTH_EXPOSE_DEVELOPMENT_TOKENS", "true"
-    ).lower() == "true":
+    if development_tokens_exposed():
         invitation["developmentInvitationToken"] = token
     return invitation
 

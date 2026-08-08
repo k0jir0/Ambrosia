@@ -54,7 +54,7 @@ test("public landing keeps internal modules out of the product promise", async (
   await expect(page.getByRole("link", { name: "Company proof" }).first()).toBeVisible();
 });
 
-test("market scanner presents Alpha as a hypothesis workflow", async ({ page }) => {
+test("market scanner omits Alpha creation from the read-only workflow", async ({ page }) => {
   for (const routePattern of API_ROUTE_PATTERNS) await page.unroute(routePattern);
   let jobPolls = 0;
   const handleScannerRoute = async (route: Route) => {
@@ -170,7 +170,7 @@ test("market scanner presents Alpha as a hypothesis workflow", async ({ page }) 
   await expect(page.getByText(/move the strongest setups into governed review/)).toBeVisible();
   await expect(page.getByText("Rule 82")).toBeVisible();
   await expect(page.getByText("test-fixture")).toBeVisible();
-  await expect(page.getByRole("button", { name: "Create Alpha Hypothesis" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Create Alpha Hypothesis" })).toHaveCount(0);
   await expect(page.getByRole("link", { name: "Create Review" })).toHaveAttribute(
     "href",
     /sourcePointer=scanner%3AAAPL%3Amomentum_up%3Ademo%3Atest-fixture%3A/,

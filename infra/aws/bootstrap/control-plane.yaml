@@ -254,12 +254,14 @@ Resources:
                   - !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:role/aws-service-role/elasticloadbalancing.amazonaws.com/AWSServiceRoleForElasticLoadBalancing
                   - !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:role/aws-service-role/rds.amazonaws.com/AWSServiceRoleForRDS
                   - !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:role/aws-service-role/elasticache.amazonaws.com/AWSServiceRoleForElastiCache*
+                  - !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:role/aws-service-role/ecs.amazonaws.com/AWSServiceRoleForECS
                 Condition:
                   StringLike:
                     iam:AWSServiceName:
                       - elasticloadbalancing.amazonaws.com
                       - rds.amazonaws.com
                       - elasticache.amazonaws.com
+                      - ecs.amazonaws.com
               - Sid: AmbrosiaApplicationInfrastructure
                 Effect: Allow
                 Action:

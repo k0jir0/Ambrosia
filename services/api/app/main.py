@@ -6,7 +6,6 @@ import json
 import os
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
-from pathlib import Path
 from uuid import uuid4
 
 from fastapi import FastAPI, Header, HTTPException, Query, Request
@@ -91,6 +90,7 @@ from .selective_integration import (
     verify_audit_chain,
 )
 from .store import store
+from .project_paths import PROJECT_ROOT
 from .visibility_registry import (
     load_admin_boundary_rules,
     load_frontend_visibility_matrix,
@@ -123,8 +123,8 @@ from .operations import (
 )
 
 _executor = ThreadPoolExecutor(max_workers=4)
-ROADMAP_LEDGER_PATH = Path(__file__).resolve().parents[3] / "docs" / "roadmap" / "pdo-ledger.seed.json"
-DB_SCHEMA_VERSION_PATH = Path(__file__).resolve().parents[3] / "infra" / "db" / "schema-version.json"
+ROADMAP_LEDGER_PATH = PROJECT_ROOT / "docs" / "roadmap" / "pdo-ledger.seed.json"
+DB_SCHEMA_VERSION_PATH = PROJECT_ROOT / "infra" / "db" / "schema-version.json"
 
 app = FastAPI(title="Ambrosia Trade Review API", version="0.1.0")
 

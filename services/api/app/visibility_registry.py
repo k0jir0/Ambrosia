@@ -6,7 +6,9 @@ from pathlib import Path
 
 from fastapi import HTTPException
 
-ROOT = Path(__file__).resolve().parents[3]
+from .project_paths import PROJECT_ROOT
+
+ROOT = PROJECT_ROOT
 FUNCTION_REGISTRY_PATH = ROOT / "docs" / "visibility" / "function-registry.json"
 FRONTEND_MATRIX_PATH = ROOT / "docs" / "visibility" / "frontend-visibility-matrix.md"
 ADMIN_BOUNDARY_RULES_PATH = ROOT / "docs" / "visibility" / "admin-boundary-rules.md"

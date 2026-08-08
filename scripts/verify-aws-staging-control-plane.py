@@ -22,6 +22,9 @@ def main() -> None:
     workflow = (ROOT / ".github/workflows/aws-release.yml").read_text(encoding="utf-8")
     terraform = (ROOT / "infra/aws/main.tf").read_text(encoding="utf-8")
     variables = (ROOT / "infra/aws/variables.tf").read_text(encoding="utf-8")
+    control_plane = (ROOT / "infra/aws/bootstrap/control-plane.yaml").read_text(
+        encoding="utf-8"
+    )
     compact_terraform = " ".join(terraform.split())
 
     for path in (
@@ -72,6 +75,22 @@ def main() -> None:
     require(compact_terraform, "DataClassification = var.data_classification", "data classification tags")
     require(variables, 'var.aws_region == "ca-central-1"', "approved region restriction")
     require(variables, '@sha256:[0-9a-f]{64}$', "immutable image validation")
+
+    if control_plane.count("iam:CreateServiceLinkedRole") != 1:
+        raise SystemExit(
+            "AWS staging contract must contain exactly one service-linked-role creation grant"
+        )
+    for service_name in (
+        "elasticloadbalancing.amazonaws.com",
+        "rds.amazonaws.com",
+        "elasticache.amazonaws.com",
+    ):
+        require(control_plane, service_name, f"{service_name} service-linked-role bootstrap")
+    reject(
+        control_plane,
+        "iam::${AWS::AccountId}:role/aws-service-role/*",
+        "unbounded service-linked-role creation",
+    )
 
     print("AWS staging control plane contract verified.")
 

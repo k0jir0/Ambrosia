@@ -247,6 +247,19 @@ Resources:
                   - iam:ListAttachedRolePolicies
                   - iam:PassRole
                 Resource: !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:role/ambrosia-staging-*
+              - Sid: RequiredAwsServiceLinkedRoles
+                Effect: Allow
+                Action: iam:CreateServiceLinkedRole
+                Resource:
+                  - !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:role/aws-service-role/elasticloadbalancing.amazonaws.com/AWSServiceRoleForElasticLoadBalancing
+                  - !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:role/aws-service-role/rds.amazonaws.com/AWSServiceRoleForRDS
+                  - !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:role/aws-service-role/elasticache.amazonaws.com/AWSServiceRoleForElastiCache*
+                Condition:
+                  StringLike:
+                    iam:AWSServiceName:
+                      - elasticloadbalancing.amazonaws.com
+                      - rds.amazonaws.com
+                      - elasticache.amazonaws.com
               - Sid: AmbrosiaApplicationInfrastructure
                 Effect: Allow
                 Action:

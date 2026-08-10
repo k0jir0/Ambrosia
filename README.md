@@ -5,6 +5,11 @@ team challenge a thesis, preserve evidence and disagreement, apply deterministic
 risk gates, record a human decision, and learn from the outcome. Models advise;
 they never hold decision authority or mutate a live brokerage account.
 
+## License
+
+Ambrosia is distributed under the MIT License. See [LICENSE](LICENSE) for the
+full text.
+
 ## Current staging state
 
 AWS staging is deployed from the protected `staging` branch at:

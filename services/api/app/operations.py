@@ -26,7 +26,13 @@ from uuid import uuid4
 from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import JSONResponse, PlainTextResponse
 
-from .identity import CSRF_COOKIE, get_identity_service, session_cookie_name
+from .identity import (
+    CSRF_COOKIE,
+    assisted_password_reset_available,
+    get_identity_service,
+    password_reset_delivery_available,
+    session_cookie_name,
+)
 from .tenant_context import (
     LEGACY_QUARANTINE_ORGANIZATION_ID,
     reset_organization_id,
@@ -806,3 +812,46 @@ def operational_audit(limit: int = 100) -> dict:
 
 def record_domain_event(name: str, label: str = "total") -> None:
     telemetry.increment(name, label)
+
+
+@router.get("/operational/email-readiness")
+def operational_email_readiness() -> dict:
+    env = _environment()
+    email_mode = os.getenv("AUTH_EMAIL_MODE", "console").strip().lower() or "console"
+    sender_configured = bool(os.getenv("AUTH_EMAIL_FROM", "").strip())
+    identity_arn_configured = bool(os.getenv("AUTH_SES_IDENTITY_ARN", "").strip())
+    configuration_set_configured = bool(os.getenv("AUTH_SES_CONFIGURATION_SET", "").strip())
+    production_access_declared = _truthy("AUTH_SES_PRODUCTION_ACCESS_ENABLED", default=False)
+    password_recovery_available = password_reset_delivery_available()
+    assisted_recovery_available = assisted_password_reset_available()
+
+    blockers: list[str] = []
+    if env in {"staging", "production"} and email_mode != "ses":
+        blockers.append("AUTH_EMAIL_MODE must be ses in staging/production for standard password recovery")
+    if env in {"staging", "production"} and not sender_configured:
+        blockers.append("AUTH_EMAIL_FROM is not configured")
+    if env in {"staging", "production"} and not identity_arn_configured:
+        blockers.append("AUTH_SES_IDENTITY_ARN is not configured")
+    if env in {"staging", "production"} and email_mode == "ses" and not production_access_declared:
+        blockers.append("AUTH_SES_PRODUCTION_ACCESS_ENABLED is false")
+
+    return {
+        "status": "ready" if not blockers and password_recovery_available else "not_ready",
+        "environment": env,
+        "emailMode": email_mode,
+        "passwordRecoveryAvailable": password_recovery_available,
+        "assistedRecoveryAvailable": assisted_recovery_available,
+        "checks": {
+            "senderConfigured": sender_configured,
+            "sesIdentityArnConfigured": identity_arn_configured,
+            "configurationSetConfigured": configuration_set_configured,
+            "productionAccessDeclared": production_access_declared,
+        },
+        "blockers": blockers,
+        "nextActions": [
+            "Limit SES usage to transactional verification/reset/invitation flows",
+            "Keep bounce/complaint suppression and event ingestion active",
+            "Provide AWS support with recipient-consent and abuse-response controls",
+        ],
+        "timestamp": _utc_now(),
+    }

@@ -67,6 +67,7 @@ from .day7 import build_portfolio_context, derive_confidence
 from .coordinator import run_specialists
 from .feedback_api import feedback_router
 from .auth_api import router as auth_router
+from .identity import register_identity_audit_sink
 from .market_providers import market_provider_status
 from .providers import provider_status, resolve_provider
 from .report import generate_report
@@ -216,6 +217,7 @@ def _persistence_readiness() -> None:
 register_readiness_check("persistence", _persistence_readiness)
 register_readiness_check("artifactStorage", artifact_store.healthcheck)
 register_audit_sink(store.append_security_audit)
+register_identity_audit_sink(store.append_security_audit)
 
 
 def _clock() -> str:

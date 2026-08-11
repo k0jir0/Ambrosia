@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 from fastapi.testclient import TestClient
+from urllib.parse import parse_qs, urlparse
 
 from app.identity import (
     CSRF_COOKIE,
@@ -9,6 +10,7 @@ from app.identity import (
     canonicalize_email,
     development_tokens_exposed,
     get_identity_service,
+    register_identity_audit_sink,
     reset_identity_service,
     validate_password,
     verification_tokens_exposed,
@@ -112,6 +114,135 @@ def test_staging_password_recovery_fails_before_account_lookup_without_ses(
 
     assert response.status_code == 503
     assert response.json() == {"detail": "Password recovery is temporarily unavailable"}
+    reset_identity_service()
+
+
+def test_assisted_password_reset_prepares_single_use_link_in_staging(monkeypatch) -> None:
+    monkeypatch.setenv("ENVIRONMENT", "staging")
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.setenv("AUTH_TOKEN_PEPPER", "x" * 32)
+    monkeypatch.setenv("AUTH_EMAIL_MODE", "console")
+    monkeypatch.setenv("AUTH_ALLOW_STAGING_CONSOLE_DELIVERY", "true")
+    monkeypatch.setenv("AUTH_EXPOSE_DEVELOPMENT_TOKENS", "true")
+    monkeypatch.setenv("AUTH_ENABLE_ASSISTED_RESET", "true")
+    monkeypatch.setenv("PUBLIC_WEB_URL", "https://staging.example.com")
+    monkeypatch.setattr(rate_limiter, "allow", lambda *_args, **_kwargs: (True, 299))
+    reset_identity_service()
+
+
+def test_assisted_password_reset_emits_identity_audit_events(monkeypatch) -> None:
+    monkeypatch.setenv("ENVIRONMENT", "staging")
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.setenv("AUTH_TOKEN_PEPPER", "x" * 32)
+    monkeypatch.setenv("AUTH_EMAIL_MODE", "console")
+    monkeypatch.setenv("AUTH_ALLOW_STAGING_CONSOLE_DELIVERY", "true")
+    monkeypatch.setenv("AUTH_EXPOSE_DEVELOPMENT_TOKENS", "true")
+    monkeypatch.setenv("AUTH_ENABLE_ASSISTED_RESET", "true")
+    monkeypatch.setenv("PUBLIC_WEB_URL", "https://staging.example.com")
+    monkeypatch.setattr(rate_limiter, "allow", lambda *_args, **_kwargs: (True, 299))
+    reset_identity_service()
+
+    events: list[dict] = []
+    register_identity_audit_sink(lambda **event: events.append(event))
+
+    with TestClient(app, base_url="https://staging.example") as client:
+        signup = _signup(client, email="assisted-audit@example.com")
+        assert client.post(
+            "/auth/verify-email",
+            json={"token": signup["developmentVerificationToken"]},
+        ).status_code == 200
+        csrf = client.cookies.get(CSRF_COOKIE)
+        assisted = client.post(
+            "/auth/assisted-password-reset",
+            json={
+                "email": "assisted-audit@example.com",
+                "ticketId": "SUP-153",
+                "reason": "Audit sink coverage validation for assisted reset flow.",
+            },
+            headers={"X-CSRF-Token": csrf},
+        )
+        token = parse_qs(urlparse(assisted.json()["resetUrl"]).query)["token"][0]
+        assert client.post(
+            "/auth/reset-password",
+            json={"token": token, "newPassword": "a different strong passphrase 2026"},
+        ).status_code == 200
+
+    register_identity_audit_sink(None)
+    reset_identity_service()
+
+    assert [event["action"] for event in events] == [
+        "ASSISTED_PASSWORD_RESET_ISSUED",
+        "ASSISTED_PASSWORD_RESET_COMPLETED",
+    ]
+
+    with TestClient(app, base_url="https://staging.example") as client:
+        signup = _signup(client, email="assisted-owner@example.com")
+        assert client.post(
+            "/auth/verify-email",
+            json={"token": signup["developmentVerificationToken"]},
+        ).status_code == 200
+        csrf = client.cookies.get(CSRF_COOKIE)
+        assisted = client.post(
+            "/auth/assisted-password-reset",
+            json={
+                "email": "assisted-owner@example.com",
+                "ticketId": "SUP-151",
+                "reason": "User cannot receive reset email while SES approval is pending.",
+            },
+            headers={"X-CSRF-Token": csrf},
+        )
+
+        assert assisted.status_code == 202, assisted.text
+        payload = assisted.json()
+        assert payload["message"].startswith("If an eligible account exists")
+        assert payload["issuedAt"]
+        assert payload["resetUrl"].startswith("https://staging.example.com/reset-password?token=")
+
+        token = parse_qs(urlparse(payload["resetUrl"]).query)["token"][0]
+        reset = client.post(
+            "/auth/reset-password",
+            json={"token": token, "newPassword": "a different strong passphrase 2026"},
+        )
+        assert reset.status_code == 200
+        assert client.post(
+            "/auth/reset-password",
+            json={"token": token, "newPassword": "a different strong passphrase 2027"},
+        ).status_code == 400
+
+    reset_identity_service()
+
+
+def test_assisted_password_reset_returns_503_when_disabled(monkeypatch) -> None:
+    monkeypatch.setenv("ENVIRONMENT", "staging")
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.setenv("AUTH_TOKEN_PEPPER", "x" * 32)
+    monkeypatch.setenv("AUTH_EMAIL_MODE", "console")
+    monkeypatch.setenv("AUTH_ALLOW_STAGING_CONSOLE_DELIVERY", "true")
+    monkeypatch.setenv("AUTH_EXPOSE_DEVELOPMENT_TOKENS", "true")
+    monkeypatch.setenv("AUTH_ENABLE_ASSISTED_RESET", "false")
+    monkeypatch.setattr(rate_limiter, "allow", lambda *_args, **_kwargs: (True, 299))
+    reset_identity_service()
+
+    with TestClient(app, base_url="https://staging.example") as client:
+        signup = _signup(client, email="assisted-disabled@example.com")
+        assert client.post(
+            "/auth/verify-email",
+            json={"token": signup["developmentVerificationToken"]},
+        ).status_code == 200
+        csrf = client.cookies.get(CSRF_COOKIE)
+        response = client.post(
+            "/auth/assisted-password-reset",
+            json={
+                "email": "assisted-disabled@example.com",
+                "ticketId": "SUP-152",
+                "reason": "Feature toggle disabled for this environment.",
+            },
+            headers={"X-CSRF-Token": csrf},
+        )
+
+        assert response.status_code == 503
+        assert response.json() == {"detail": "Assisted password recovery is unavailable"}
+
     reset_identity_service()
 
 

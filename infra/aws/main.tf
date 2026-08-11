@@ -1248,3 +1248,45 @@ resource "aws_cloudwatch_metric_alarm" "database_cpu" {
   dimensions          = { DBInstanceIdentifier = aws_db_instance.postgres.id }
   alarm_actions       = [aws_sns_topic.alarms.arn]
 }
+
+resource "aws_cloudwatch_metric_alarm" "ses_bounce_rate" {
+  alarm_name          = "${local.name}-ses-bounce-rate"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 3
+  metric_name         = "Reputation.BounceRate"
+  namespace           = "AWS/SES"
+  period              = 300
+  statistic           = "Average"
+  threshold           = 0.02
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = [aws_sns_topic.alarms.arn]
+}
+
+resource "aws_cloudwatch_metric_alarm" "ses_complaint_rate" {
+  alarm_name          = "${local.name}-ses-complaint-rate"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 3
+  metric_name         = "Reputation.ComplaintRate"
+  namespace           = "AWS/SES"
+  period              = 300
+  statistic           = "Average"
+  threshold           = 0.001
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = [aws_sns_topic.alarms.arn]
+}
+
+resource "aws_cloudwatch_metric_alarm" "ses_reject_count" {
+  alarm_name          = "${local.name}-ses-reject-count"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 2
+  metric_name         = "Reject"
+  namespace           = "AWS/SES"
+  period              = 300
+  statistic           = "Sum"
+  threshold           = 5
+  treat_missing_data  = "notBreaching"
+  dimensions = {
+    ConfigurationSet = aws_sesv2_configuration_set.transactional.configuration_set_name
+  }
+  alarm_actions = [aws_sns_topic.alarms.arn]
+}

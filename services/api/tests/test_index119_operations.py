@@ -209,3 +209,37 @@ def test_job_creation_is_idempotent_and_tracks_attempts() -> None:
     running = local_store.get_job(first.id)
     assert running is not None
     assert running.attempt == 1
+
+
+def test_operational_email_readiness_reports_blockers(monkeypatch) -> None:
+    monkeypatch.setenv("ENVIRONMENT", "staging")
+    monkeypatch.setenv("AUTH_EMAIL_MODE", "console")
+    monkeypatch.delenv("AUTH_EMAIL_FROM", raising=False)
+    monkeypatch.delenv("AUTH_SES_IDENTITY_ARN", raising=False)
+    monkeypatch.delenv("AUTH_SES_CONFIGURATION_SET", raising=False)
+    monkeypatch.setenv("AUTH_SES_PRODUCTION_ACCESS_ENABLED", "false")
+    monkeypatch.setattr(rate_limiter, "allow", lambda *_args, **_kwargs: (True, 299))
+    monkeypatch.setenv(
+        "AMBROSIA_API_KEYS_JSON",
+        json.dumps({
+            "ops-token-at-least-16": {
+                "subject": "ops-1",
+                "role": "admin",
+                "organization_id": "00000000-0000-0000-0000-000000000002",
+            }
+        }),
+    )
+
+    response = client.get(
+        "/operational/email-readiness",
+        headers={"Authorization": "Bearer ops-token-at-least-16"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "not_ready"
+    assert payload["environment"] == "staging"
+    assert payload["passwordRecoveryAvailable"] is False
+    assert payload["checks"]["senderConfigured"] is False
+    assert payload["checks"]["sesIdentityArnConfigured"] is False
+    assert "AUTH_EMAIL_MODE must be ses" in " ".join(payload["blockers"])

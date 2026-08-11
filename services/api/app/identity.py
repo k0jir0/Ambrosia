@@ -18,7 +18,7 @@ import unicodedata
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from threading import RLock
-from typing import Protocol
+from typing import Callable, Protocol
 from urllib.parse import quote
 from uuid import uuid4
 
@@ -59,6 +59,13 @@ PASSWORD_HASHER = PasswordHasher(
     hash_len=32,
     salt_len=16,
 )
+
+_identity_audit_sink: Callable[..., None] | None = None
+
+
+def register_identity_audit_sink(sink: Callable[..., None] | None) -> None:
+    global _identity_audit_sink
+    _identity_audit_sink = sink
 
 
 def utc_now() -> datetime:
@@ -146,6 +153,13 @@ def password_reset_delivery_available() -> bool:
         os.getenv("AUTH_EMAIL_MODE", "").strip().lower() == "ses"
         and bool(os.getenv("AUTH_EMAIL_FROM", "").strip())
     )
+
+
+def assisted_password_reset_available() -> bool:
+    env = _environment()
+    if env == "production":
+        return _flag_enabled("AUTH_ENABLE_ASSISTED_RESET_PRODUCTION", default=False)
+    return _flag_enabled("AUTH_ENABLE_ASSISTED_RESET", default=env in {"development", "staging"})
 
 
 def session_cookie_name() -> str:
@@ -1042,6 +1056,26 @@ class IdentityService:
     def __init__(self, repository: IdentityRepository, sender: EmailSender | None = None) -> None:
         self.repository = repository
         self.sender = sender or EmailSender()
+        self._assisted_reset_audit: dict[str, dict[str, str]] = {}
+        self._assisted_reset_audit_lock = RLock()
+
+    def _emit_identity_audit(self, *, actor: str, role: str, action: str, resource: str, status: int) -> None:
+        if _identity_audit_sink is None:
+            return
+        try:
+            _identity_audit_sink(
+                request_id=f"identity-{uuid4()}",
+                actor=actor,
+                role=role,
+                action=action,
+                resource=resource,
+                status=status,
+            )
+        except Exception:
+            LOGGER.exception("identity audit sink append failed")
+
+    def _email_fingerprint(self, email: str) -> str:
+        return hashlib.sha256(email.casefold().encode()).hexdigest()[:16]
 
     def healthcheck(self) -> None:
         self.repository.healthcheck()
@@ -1189,10 +1223,82 @@ class IdentityService:
         except Exception:
             LOGGER.exception("password reset delivery failed")
 
+    def _password_reset_url(self, token: str) -> str:
+        public_url = os.getenv("PUBLIC_WEB_URL", "http://127.0.0.1:3000").rstrip("/")
+        return f"{public_url}/reset-password?token={quote(token)}"
+
+    def issue_assisted_password_reset(
+        self,
+        *,
+        email: str,
+        actor: str,
+        actor_role: str,
+        reason: str,
+        ticket_id: str,
+    ) -> dict:
+        issued_at = utc_now().isoformat()
+        target_fingerprint = self._email_fingerprint(email)
+        prepared = self.prepare_password_reset(email)
+        if not prepared:
+            LOGGER.info(
+                "assisted password reset no eligible account actor=%s role=%s ticket=%s reason=%s issued_at=%s",
+                actor,
+                actor_role,
+                ticket_id,
+                reason,
+                issued_at,
+            )
+            self._emit_identity_audit(
+                actor=actor,
+                role=actor_role,
+                action="ASSISTED_PASSWORD_RESET_ISSUED",
+                resource=f"ticket={ticket_id};target={target_fingerprint};eligible=false",
+                status=202,
+            )
+            return {
+                "message": "If an eligible account exists, an assisted reset link has been prepared.",
+                "issuedAt": issued_at,
+            }
+
+        delivery_email, token = prepared
+        token_digest = hash_token(token)
+        with self._assisted_reset_audit_lock:
+            self._assisted_reset_audit[token_digest] = {
+                "actor": actor,
+                "actor_role": actor_role,
+                "ticket_id": ticket_id,
+                "reason": reason,
+                "delivery_email": delivery_email,
+                "target_fingerprint": target_fingerprint,
+                "issued_at": issued_at,
+            }
+        LOGGER.info(
+            "assisted password reset issued actor=%s role=%s ticket=%s reason=%s target=%s issued_at=%s",
+            actor,
+            actor_role,
+            ticket_id,
+            reason,
+            delivery_email,
+            issued_at,
+        )
+        self._emit_identity_audit(
+            actor=actor,
+            role=actor_role,
+            action="ASSISTED_PASSWORD_RESET_ISSUED",
+            resource=f"ticket={ticket_id};target={target_fingerprint};eligible=true",
+            status=202,
+        )
+        return {
+            "message": "If an eligible account exists, an assisted reset link has been prepared.",
+            "issuedAt": issued_at,
+            "resetUrl": self._password_reset_url(token),
+        }
+
     def reset_password(self, token: str, new_password: str) -> bool:
         validate_password(new_password)
+        token_digest = hash_token(token)
         delivery_email = self.repository.consume_password_reset(
-            hash_token(token), PASSWORD_HASHER.hash(new_password), utc_now()
+            token_digest, PASSWORD_HASHER.hash(new_password), utc_now()
         )
         if not delivery_email:
             return False
@@ -1200,6 +1306,26 @@ class IdentityService:
             self.sender.send_password_changed(delivery_email)
         except Exception:
             LOGGER.exception("password change notification delivery failed")
+        with self._assisted_reset_audit_lock:
+            assisted = self._assisted_reset_audit.pop(token_digest, None)
+        if assisted:
+            LOGGER.info(
+                "assisted password reset completed actor=%s role=%s ticket=%s reason=%s target=%s issued_at=%s completed_at=%s",
+                assisted["actor"],
+                assisted["actor_role"],
+                assisted["ticket_id"],
+                assisted["reason"],
+                assisted["delivery_email"],
+                assisted["issued_at"],
+                utc_now().isoformat(),
+            )
+            self._emit_identity_audit(
+                actor=assisted["actor"],
+                role=assisted["actor_role"],
+                action="ASSISTED_PASSWORD_RESET_COMPLETED",
+                resource=f"ticket={assisted['ticket_id']};target={assisted['target_fingerprint']}",
+                status=200,
+            )
         return True
 
     def resend_verification(self, email: str) -> str | None:

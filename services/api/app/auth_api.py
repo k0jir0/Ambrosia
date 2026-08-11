@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 from .identity import (
     CSRF_COOKIE,
     IssuedSession,
+    assisted_password_reset_available,
     development_tokens_exposed,
     get_identity_service,
     is_production,
@@ -44,6 +45,12 @@ class LoginRequest(BaseModel):
 
 class ForgotPasswordRequest(BaseModel):
     email: str = Field(min_length=3, max_length=320)
+
+
+class AssistedPasswordResetRequest(BaseModel):
+    email: str = Field(min_length=3, max_length=320)
+    ticketId: str = Field(min_length=3, max_length=80)
+    reason: str = Field(min_length=5, max_length=500)
 
 
 class ResetPasswordRequest(BaseModel):
@@ -106,6 +113,13 @@ def _identity(request: Request):
     principal = getattr(request.state, "principal", None)
     if principal is None or principal.auth_method != "session":
         raise HTTPException(status_code=401, detail="Authenticated account session required")
+    return principal
+
+
+def _support_operator(request: Request):
+    principal = _identity(request)
+    if principal.role not in {"owner", "admin", "service"}:
+        raise HTTPException(status_code=403, detail="Support operator role required")
     return principal
 
 
@@ -216,6 +230,29 @@ def forgot_password(body: ForgotPasswordRequest, background_tasks: BackgroundTas
     if token and development_tokens_exposed():
         payload["developmentResetToken"] = token
     return payload
+
+
+@router.post("/assisted-password-reset", status_code=status.HTTP_202_ACCEPTED)
+def assisted_password_reset(body: AssistedPasswordResetRequest, request: Request) -> dict:
+    if not assisted_password_reset_available():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Assisted password recovery is unavailable",
+        )
+    principal = _support_operator(request)
+    normalized_reason = " ".join(body.reason.split()).strip()
+    normalized_ticket = " ".join(body.ticketId.split()).strip()
+    if len(normalized_reason) < 5:
+        raise HTTPException(status_code=422, detail="Provide a detailed recovery reason")
+    if len(normalized_ticket) < 3:
+        raise HTTPException(status_code=422, detail="Provide a valid ticket ID")
+    return get_identity_service().issue_assisted_password_reset(
+        email=body.email,
+        actor=principal.subject,
+        actor_role=principal.role,
+        reason=normalized_reason,
+        ticket_id=normalized_ticket,
+    )
 
 
 @router.post("/reset-password")

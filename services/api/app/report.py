@@ -3,7 +3,14 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from .coordinator import PIPELINE_VERSION, _ticker_identity
-from .models import DecisionPacket, MaterialClaim, ReportArtifact, ReportSection, SpecialistAgentOutput, VerificationFinding
+from .models import (
+    DecisionPacket,
+    MaterialClaim,
+    ReportArtifact,
+    ReportSection,
+    SpecialistAgentOutput,
+    VerificationFinding,
+)
 
 
 def _utc_timestamp() -> str:
@@ -121,73 +128,172 @@ def _section_risk(packet: DecisionPacket) -> ReportSection:
             lines.append("  Blockers:")
             lines += [f"    - {b}" for b in cb.blockers]
 
-    return ReportSection(title="Risk & Confidence", content="\n".join(lines) if lines else "No risk data.")
+    return ReportSection(
+        title="Risk & Confidence", content="\n".join(lines) if lines else "No risk data."
+    )
 
 
 def _section_audit_summary(packet: DecisionPacket) -> ReportSection:
     lines = [f"[{e.timestamp}] {e.eventType}: {e.detail}" for e in packet.audit]
-    return ReportSection(title="Audit Trail", content="\n".join(lines) if lines else "No audit events.")
+    return ReportSection(
+        title="Audit Trail", content="\n".join(lines) if lines else "No audit events."
+    )
 
 
-def _verified_outputs(packet: DecisionPacket, llm_runs: list[dict] | None = None) -> list[SpecialistAgentOutput]:
-    outputs = [item for item in (packet.agentOutputs or {}).values() if item and item.schemaVersion == "specialist-output.v2" and item.verificationStatus in {"passed", "repaired", "abstained"}]
+def _verified_outputs(
+    packet: DecisionPacket, llm_runs: list[dict] | None = None
+) -> list[SpecialistAgentOutput]:
+    outputs = [
+        item
+        for item in (packet.agentOutputs or {}).values()
+        if item
+        and item.schemaVersion == "specialist-output.v2"
+        and item.verificationStatus in {"passed", "repaired", "abstained"}
+    ]
     for run in llm_runs or []:
         value = run.get("structured_output") or {}
-        if value.get("schemaVersion") != "specialist-output.v2": continue
+        if value.get("schemaVersion") != "specialist-output.v2":
+            continue
         claims = [MaterialClaim.model_validate(item) for item in value.get("materialClaims", [])]
-        outputs.append(SpecialistAgentOutput(
-            role=value.get("role", "durableSpecialist"), summary=value.get("roleConclusion") or value.get("summary") or "Verified output",
-            keyPoints=[item.text for item in claims[:3]], timestamp=str(run.get("created_at") or _utc_timestamp()),
-            provider="ollama-local-worker", fallbackUsed=False, schemaVersion="specialist-output.v2", verificationStatus="passed",
-            materialClaims=claims, rejectedClaims=[MaterialClaim.model_validate(item) for item in value.get("rejectedClaims", [])],
-            verificationFindings=[VerificationFinding.model_validate(item) for item in value.get("verificationFindings", [])],
-            calculationArtifacts=value.get("calculationArtifacts", []), missingEvidence=value.get("missingEvidence", []),
-            modelDigest=run.get("model_digest"), evidencePackHash=run.get("evidence_pack_hash"), promptTemplateId=run.get("prompt_template_id"),
-        ))
+        outputs.append(
+            SpecialistAgentOutput(
+                role=value.get("role", "durableSpecialist"),
+                summary=value.get("roleConclusion") or value.get("summary") or "Verified output",
+                keyPoints=[item.text for item in claims[:3]],
+                timestamp=str(run.get("created_at") or _utc_timestamp()),
+                provider="ollama-local-worker",
+                fallbackUsed=False,
+                schemaVersion="specialist-output.v2",
+                verificationStatus="passed",
+                materialClaims=claims,
+                rejectedClaims=[
+                    MaterialClaim.model_validate(item) for item in value.get("rejectedClaims", [])
+                ],
+                verificationFindings=[
+                    VerificationFinding.model_validate(item)
+                    for item in value.get("verificationFindings", [])
+                ],
+                calculationArtifacts=value.get("calculationArtifacts", []),
+                missingEvidence=value.get("missingEvidence", []),
+                modelDigest=run.get("model_digest"),
+                evidencePackHash=run.get("evidence_pack_hash"),
+                promptTemplateId=run.get("prompt_template_id"),
+            )
+        )
     return outputs
 
 
 def _claims(outputs):
     admitted, rejected = {}, {}
     for output in outputs:
-        admitted.update({item.claimId: item for item in output.materialClaims if item.admissionStatus in {"admitted", "repaired"}})
+        admitted.update(
+            {
+                item.claimId: item
+                for item in output.materialClaims
+                if item.admissionStatus in {"admitted", "repaired"}
+            }
+        )
         rejected.update({item.claimId: item for item in output.rejectedClaims})
     return list(admitted.values()), list(rejected.values())
 
 
 def _claim_text(claims):
-    return "\n".join(f"- [{item.claimType.upper()} / {item.materiality}] {item.text} (evidence: {', '.join(item.supportingEvidenceIds) or 'admitted premises'}; uncertainty: {item.uncertainty:.2f})" + (f"\n  Falsifier: {item.falsifier}" if item.falsifier else "") for item in claims) or "No verified claims were admitted for this section."
+    return (
+        "\n".join(
+            f"- [{item.claimType.upper()} / {item.materiality}] {item.text} (evidence: {', '.join(item.supportingEvidenceIds) or 'admitted premises'}; uncertainty: {item.uncertainty:.2f})"
+            + (f"\n  Falsifier: {item.falsifier}" if item.falsifier else "")
+            for item in claims
+        )
+        or "No verified claims were admitted for this section."
+    )
 
 
 def _verified_section(title, claims, mode="mixed"):
-    return ReportSection(title=title, content=_claim_text(claims), evidenceMode=mode,
-                         claimIds=[item.claimId for item in claims], citationEvidenceIds=sorted({ref for item in claims for ref in item.supportingEvidenceIds}),
-                         verificationStatus="passed" if claims else "unavailable")
+    return ReportSection(
+        title=title,
+        content=_claim_text(claims),
+        evidenceMode=mode,
+        claimIds=[item.claimId for item in claims],
+        citationEvidenceIds=sorted({ref for item in claims for ref in item.supportingEvidenceIds}),
+        verificationStatus="passed" if claims else "unavailable",
+    )
 
 
 def _intelligence_sections(outputs, admitted):
     by_role = {item.role: item.materialClaims for item in outputs}
-    role = lambda *names: [claim for name in names for claim in by_role.get(name, [])]
-    fundamental, scenarios, risks, disagreements = role("fundamental"), role("bull", "bear"), role("risk", "bear"), role("bull", "bear")
+
+    def role(*names):
+        return [claim for name in names for claim in by_role.get(name, [])]
+
+    fundamental, scenarios, risks, disagreements = (
+        role("fundamental"),
+        role("bull", "bear"),
+        role("risk", "bear"),
+        role("bull", "bear"),
+    )
     gaps = sorted({gap for output in outputs for gap in output.missingEvidence})
     findings = [finding for output in outputs for finding in output.verificationFindings]
-    calculations = [item for output in outputs for item in output.calculationArtifacts if item.validationStatus == "passed"]
-    calc_text = "\n".join(f"- {item.calculationId}: {item.formula} = {item.result} {item.units or ''} ({item.roundingRule})" for item in calculations)
+    calculations = [
+        item
+        for output in outputs
+        for item in output.calculationArtifacts
+        if item.validationStatus == "passed"
+    ]
+    calc_text = "\n".join(
+        f"- {item.calculationId}: {item.formula} = {item.result} {item.units or ''} ({item.roundingRule})"
+        for item in calculations
+    )
     return [
         _verified_section("Verified Executive Intelligence", role("pmSynthesis") or admitted[:5]),
         _verified_section("Business & Fundamental Profile", fundamental, "derived"),
-        ReportSection(title="Latest Filing & Earnings Delta", content=_claim_text(fundamental) if fundamental else "No point-in-time filing or earnings evidence was admitted; this section abstains.", evidenceMode="mixed" if fundamental else "unavailable", verificationStatus="passed" if fundamental else "unavailable"),
-        ReportSection(title="KPI & Segment Trends", content=calc_text or "No deterministic KPI calculation artifacts were attached.", evidenceMode="derived" if calculations else "unavailable", citationEvidenceIds=sorted({ref for item in calculations for ref in item.inputEvidenceIds}), verificationStatus="passed" if calculations else "unavailable"),
-        _verified_section("Valuation & Conditional Scenarios", [item for item in scenarios if item.claimType in {"scenario", "inference"}]),
+        ReportSection(
+            title="Latest Filing & Earnings Delta",
+            content=_claim_text(fundamental)
+            if fundamental
+            else "No point-in-time filing or earnings evidence was admitted; this section abstains.",
+            evidenceMode="mixed" if fundamental else "unavailable",
+            verificationStatus="passed" if fundamental else "unavailable",
+        ),
+        ReportSection(
+            title="KPI & Segment Trends",
+            content=calc_text or "No deterministic KPI calculation artifacts were attached.",
+            evidenceMode="derived" if calculations else "unavailable",
+            citationEvidenceIds=sorted(
+                {ref for item in calculations for ref in item.inputEvidenceIds}
+            ),
+            verificationStatus="passed" if calculations else "unavailable",
+        ),
+        _verified_section(
+            "Valuation & Conditional Scenarios",
+            [item for item in scenarios if item.claimType in {"scenario", "inference"}],
+        ),
         _verified_section("Bull / Bear Adjudication", disagreements),
         _verified_section("Risks, Falsifiers & Monitoring Triggers", risks),
-        ReportSection(title="Evidence Gaps", content="\n".join(f"- {gap}" for gap in gaps) or "No specialist evidence gaps were declared.", evidenceMode="unavailable" if gaps else "mixed", verificationStatus="partial" if gaps else "passed"),
-        ReportSection(title="Verification Appendix", content="\n".join(f"- {item.claimId}: {item.status} via {item.verifier}" for item in findings) or "No verifier findings recorded.", evidenceMode="mixed", claimIds=[item.claimId for item in findings], citationEvidenceIds=sorted({ref for item in findings for ref in item.evidenceIds}), verificationStatus="passed" if findings else "unavailable"),
+        ReportSection(
+            title="Evidence Gaps",
+            content="\n".join(f"- {gap}" for gap in gaps)
+            or "No specialist evidence gaps were declared.",
+            evidenceMode="unavailable" if gaps else "mixed",
+            verificationStatus="partial" if gaps else "passed",
+        ),
+        ReportSection(
+            title="Verification Appendix",
+            content="\n".join(
+                f"- {item.claimId}: {item.status} via {item.verifier}" for item in findings
+            )
+            or "No verifier findings recorded.",
+            evidenceMode="mixed",
+            claimIds=[item.claimId for item in findings],
+            citationEvidenceIds=sorted({ref for item in findings for ref in item.evidenceIds}),
+            verificationStatus="passed" if findings else "unavailable",
+        ),
     ]
 
 
 def _coverage(admitted, rejected):
-    weight = {"low": 1, "medium": 2, "high": 3}; good = sum(weight[item.materiality] for item in admitted); total = good + sum(weight[item.materiality] for item in rejected)
+    weight = {"low": 1, "medium": 2, "high": 3}
+    good = sum(weight[item.materiality] for item in admitted)
+    total = good + sum(weight[item.materiality] for item in rejected)
     return good / total if total else 0
 
 
@@ -200,11 +306,21 @@ def generate_report(packet: DecisionPacket, llm_runs: list[dict] | None = None) 
         _section_risk(packet),
         _section_audit_summary(packet),
     ]
-    verified = _verified_outputs(packet, llm_runs); admitted, rejected = _claims(verified)
-    calculations = [item for output in verified for item in output.calculationArtifacts if item.validationStatus == "passed"]
+    verified = _verified_outputs(packet, llm_runs)
+    admitted, rejected = _claims(verified)
+    calculations = [
+        item
+        for output in verified
+        for item in output.calculationArtifacts
+        if item.validationStatus == "passed"
+    ]
     if verified:
-        sections[0] = sections[0].model_copy(update={"evidenceMode": "user_asserted", "verificationStatus": "partial"})
-        sections[2] = sections[2].model_copy(update={"evidenceMode": "mixed", "verificationStatus": "partial"})
+        sections[0] = sections[0].model_copy(
+            update={"evidenceMode": "user_asserted", "verificationStatus": "partial"}
+        )
+        sections[2] = sections[2].model_copy(
+            update={"evidenceMode": "mixed", "verificationStatus": "partial"}
+        )
         sections.extend(_intelligence_sections(verified, admitted))
 
     data_mode: str = "fallback"
@@ -232,15 +348,32 @@ def generate_report(packet: DecisionPacket, llm_runs: list[dict] | None = None) 
         provenanceLabel=provenance,
         marketDataSource=market_source,
         marketDataFreshnessSeconds=freshness_seconds,
-        schemaVersion="ticker-intelligence-report.v2" if verified else "ticker-intelligence-report.v1",
+        schemaVersion="ticker-intelligence-report.v2"
+        if verified
+        else "ticker-intelligence-report.v1",
         tickerIdentity=_ticker_identity(packet) if verified else None,
         asOf=packet.marketSnapshot.timestamp if packet.marketSnapshot else packet.createdAt,
-        knowledgeCutoff=max([packet.createdAt, *[item.timestamp for item in packet.sources]], default=packet.createdAt),
+        knowledgeCutoff=max(
+            [packet.createdAt, *[item.timestamp for item in packet.sources]],
+            default=packet.createdAt,
+        ),
         modelDigest=next((item.modelDigest for item in verified if item.modelDigest), None),
-        promptVersion=next((item.promptTemplateId for item in verified if item.promptTemplateId), None),
+        promptVersion=next(
+            (item.promptTemplateId for item in verified if item.promptTemplateId), None
+        ),
         pipelineVersion=PIPELINE_VERSION if verified else None,
-        sourceSnapshotHash=next((item.evidencePackHash for item in verified if item.evidencePackHash), None),
-        verifiedClaimCoverage=_coverage(admitted, rejected), unresolvedMaterialClaimCount=sum(item.materiality in {"medium", "high"} for item in rejected),
-        calculationArtifacts=calculations, rejectedClaimIds=[item.claimId for item in rejected],
-        reportValidationStatus="passed" if verified and not rejected else "partial" if verified else "legacy",
+        sourceSnapshotHash=next(
+            (item.evidencePackHash for item in verified if item.evidencePackHash), None
+        ),
+        verifiedClaimCoverage=_coverage(admitted, rejected),
+        unresolvedMaterialClaimCount=sum(
+            item.materiality in {"medium", "high"} for item in rejected
+        ),
+        calculationArtifacts=calculations,
+        rejectedClaimIds=[item.claimId for item in rejected],
+        reportValidationStatus="passed"
+        if verified and not rejected
+        else "partial"
+        if verified
+        else "legacy",
     )

@@ -80,7 +80,9 @@ class ThesisRequest(BaseModel):
     time_horizon: str = "Unspecified"
     intended_expression: str = "Expression requires review"
     source_pointer: str = ""
-    subject_type: Literal["listed_instrument", "basket", "macro", "private_asset", "other"] | None = None
+    subject_type: (
+        Literal["listed_instrument", "basket", "macro", "private_asset", "other"] | None
+    ) = None
     instrument_id: str | None = None
 
 
@@ -267,7 +269,9 @@ class SpecialistAgentOutput(BaseModel):
     modelUncertainty: float | None = Field(default=None, ge=0, le=1)
     coverage: float | None = Field(default=None, ge=0, le=1)
     materiality: Literal["low", "medium", "high"] | None = None
-    verificationStatus: Literal["unverified", "passed", "repaired", "abstained", "human_review"] = "unverified"
+    verificationStatus: Literal["unverified", "passed", "repaired", "abstained", "human_review"] = (
+        "unverified"
+    )
     materialClaims: list["MaterialClaim"] = Field(default_factory=list)
     verificationFindings: list["VerificationFinding"] = Field(default_factory=list)
     rejectedClaims: list["MaterialClaim"] = Field(default_factory=list)
@@ -338,12 +342,16 @@ class MaterialClaim(BaseModel):
     uncertainty: float = Field(default=0.5, ge=0, le=1)
     falsifier: str | None = None
     calculationId: str | None = None
-    admissionStatus: Literal["proposed", "admitted", "repaired", "rejected", "human_review"] = "proposed"
+    admissionStatus: Literal["proposed", "admitted", "repaired", "rejected", "human_review"] = (
+        "proposed"
+    )
 
 
 class VerificationFinding(BaseModel):
     claimId: str
-    status: Literal["entailed", "contradicted", "insufficient", "nonfactual_opinion", "policy_violation"]
+    status: Literal[
+        "entailed", "contradicted", "insufficient", "nonfactual_opinion", "policy_violation"
+    ]
     evidenceIds: list[str] = Field(default_factory=list)
     reasons: list[str] = Field(default_factory=list)
     deterministicChecksPassed: bool = False
@@ -360,7 +368,9 @@ class SelectiveConfidence(BaseModel):
 
 class CalculationIntent(BaseModel):
     calculationId: str
-    operation: Literal["add", "subtract", "divide", "percent_change", "percentage_point_change", "margin"]
+    operation: Literal[
+        "add", "subtract", "divide", "percent_change", "percentage_point_change", "margin"
+    ]
     inputEvidenceIds: list[str] = Field(min_length=1, max_length=10)
     inputPaths: list[str] = Field(min_length=1, max_length=10)
     units: str | None = None
@@ -527,7 +537,7 @@ class DecisionPacket(BaseModel):
     trialCountImpact: int
     followUpDate: str
     createdAt: str
-    
+
     # Base review fields
     claims: list[Claim]
     strongestCritique: str
@@ -537,7 +547,7 @@ class DecisionPacket(BaseModel):
     tradeability: list[TradeabilityQuestion]
     sources: list[SourcePointer]
     audit: list[AuditEvent]
-    
+
     # Selective integration fields
     provenance: list[ProvenanceMetadata] = Field(default_factory=list)
     disconfirmationResult: DisconfirmationOutcome | None = None
@@ -556,10 +566,10 @@ class DecisionPacket(BaseModel):
     riskMonitor: RiskMonitor | None = None
     portfolioContext: PortfolioContext | None = None
     confidenceBreakdown: ConfidenceComponents | None = None
-    
+
     # Agent specialist outputs
     agentOutputs: dict[str, SpecialistAgentOutput | None] | None = None
-    
+
     # Coordinator metadata
     coordinatorVersion: str = "coordinator.v1"
     providerInfo: dict | None = None
@@ -825,7 +835,9 @@ class ScannerRunRequest(BaseModel):
 
 class ScannerCandidate(BaseModel):
     ticker: str
-    signal: Literal["momentum_up", "momentum_down", "mean_reversion_up", "mean_reversion_down", "neutral"]
+    signal: Literal[
+        "momentum_up", "momentum_down", "mean_reversion_up", "mean_reversion_down", "neutral"
+    ]
     thesisSuggestion: str
     score: float = Field(ge=0.0, le=1.0)
     price: float
@@ -847,7 +859,14 @@ class ScannerCandidate(BaseModel):
 class ScannerRejectedSymbol(BaseModel):
     ticker: str
     reason: str
-    status: Literal["inactive", "ambiguous", "unsupported", "not_found", "provider_unavailable", "market_data_unavailable"]
+    status: Literal[
+        "inactive",
+        "ambiguous",
+        "unsupported",
+        "not_found",
+        "provider_unavailable",
+        "market_data_unavailable",
+    ]
 
 
 class ScannerResult(BaseModel):
@@ -865,7 +884,9 @@ class ScannerResult(BaseModel):
 class ReportSection(BaseModel):
     title: str
     content: str
-    evidenceMode: Literal["observed", "derived", "simulated", "user_asserted", "mixed", "unavailable"] = "unavailable"
+    evidenceMode: Literal[
+        "observed", "derived", "simulated", "user_asserted", "mixed", "unavailable"
+    ] = "unavailable"
     claimIds: list[str] = Field(default_factory=list)
     citationEvidenceIds: list[str] = Field(default_factory=list)
     verificationStatus: Literal["passed", "partial", "unverified", "unavailable"] = "unverified"
@@ -918,6 +939,7 @@ class JobRecord(BaseModel):
 # ---------------------------------------------------------------------------
 # Phase 4: Collaboration layer
 # ---------------------------------------------------------------------------
+
 
 class WorkspaceMemberRole(str, Enum):
     owner = "owner"
@@ -999,6 +1021,7 @@ class PacketApprovalCreate(BaseModel):
 # ---------------------------------------------------------------------------
 # Phase 5: Workflow templates (enterprise/marketplace layer)
 # ---------------------------------------------------------------------------
+
 
 class WorkflowTemplateStatus(str, Enum):
     draft = "draft"

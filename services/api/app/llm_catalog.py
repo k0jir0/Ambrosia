@@ -26,8 +26,14 @@ DISCONFIRMATION_SCHEMA_VERSION = "specialist-output.v2"
 LEGACY_DISCONFIRMATION_SCHEMA = {
     "type": "object",
     "required": [
-        "summary", "claimsTested", "falsifiableConditions", "alternativeExplanations",
-        "contradictions", "missingEvidence", "evidenceReferences", "abstained",
+        "summary",
+        "claimsTested",
+        "falsifiableConditions",
+        "alternativeExplanations",
+        "contradictions",
+        "missingEvidence",
+        "evidenceReferences",
+        "abstained",
     ],
     "properties": {
         "summary": {"type": "string"},
@@ -160,8 +166,11 @@ class Catalog:
         else:
             with self.lock:
                 self.devices[token_digest] = {
-                    "id": worker_id, "organization_id": organization_id,
-                    "user_id": user_id, "name": name, "status": "active",
+                    "id": worker_id,
+                    "organization_id": organization_id,
+                    "user_id": user_id,
+                    "name": name,
+                    "status": "active",
                 }
         return {"id": worker_id, "name": name, "token": token}
 
@@ -201,7 +210,11 @@ class Catalog:
             return [dict(row) for row in rows]
         with self.lock:
             return [
-                {key: value for key, value in row.items() if key not in {"organization_id", "user_id"}}
+                {
+                    key: value
+                    for key, value in row.items()
+                    if key not in {"organization_id", "user_id"}
+                }
                 for row in self.devices.values()
                 if row["organization_id"] == organization_id
             ]
@@ -228,20 +241,33 @@ class Catalog:
     def enqueue(self, organization_id: str, body: LlmJobCreate) -> dict:
         job_id = str(uuid4())
         cutoff = body.observationCutoff or now()
-        identity = body.tickerIdentity or {"instrumentId": "unresolved", "canonicalTicker": "UNRESOLVED", "resolutionStatus": "ambiguous"}
+        identity = body.tickerIdentity or {
+            "instrumentId": "unresolved",
+            "canonicalTicker": "UNRESOLVED",
+            "resolutionStatus": "ambiguous",
+        }
         evidence = []
         for index, raw in enumerate(body.evidence):
-            item = dict(raw); item.setdefault("evidenceId", item.get("id") or f"evidence-{index + 1}")
-            item.setdefault("evidenceType", item.get("type") or "source"); item.setdefault("subjectInstrumentId", identity.get("instrumentId", "unresolved"))
-            item.setdefault("canonicalTicker", identity.get("canonicalTicker", "UNRESOLVED")); item.setdefault("observedAt", cutoff.isoformat())
-            item.setdefault("retrievedAt", now().isoformat()); item.setdefault("observationCutoff", cutoff.isoformat()); item.setdefault("dataMode", "user_asserted")
-            item.setdefault("contentHash", canonical_hash(item)); evidence.append(item)
+            item = dict(raw)
+            item.setdefault("evidenceId", item.get("id") or f"evidence-{index + 1}")
+            item.setdefault("evidenceType", item.get("type") or "source")
+            item.setdefault("subjectInstrumentId", identity.get("instrumentId", "unresolved"))
+            item.setdefault("canonicalTicker", identity.get("canonicalTicker", "UNRESOLVED"))
+            item.setdefault("observedAt", cutoff.isoformat())
+            item.setdefault("retrievedAt", now().isoformat())
+            item.setdefault("observationCutoff", cutoff.isoformat())
+            item.setdefault("dataMode", "user_asserted")
+            item.setdefault("contentHash", canonical_hash(item))
+            evidence.append(item)
         payload = {
             "thesis": body.thesis,
             "claims": body.claims,
             "evidence": evidence,
-            "tickerIdentity": identity, "observationCutoff": cutoff.isoformat(), "role": body.role,
-            "pipelineVersion": body.pipelineVersion, "instructionManifest": INSTRUCTION_MANIFEST,
+            "tickerIdentity": identity,
+            "observationCutoff": cutoff.isoformat(),
+            "role": body.role,
+            "pipelineVersion": body.pipelineVersion,
+            "instructionManifest": INSTRUCTION_MANIFEST,
             "outputSchema": DISCONFIRMATION_SCHEMA,
             "outputSchemaVersion": DISCONFIRMATION_SCHEMA_VERSION,
             "promptTemplateId": "specialist.generate-verify-repair.v2",
@@ -267,8 +293,12 @@ class Catalog:
                     ) VALUES (%s, %s, %s, %s, 'adversarial_specialist_v2', %s::jsonb, %s)
                     """,
                     (
-                        job_id, organization_id, body.workspaceId, body.packetId,
-                        json.dumps(payload), cutoff,
+                        job_id,
+                        organization_id,
+                        body.workspaceId,
+                        body.packetId,
+                        json.dumps(payload),
+                        cutoff,
                     ),
                 )
         else:
@@ -315,8 +345,10 @@ class Catalog:
                         (worker["id"], lease_until, row["id"]),
                     ).fetchone()
             return {
-                "id": str(job["id"]), "taskType": job["task_type"],
-                "input": job["input_payload"], "leaseExpiresAt": lease_until.isoformat(),
+                "id": str(job["id"]),
+                "taskType": job["task_type"],
+                "input": job["input_payload"],
+                "leaseExpiresAt": lease_until.isoformat(),
             }
         with self.lock:
             for job in sorted(self.jobs.values(), key=lambda item: item["created_at"]):
@@ -328,34 +360,63 @@ class Catalog:
                 if expired:
                     job.update({"state": "queued", "claimed_by": None, "lease_expires_at": None})
                 if job["organization_id"] == worker["organization_id"] and job["state"] == "queued":
-                    job.update({
-                        "state": "claimed", "claimed_by": worker["id"],
-                        "lease_expires_at": lease_until,
-                    })
-                    return {"id": job["id"], "taskType": job["task_type"], "input": job["input_payload"], "leaseExpiresAt": lease_until.isoformat()}
+                    job.update(
+                        {
+                            "state": "claimed",
+                            "claimed_by": worker["id"],
+                            "lease_expires_at": lease_until,
+                        }
+                    )
+                    return {
+                        "id": job["id"],
+                        "taskType": job["task_type"],
+                        "input": job["input_payload"],
+                        "leaseExpiresAt": lease_until.isoformat(),
+                    }
         return None
 
     @staticmethod
     def _verify_output(input_payload: dict, output: dict) -> tuple[str, float]:
         allowed = {
-            str(item.get("evidenceId") or item.get("id")) for item in input_payload.get("evidence", [])
+            str(item.get("evidenceId") or item.get("id"))
+            for item in input_payload.get("evidence", [])
             if isinstance(item, dict) and (item.get("evidenceId") or item.get("id"))
         }
         references = set(output.get("evidenceReferences", []))
         for claim in output.get("materialClaims", []):
-            references.update(str(item) for item in claim.get("supportingEvidenceIds", [])); references.update(str(item) for item in claim.get("contradictingEvidenceIds", []))
+            references.update(str(item) for item in claim.get("supportingEvidenceIds", []))
+            references.update(str(item) for item in claim.get("contradictingEvidenceIds", []))
         resolved = references.intersection(allowed)
         ratio = len(resolved) / len(references) if references else 0.0
         passed = bool(references) and references.issubset(allowed)
         if output.get("abstained") and not references:
             passed = True
         if output.get("schemaVersion") == "specialist-output.v2":
-            instruction_ids = set(output.get("instructionReferences", [])); passed = passed and bool(instruction_ids) and instruction_ids.issubset(INSTRUCTION_MANIFEST)
-            by_id = {str(item.get("evidenceId") or item.get("id")): item for item in input_payload.get("evidence", []) if isinstance(item, dict)}
+            instruction_ids = set(output.get("instructionReferences", []))
+            passed = (
+                passed and bool(instruction_ids) and instruction_ids.issubset(INSTRUCTION_MANIFEST)
+            )
+            by_id = {
+                str(item.get("evidenceId") or item.get("id")): item
+                for item in input_payload.get("evidence", [])
+                if isinstance(item, dict)
+            }
             for claim in output.get("materialClaims", []):
                 support = [str(item) for item in claim.get("supportingEvidenceIds", [])]
-                if claim.get("claimType") == "observation" and (not support or any(by_id.get(item, {}).get("dataMode") in {"simulated", "user_asserted"} for item in support)): passed = False
-                if claim.get("materiality") in {"medium", "high"} and claim.get("claimType") != "opinion" and not claim.get("falsifier"): passed = False
+                if claim.get("claimType") == "observation" and (
+                    not support
+                    or any(
+                        by_id.get(item, {}).get("dataMode") in {"simulated", "user_asserted"}
+                        for item in support
+                    )
+                ):
+                    passed = False
+                if (
+                    claim.get("materiality") in {"medium", "high"}
+                    and claim.get("claimType") != "opinion"
+                    and not claim.get("falsifier")
+                ):
+                    passed = False
         return ("passed" if passed else "needs_human_review", ratio)
 
     def complete(self, worker: dict, job_id: str, body: WorkerResult) -> dict | None:
@@ -398,14 +459,29 @@ class Catalog:
                         )
                         """,
                         (
-                            run_id, worker["organization_id"], job_id, job["workspace_id"],
-                            job["packet_id"], body.modelName, body.modelDigest,
-                            body.ollamaVersion, worker["id"], canonical_hash(job["input_payload"]),
-                            job["observation_cutoff"], json.dumps(body.parameters),
-                            body.startedAt, body.completedAt,
-                            body.totalDurationNs, body.loadDurationNs, body.promptEvalCount,
-                            body.promptEvalDurationNs, body.evalCount, body.evalDurationNs,
-                            DISCONFIRMATION_SCHEMA_VERSION, verification, json.dumps(output),
+                            run_id,
+                            worker["organization_id"],
+                            job_id,
+                            job["workspace_id"],
+                            job["packet_id"],
+                            body.modelName,
+                            body.modelDigest,
+                            body.ollamaVersion,
+                            worker["id"],
+                            canonical_hash(job["input_payload"]),
+                            job["observation_cutoff"],
+                            json.dumps(body.parameters),
+                            body.startedAt,
+                            body.completedAt,
+                            body.totalDurationNs,
+                            body.loadDurationNs,
+                            body.promptEvalCount,
+                            body.promptEvalDurationNs,
+                            body.evalCount,
+                            body.evalDurationNs,
+                            DISCONFIRMATION_SCHEMA_VERSION,
+                            verification,
+                            json.dumps(output),
                             canonical_hash(output),
                         ),
                     )
@@ -418,7 +494,13 @@ class Catalog:
                           (%s, %s, 'runtime-verification', 'v1', 'deterministic', 'schema_valid', 1, NULL),
                           (%s, %s, 'runtime-verification', 'v1', 'deterministic', 'citation_resolution', %s, NULL)
                         """,
-                        (worker["organization_id"], run_id, worker["organization_id"], run_id, citation_ratio),
+                        (
+                            worker["organization_id"],
+                            run_id,
+                            worker["organization_id"],
+                            run_id,
+                            citation_ratio,
+                        ),
                     )
                     connection.execute(
                         """UPDATE llm_runs SET pipeline_version='evidence-grounded-adversarial.v2',
@@ -426,10 +508,17 @@ class Catalog:
                         verifier_model_digest=%s, verification_findings=%s::jsonb,
                         rejected_claims=%s::jsonb, repair_lineage=%s::jsonb, finish_reason=%s,
                         truncation_detected=%s, stage_hashes=%s::jsonb WHERE id=%s""",
-                        (body.verifierModelName, body.verifierModelDigest,
-                         json.dumps(output.get("verificationFindings", [])), json.dumps(output.get("rejectedClaims", [])),
-                         json.dumps(output.get("repairLineage", [])), body.finishReason, body.truncationDetected,
-                         json.dumps(body.stageHashes), run_id),
+                        (
+                            body.verifierModelName,
+                            body.verifierModelDigest,
+                            json.dumps(output.get("verificationFindings", [])),
+                            json.dumps(output.get("rejectedClaims", [])),
+                            json.dumps(output.get("repairLineage", [])),
+                            body.finishReason,
+                            body.truncationDetected,
+                            json.dumps(body.stageHashes),
+                            run_id,
+                        ),
                     )
                     connection.execute(
                         "UPDATE llm_jobs SET state = 'completed', completed_at = now() WHERE id = %s",
@@ -443,16 +532,28 @@ class Catalog:
                 verification, citation_ratio = self._verify_output(job["input_payload"], output)
                 job["state"] = "completed"
                 self.runs[run_id] = {
-                    "id": run_id, "organization_id": worker["organization_id"],
-                    "job_id": job_id, "model_name": body.modelName,
+                    "id": run_id,
+                    "organization_id": worker["organization_id"],
+                    "job_id": job_id,
+                    "model_name": body.modelName,
                     "packet_id": job.get("packet_id"),
-                    "model_digest": body.modelDigest, "verification_status": verification,
-                    "structured_output": output, "content_hash": canonical_hash(output),
-                    "citation_resolution": citation_ratio, "created_at": now(),
-                    "pipeline_version": "evidence-grounded-adversarial.v2", "verification_findings": output.get("verificationFindings", []),
-                    "rejected_claims": output.get("rejectedClaims", []), "repair_lineage": output.get("repairLineage", []), "stage_hashes": body.stageHashes,
+                    "model_digest": body.modelDigest,
+                    "verification_status": verification,
+                    "structured_output": output,
+                    "content_hash": canonical_hash(output),
+                    "citation_resolution": citation_ratio,
+                    "created_at": now(),
+                    "pipeline_version": "evidence-grounded-adversarial.v2",
+                    "verification_findings": output.get("verificationFindings", []),
+                    "rejected_claims": output.get("rejectedClaims", []),
+                    "repair_lineage": output.get("repairLineage", []),
+                    "stage_hashes": body.stageHashes,
                 }
-        return {"runId": run_id, "verificationStatus": verification, "citationResolution": citation_ratio}
+        return {
+            "runId": run_id,
+            "verificationStatus": verification,
+            "citationResolution": citation_ratio,
+        }
 
     def list_runs(self, organization_id: str) -> list[dict]:
         if self.durable:
@@ -464,17 +565,29 @@ class Catalog:
                     FROM llm_runs ORDER BY created_at DESC LIMIT 200
                     """
                 ).fetchall()
-            return [{**dict(row), "id": str(row["id"]), "job_id": str(row["job_id"])} for row in rows]
+            return [
+                {**dict(row), "id": str(row["id"]), "job_id": str(row["job_id"])} for row in rows
+            ]
         with self.lock:
             return [row for row in self.runs.values() if row["organization_id"] == organization_id]
 
     def verified_runs_for_packet(self, organization_id: str, packet_id: str) -> list[dict]:
         if self.durable:
             with self._connect() as connection:
-                rows = connection.execute("""SELECT id, packet_id, model_name, model_digest, prompt_template_id, evidence_pack_hash, observation_cutoff, verification_status, structured_output, content_hash, created_at FROM llm_runs WHERE packet_id = %s AND verification_status = 'passed' AND output_schema_version = 'specialist-output.v2' ORDER BY created_at""", (packet_id,)).fetchall()
+                rows = connection.execute(
+                    """SELECT id, packet_id, model_name, model_digest, prompt_template_id, evidence_pack_hash, observation_cutoff, verification_status, structured_output, content_hash, created_at FROM llm_runs WHERE packet_id = %s AND verification_status = 'passed' AND output_schema_version = 'specialist-output.v2' ORDER BY created_at""",
+                    (packet_id,),
+                ).fetchall()
             return [{**dict(row), "id": str(row["id"])} for row in rows]
         with self.lock:
-            return [row for row in self.runs.values() if row["organization_id"] == organization_id and row.get("packet_id") == packet_id and row.get("verification_status") == "passed" and row.get("structured_output", {}).get("schemaVersion") == "specialist-output.v2"]
+            return [
+                row
+                for row in self.runs.values()
+                if row["organization_id"] == organization_id
+                and row.get("packet_id") == packet_id
+                and row.get("verification_status") == "passed"
+                and row.get("structured_output", {}).get("schemaVersion") == "specialist-output.v2"
+            ]
 
     def review_run(
         self, organization_id: str, user_id: str, run_id: str, body: HumanReviewCreate
@@ -507,9 +620,15 @@ class Catalog:
                     ) VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s)
                     """,
                     (
-                        review_id, organization_id, run_id, user_id, body.disposition,
-                        json.dumps(body.corrections), body.unsupportedClaimCount,
-                        body.citationIssueCount, body.usefulnessScore,
+                        review_id,
+                        organization_id,
+                        run_id,
+                        user_id,
+                        body.disposition,
+                        json.dumps(body.corrections),
+                        body.unsupportedClaimCount,
+                        body.citationIssueCount,
+                        body.usefulnessScore,
                     ),
                 )
         else:

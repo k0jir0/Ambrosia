@@ -232,6 +232,10 @@ export interface SpecialistAgentOutput {
   timestamp: string;
   provider: string;
   fallbackUsed: boolean;
+  schemaVersion?: string; direction?: "supports"|"challenges"|"mixed"|"insufficient"|null;
+  verificationStatus?: "unverified"|"passed"|"repaired"|"abstained"|"human_review";
+  materialClaims?: Array<{claimId:string;text:string;claimType:"observation"|"inference"|"scenario"|"opinion";materiality:"low"|"medium"|"high";supportingEvidenceIds:string[];contradictingEvidenceIds:string[];premiseClaimIds:string[];uncertainty:number;falsifier?:string|null;admissionStatus:string}>;
+  missingEvidence?: string[]; evidencePackHash?: string|null; modelDigest?: string|null;
 }
 
 export type CoverageStatus = "full" | "partial" | "unavailable";
@@ -389,6 +393,7 @@ export interface DecisionPacket extends TradeReview {
     fallbackChain: string[];
     fallbackUsed: boolean;
     reason: string;
+    pipelineVersion?: string; verifiedRoleCount?: number; humanReviewRoleCount?: number;
   } | null;
 }
 
@@ -510,6 +515,8 @@ export interface ScannerCandidatePromotion {
 export interface ReportSection {
   title: string;
   content: string;
+  evidenceMode?: "observed"|"derived"|"simulated"|"user_asserted"|"mixed"|"unavailable";
+  claimIds?: string[]; citationEvidenceIds?: string[]; verificationStatus?: "passed"|"partial"|"unverified"|"unavailable";
 }
 
 export interface ReportArtifact {
@@ -524,7 +531,10 @@ export interface ReportArtifact {
   marketDataFreshnessSeconds: number | null;
   artifactId?: string | null;
   storageStatus?: string;
+  schemaVersion?: string; asOf?: string|null; knowledgeCutoff?: string|null; modelDigest?: string|null; sourceSnapshotHash?: string|null;
+  verifiedClaimCoverage?: number; unresolvedMaterialClaimCount?: number; rejectedClaimIds?: string[]; reportValidationStatus?: "passed"|"partial"|"legacy"|"failed";
 }
+export interface TickerIdentity { ticker:string; canonicalTicker:string; instrumentId:string; exchangeMic?:string|null; securityType:string; effectiveFrom?:string|null; resolutionProvider:string; resolutionStatus:"verified"|"provisional"|"ambiguous"; }
 
 // ---------------------------------------------------------------------------
 // Job queue

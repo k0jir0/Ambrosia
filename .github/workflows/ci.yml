@@ -503,11 +503,11 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-        - name: Verify migration/versioning contracts
-          run: python scripts/verify-migrations.py
+      - name: Verify migration/versioning contracts
+        run: python scripts/verify-migrations.py
 
-        - name: Reject reserved ticker assignments
-          run: python scripts/verify-ticker-sentinels.py
+      - name: Reject reserved ticker assignments
+        run: python scripts/verify-ticker-sentinels.py
 
   postgres-tenant-integration:
     name: PostgreSQL migration and tenant isolation

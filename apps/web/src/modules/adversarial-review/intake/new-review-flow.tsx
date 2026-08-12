@@ -34,8 +34,8 @@ export function NewReviewFlow({ initialParams }: NewReviewFlowProps) {
     const guided = getParamValue("guided");
     if (guided === "ambrosia-first-decision") {
       return {
-        ticker: "SAMPLE",
-        assetClass: "Illustrative equity basket",
+        ticker: "NVDA",
+        assetClass: "Equity",
         timeHorizon: "6-12 months",
         expression: "Research decision only — no live order",
         thesis: "A crowded AI infrastructure position deserves a governed disconfirmation review before capital is committed.",
@@ -123,6 +123,7 @@ export function NewReviewFlow({ initialParams }: NewReviewFlowProps) {
       {
         thesis,
         ticker: ticker.trim().toUpperCase(),
+        subjectType: "listed_instrument",
         assetClass,
         timeHorizon,
         intendedExpression: expression,

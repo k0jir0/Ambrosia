@@ -80,6 +80,8 @@ class ThesisRequest(BaseModel):
     time_horizon: str = "Unspecified"
     intended_expression: str = "Expression requires review"
     source_pointer: str = ""
+    subject_type: Literal["listed_instrument", "basket", "macro", "private_asset", "other"] | None = None
+    instrument_id: str | None = None
 
 
 class Claim(BaseModel):
@@ -698,6 +700,19 @@ class ScannerCandidate(BaseModel):
     dataSource: str
     dataMode: Literal["live", "fallback", "demo"]
     scannedAt: str
+    instrumentId: str
+    canonicalTicker: str
+    exchange: str
+    verificationProvider: str
+    verifiedAt: str
+    observedAt: str
+    marketDataProvider: str
+
+
+class ScannerRejectedSymbol(BaseModel):
+    ticker: str
+    reason: str
+    status: Literal["inactive", "ambiguous", "unsupported", "not_found", "provider_unavailable", "market_data_unavailable"]
 
 
 class ScannerResult(BaseModel):
@@ -706,6 +721,10 @@ class ScannerResult(BaseModel):
     universe: list[str]
     totalScanned: int
     dataMode: Literal["live", "fallback", "demo"]
+    requestedUniverse: list[str]
+    verifiedUniverse: list[str]
+    scannedUniverse: list[str]
+    rejectedSymbols: list[ScannerRejectedSymbol]
 
 
 class ReportSection(BaseModel):

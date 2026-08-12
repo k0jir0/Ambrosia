@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from services.api.app import scanner
+from services.api.app.instrument_registry import InstrumentResolution
 from services.api.app.models import MarketSnapshot, ScannerRunRequest, TechnicalIndicators
 
 
@@ -13,7 +14,7 @@ def _snapshot(price: float, volume: float = 5_000_000) -> MarketSnapshot:
         priceChange24h=1.2,
         volume24h=volume,
         dataSource="unit-test-provider",
-        dataSourceConfidence="fallback",
+        dataSourceConfidence="live",
     )
 
 
@@ -22,8 +23,20 @@ def _technicals(rsi: float | None, trend: str) -> TechnicalIndicators:
         rsi=rsi,
         trend=trend,
         updateTime="2026-07-13T00:00:00Z",
-        dataQuality="fallback",
-        dataMode="fallback",
+        dataQuality="verified",
+        dataMode="live",
+    )
+
+
+@pytest.fixture(autouse=True)
+def verified_instruments(monkeypatch) -> None:
+    monkeypatch.setattr(
+        scanner,
+        "resolve_instrument",
+        lambda ticker: InstrumentResolution(
+            ticker, "verified", ticker, f"test:{ticker}", "TESTX", "EQUITY",
+            "unit-test-reference", "2026-07-13T00:00:00Z",
+        ),
     )
 
 
@@ -67,7 +80,10 @@ def test_run_scanner_filters_sorts_and_caps_candidates(monkeypatch) -> None:
 
     assert result.universe == ["AAPL", "MSFT", "TSLA"]
     assert result.totalScanned == 3
-    assert result.dataMode == "fallback"
+    assert result.dataMode == "live"
+    assert result.requestedUniverse == ["AAPL", "MSFT", "TSLA"]
+    assert result.verifiedUniverse == ["AAPL", "MSFT", "TSLA"]
+    assert result.rejectedSymbols == []
     assert [candidate.ticker for candidate in result.candidates] == ["AAPL", "MSFT"]
     assert [candidate.score for candidate in result.candidates] == sorted(
         [candidate.score for candidate in result.candidates],
@@ -124,10 +140,12 @@ def test_scanner_request_rejects_unbounded_or_invalid_input(payload) -> None:
         ScannerRunRequest(**payload)
 
 
-def test_scanner_summary_is_fallback_when_candidate_sources_are_mixed(monkeypatch) -> None:
+def test_scanner_rejects_fallback_market_data(monkeypatch) -> None:
     live = _snapshot(210)
     live.dataSourceConfidence = "live"
-    snapshots = {"AAPL": live, "MSFT": _snapshot(430)}
+    fallback = _snapshot(430)
+    fallback.dataSourceConfidence = "fallback"
+    snapshots = {"AAPL": live, "MSFT": fallback}
     technicals = {
         "AAPL": _technicals(60, "uptrend"),
         "MSFT": _technicals(28, "sideways"),
@@ -137,6 +155,23 @@ def test_scanner_summary_is_fallback_when_candidate_sources_are_mixed(monkeypatc
 
     result = scanner.run_scanner(ScannerRunRequest(universe=["AAPL", "MSFT"], minVolume=0))
 
-    assert {candidate.dataMode for candidate in result.candidates} == {"live", "fallback"}
-    assert result.dataMode == "fallback"
+    assert [candidate.ticker for candidate in result.candidates] == ["AAPL"]
+    assert result.dataMode == "live"
+    assert result.rejectedSymbols[0].ticker == "MSFT"
+    assert result.rejectedSymbols[0].status == "market_data_unavailable"
+
+
+def test_scanner_rejects_unverified_symbol_before_market_fetch(monkeypatch) -> None:
+    monkeypatch.setattr(
+        scanner,
+        "resolve_instrument",
+        lambda ticker: InstrumentResolution(ticker, "not_found", reason="unknown symbol"),
+    )
+    monkeypatch.setattr(scanner, "build_market_snapshot", lambda ticker: pytest.fail("must not fetch"))
+
+    result = scanner.run_scanner(ScannerRunRequest(universe=["SAMPLE"], minVolume=0))
+
+    assert result.candidates == []
+    assert result.scannedUniverse == []
+    assert result.rejectedSymbols[0].status == "not_found"
 

@@ -51,7 +51,13 @@ export function NewReviewFlow({ initialParams }: NewReviewFlowProps) {
       expression: getParamValue("expression", "Long via equity"),
       thesis: getParamValue("thesis"),
       sourcePointer: getParamValue("sourcePointer"),
-      summary: source === "scanner" ? "Market Scanner candidate" : source ? `${source} prefill` : "",
+      summary: source === "scanner"
+        ? "Market Scanner candidate"
+        : source === "market-intelligence"
+          ? "Market Intelligence research"
+          : source
+            ? `${source} prefill`
+            : "",
       link: null
     };
 

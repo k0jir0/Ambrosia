@@ -738,7 +738,7 @@ resource "aws_ecs_task_definition" "api" {
       { name = "ALLOWED_ORIGINS", value = join(",", concat([local.public_web_url], var.extra_allowed_origins)) },
       { name = "AWS_REGION", value = var.aws_region },
       { name = "MARKET_SCANNER_ENABLED", value = "true" },
-      { name = "MARKET_INTELLIGENCE_ENABLED", value = "false" },
+      { name = "MARKET_INTELLIGENCE_ENABLED", value = "true" },
       { name = "MARKET_SCANNER_PROMOTION_ENABLED", value = "false" },
       { name = "ALPHA_LAB_READ_ENABLED", value = "false" },
       { name = "ALPHA_LAB_WRITES_ENABLED", value = "false" },
@@ -787,7 +787,7 @@ resource "aws_ecs_task_definition" "web" {
     environment = [
       { name = "PORT", value = "3000" },
       { name = "NEXT_PUBLIC_ENABLE_LABS", value = "false" },
-      { name = "NEXT_PUBLIC_ENABLE_MARKET_INTELLIGENCE", value = "false" },
+      { name = "NEXT_PUBLIC_ENABLE_MARKET_INTELLIGENCE", value = "true" },
       { name = "NEXT_PUBLIC_ENABLE_MARKET_SCANNER_PROMOTION", value = "false" },
       { name = "NEXT_PUBLIC_ENABLE_CALIBRATION_DEMO", value = "false" },
       { name = "NEXT_PUBLIC_ENABLE_REVIEW_EXPORT", value = "false" },

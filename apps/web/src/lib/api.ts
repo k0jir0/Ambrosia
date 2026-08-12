@@ -35,8 +35,15 @@ export class ApiUnavailableError extends Error {
   }
 }
 
+export class ApiRequestError extends Error {
+  constructor(public readonly status: number, message: string) {
+    super(message);
+    this.name = "ApiRequestError";
+  }
+}
+
 function isApiUnavailableStatus(status: number): boolean {
-  return status === 404 || status >= 500;
+  return status === 404 || (status >= 500 && status !== 503);
 }
 
 async function readJsonResponse<T>(response: Response): Promise<T> {
@@ -61,7 +68,10 @@ async function readJsonResponse<T>(response: Response): Promise<T> {
         detail = "";
       }
     }
-    throw new Error(detail ? `API request failed: ${response.status} - ${detail}` : `API request failed: ${response.status}`);
+    throw new ApiRequestError(
+      response.status,
+      detail ? `API request failed: ${response.status} - ${detail}` : `API request failed: ${response.status}`,
+    );
   }
 
   if (!contentType.includes("application/json")) {

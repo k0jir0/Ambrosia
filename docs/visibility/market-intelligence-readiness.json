@@ -1,0 +1,41 @@
+{
+  "artifactId": "market-intelligence-readiness",
+  "index": 154,
+  "status": "repository-qualified",
+  "environment": "staging-and-production-release-contract",
+  "frontendSwitch": {
+    "name": "NEXT_PUBLIC_ENABLE_MARKET_INTELLIGENCE",
+    "expected": "true",
+    "rollback": "false"
+  },
+  "runtimePolicy": {
+    "name": "MARKET_INTELLIGENCE_ENABLED",
+    "expected": "true",
+    "rollback": "false"
+  },
+  "providerMode": "explicit-per-response",
+  "eligibleRoles": ["analyst", "reviewer", "owner", "admin"],
+  "deniedRoles": ["viewer"],
+  "evidenceClasses": ["live", "stale", "fallback", "unavailable", "forbidden", "disabled", "simulated"],
+  "requiredChecks": [
+    "route-manifest",
+    "frontend-lint",
+    "frontend-build",
+    "market-intelligence-e2e",
+    "api-market-feature-policy",
+    "deployment-contract"
+  ],
+  "repositoryVerification": {
+    "routeManifest": "passed",
+    "typescript": "passed",
+    "eslint": "passed",
+    "productionBuild": "passed",
+    "focusedBrowserTests": "3 passed after cold-start timeout adjustment",
+    "diffCheck": "passed",
+    "apiTests": "blocked at collection: installed Starlette TestClient requires undeclared httpx2"
+  },
+  "deploymentEvidence": null,
+  "reviewer": "release-owner",
+  "rollbackOwner": "release-owner",
+  "claimBoundary": "Repository qualification is not evidence of a deployed environment or investment performance."
+}

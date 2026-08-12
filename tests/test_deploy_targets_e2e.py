@@ -120,7 +120,7 @@ def test_staging_index96_routes_are_live() -> None:
     if staging is None:
         pytest.skip("staging target not selected")
 
-    for route in ["/market-scanner", "/alpha", "/signals"]:
+    for route in ["/market-scanner", "/markets/AAPL", "/alpha", "/signals"]:
         response = _request("GET", f"{staging.web_url}{route}")
         assert response.status_code == 200, f"staging route {route} status={response.status_code}"
 

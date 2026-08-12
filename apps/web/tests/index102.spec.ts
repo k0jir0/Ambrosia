@@ -41,7 +41,7 @@ test.describe("mobile navigation", () => {
     await page.goto("/app");
     await page.getByRole("button", { name: /More/i }).click();
 
-    for (const label of ["Intake", "Decision Packets", "Review Queue", "Market Scanner", "Outcomes & Memory", "Team", "Admin"]) {
+    for (const label of ["Intake", "Decision Packets", "Review Queue", "Market Scanner", "Market Intelligence", "Outcomes & Memory", "Team", "Admin"]) {
       await expect(page.getByRole("link", { name: label, exact: true }).last()).toBeVisible();
     }
   });
@@ -183,6 +183,7 @@ test("market scanner omits Alpha creation from the read-only workflow", async ({
 });
 
 test("viewer cannot deep-link into Market Scanner or Market Intelligence", async ({ page }) => {
+  test.setTimeout(90_000);
   for (const routePattern of API_ROUTE_PATTERNS) await page.unroute(routePattern);
   const handleViewerRoute = async (route: Route) => {
     const url = new URL(route.request().url());
@@ -209,9 +210,11 @@ test("viewer cannot deep-link into Market Scanner or Market Intelligence", async
 
   await page.goto("/markets/AAPL");
   await expect(page).toHaveURL(/\/app$/);
+  await expect(page.getByRole("link", { name: "Market Intelligence", exact: true })).toHaveCount(0);
 });
 
 test("market intelligence labels API evidence and simulated analytics independently", async ({ page }) => {
+  test.setTimeout(90_000);
   await page.goto("/markets/AAPL");
   await expect(page.getByRole("heading", { name: /AAPL intelligence/i })).toBeVisible();
   await expect(page.getByText("Quote: Unavailable", { exact: true })).toBeVisible();
@@ -221,6 +224,48 @@ test("market intelligence labels API evidence and simulated analytics independen
   await expect(page.getByText("Fallback simulated").first()).toBeVisible();
   await expect(page.getByText("Simulated series", { exact: true })).toBeVisible();
   await expect(page.getByText(/not observed history or portfolio performance/i)).toBeVisible();
+  await expect(page.getByRole("link", { name: "Market Intelligence", exact: true }).first()).toBeVisible();
+  await expect(page.getByRole("button", { name: "Retry evidence" })).toBeVisible();
+});
+
+test("market intelligence preserves evidence provenance into governed intake", async ({ page }) => {
+  test.setTimeout(90_000);
+  for (const routePattern of API_ROUTE_PATTERNS) await page.unroute(routePattern);
+  const now = new Date().toISOString();
+  const handleMarketRoute = async (route: Route) => {
+    if (await fulfillAuthenticatedAccount(route)) return;
+    const pathname = new URL(route.request().url()).pathname.replace(/^\/api(?=\/)/, "");
+    if (pathname === "/market/AAPL/snapshot") {
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ timestamp: now, price: 221.34, priceChange24h: 0.012, volume24h: 32000000, dataSource: "qualified-test-feed", dataSourceConfidence: "live", freshnessSeconds: 5 }) });
+      return;
+    }
+    if (pathname === "/market/AAPL/technicals") {
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ rsi: 61, rsiPeriod: 14, macdLine: 1, macdSignal: 0.8, macdHistogram: 0.2, movingAverage30: 215, movingAverage50: 210, movingAverage200: 190, volatilityRealized: 0.22, trend: "uptrend", updateTime: now, dataQuality: "verified", dataMode: "live" }) });
+      return;
+    }
+    if (pathname === "/sentiment/AAPL") {
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ overallScore: 0.62, sentiment: "bullish", newsScore: 0.6, socialScore: null, trendDirection: "stable", sources: ["qualified-test-feed"], lastUpdated: now, sourceConfidence: "verified", dataMode: "live" }) });
+      return;
+    }
+    await route.abort();
+  };
+  for (const routePattern of API_ROUTE_PATTERNS) await page.route(routePattern, handleMarketRoute);
+
+  await page.goto("/markets/AAPL?compare=MSFT,QQQ");
+  await expect(page.getByText("Quote: Live", { exact: true })).toBeVisible();
+  await expect(page.getByText("Technicals: Live", { exact: true })).toBeVisible();
+  await expect(page.getByText("Sentiment: Live", { exact: true })).toBeVisible();
+  await Promise.all([
+    page.waitForURL(/\/review\/new\?/, { timeout: 30_000 }),
+    page.getByRole("link", { name: /Start governed review/i }).click(),
+  ]);
+  await expect(page.getByText("Prefilled from Market Intelligence research")).toBeVisible();
+  await expect(page.getByLabel("Ticker / instrument")).toHaveValue("AAPL");
+  await page.getByRole("button", { name: /Continue/i }).first().click();
+  await page.getByPlaceholder("State why this instrument is actionable.").fill("AAPL requires a governed review after inspecting current market evidence.");
+  await page.getByRole("button", { name: /Continue/i }).first().click();
+  await expect(page.getByText(/market-intelligence:AAPL/)).toBeVisible();
+  await expect(page.getByText(/compare:MSFT,QQQ/)).toBeVisible();
 });
 
 test("history can seed demo archive records", async ({ page }) => {

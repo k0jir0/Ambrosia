@@ -68,6 +68,7 @@ from .coordinator import run_specialists
 from .feedback_api import feedback_router
 from .auth_api import router as auth_router
 from .identity import register_identity_audit_sink
+from .instrument_registry import instrument_resolution_metrics, resolve_instrument
 from .market_providers import market_provider_status
 from .providers import provider_status, resolve_provider
 from .report import generate_report
@@ -367,6 +368,17 @@ def _require_market_intelligence_enabled() -> None:
         raise HTTPException(status_code=503, detail="Market Intelligence is temporarily unavailable")
 
 
+def _verified_market_ticker(ticker: str) -> str:
+    resolution = resolve_instrument(ticker)
+    if resolution.status == "verified":
+        return resolution.canonical_ticker or ticker.upper()
+    status_code = 422 if resolution.status == "ambiguous" else 503 if resolution.status == "provider_unavailable" else 404
+    raise HTTPException(
+        status_code=status_code,
+        detail={"status": resolution.status, "ticker": ticker.upper(), "reason": resolution.reason},
+    )
+
+
 def _require_report_export_enabled() -> None:
     environment = os.getenv("ENVIRONMENT", "development").strip().lower()
     default = environment not in {"production", "staging"}
@@ -511,6 +523,8 @@ def list_reviews() -> list[TradeReview]:
 
 @app.post("/reviews", response_model=TradeReview)
 def create_review(request: ThesisRequest) -> TradeReview:
+    if request.subject_type == "listed_instrument":
+        request = request.model_copy(update={"ticker": _verified_market_ticker(request.ticker)})
     review = generate_review(request, store.next_trial_count)
     return store.save_review(review)
 
@@ -1042,7 +1056,7 @@ def get_market_snapshot(
 ) -> MarketSnapshot:
     _require_market_intelligence_enabled()
     _require_role(ADVANCED_ROLES, x_ambrosia_role, scope="market intelligence")
-    return build_market_snapshot(ticker)
+    return build_market_snapshot(_verified_market_ticker(ticker))
 
 
 @app.get("/market/{ticker}/technicals", response_model=TechnicalIndicators)
@@ -1052,7 +1066,7 @@ def get_market_technicals(
 ) -> TechnicalIndicators:
     _require_market_intelligence_enabled()
     _require_role(ADVANCED_ROLES, x_ambrosia_role, scope="market intelligence")
-    return build_technicals(ticker)
+    return build_technicals(_verified_market_ticker(ticker))
 
 
 @app.get("/sentiment/{ticker}", response_model=SentimentData)
@@ -1062,7 +1076,7 @@ def get_sentiment(
 ) -> SentimentData:
     _require_market_intelligence_enabled()
     _require_role(ADVANCED_ROLES, x_ambrosia_role, scope="market intelligence")
-    return build_sentiment(ticker)
+    return build_sentiment(_verified_market_ticker(ticker))
 
 
 @app.post("/packets/{packet_id}/metrics/refresh", response_model=DecisionPacket)
@@ -1933,7 +1947,7 @@ def get_market_provider_status(
     x_ambrosia_role: str | None = Header(default=None, alias="X-Ambrosia-Role"),
 ) -> dict:
     _require_role(ADVANCED_ROLES, x_ambrosia_role, scope="advanced")
-    return market_provider_status()
+    return {**market_provider_status(), "instrumentResolution": instrument_resolution_metrics()}
 
 
 @app.get("/health/detailed")

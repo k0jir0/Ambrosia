@@ -18,6 +18,8 @@ export interface ThesisInput {
   timeHorizon: string;
   intendedExpression: string;
   sourcePointer: string;
+  subjectType?: "listed_instrument" | "basket" | "macro" | "private_asset" | "other";
+  instrumentId?: string;
 }
 
 export interface Claim {
@@ -424,7 +426,14 @@ export interface ScannerCandidate {
   volume24h: number;
   dataSource: string;
   dataMode: "live" | "fallback" | "demo";
-  scannedAt: string;
+    scannedAt: string;
+    instrumentId: string;
+    canonicalTicker: string;
+    exchange: string;
+    verificationProvider: string;
+    verifiedAt: string;
+    observedAt: string;
+    marketDataProvider: string;
 }
 
 export interface ScannerResult {
@@ -432,7 +441,11 @@ export interface ScannerResult {
   scannedAt: string;
   universe: string[];
   totalScanned: number;
-  dataMode: "live" | "fallback" | "demo";
+    dataMode: "live" | "fallback" | "demo";
+    requestedUniverse: string[];
+    verifiedUniverse: string[];
+    scannedUniverse: string[];
+    rejectedSymbols: Array<{ ticker: string; reason: string; status: string }>;
 }
 
 export interface ScannerRunRequest {

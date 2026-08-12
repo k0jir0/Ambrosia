@@ -468,7 +468,9 @@ export async function createReview(input: ThesisInput): Promise<TradeReview> {
         asset_class: input.assetClass,
         time_horizon: input.timeHorizon,
         intended_expression: input.intendedExpression,
-        source_pointer: input.sourcePointer
+        source_pointer: input.sourcePointer,
+        subject_type: input.subjectType,
+        instrument_id: input.instrumentId
       })
     },
     CREATE_REVIEW_TIMEOUT_MS

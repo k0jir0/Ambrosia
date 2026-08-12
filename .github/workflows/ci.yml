@@ -506,6 +506,9 @@ jobs:
       - name: Verify migration/versioning contracts
         run: python scripts/verify-migrations.py
 
+      - name: Reject reserved ticker assignments
+        run: python scripts/verify-ticker-sentinels.py
+
   postgres-tenant-integration:
     name: PostgreSQL migration and tenant isolation
     runs-on: ubuntu-latest

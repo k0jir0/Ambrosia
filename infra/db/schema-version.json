@@ -1,5 +1,5 @@
 {
-  "dbSchemaVersion": "v0009",
+  "dbSchemaVersion": "v0010",
   "reviewArtifactSchema": "review.v1",
   "packetArtifactSchema": "packet.v1",
   "notes": "Update dbSchemaVersion and add a new migration file for every schema change."

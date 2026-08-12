@@ -22,7 +22,11 @@ const DEFAULT_RESULT: ScannerResult = {
   scannedAt: "",
   universe: [],
   totalScanned: 0,
-  dataMode: "demo"
+  dataMode: "demo",
+  requestedUniverse: [],
+  verifiedUniverse: [],
+  scannedUniverse: [],
+  rejectedSymbols: []
 };
 
 const scannerPromotionEnabled = process.env.NEXT_PUBLIC_ENABLE_MARKET_SCANNER_PROMOTION === "true";

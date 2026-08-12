@@ -3,7 +3,8 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from .market_data import build_market_snapshot, build_technicals
-from .models import ScannerCandidate, ScannerResult, ScannerRunRequest
+from .instrument_registry import resolve_instrument
+from .models import ScannerCandidate, ScannerRejectedSymbol, ScannerResult, ScannerRunRequest
 
 _NYSE_DEFAULT_UNIVERSE = [
     "AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META", "TSLA", "JPM", "V",
@@ -78,10 +79,22 @@ def run_scanner(request: ScannerRunRequest) -> ScannerResult:
 
     candidates: list[ScannerCandidate] = []
     scanned_tickers: list[str] = []
+    verified_tickers: list[str] = []
+    rejected: list[ScannerRejectedSymbol] = []
 
     for ticker in universe:
-        snapshot = build_market_snapshot(ticker)
-        technicals = build_technicals(ticker)
+        resolution = resolve_instrument(ticker)
+        if resolution.status != "verified":
+            rejected.append(ScannerRejectedSymbol(ticker=ticker, status=resolution.status, reason=resolution.reason or resolution.status))
+            continue
+        canonical = resolution.canonical_ticker or ticker
+        verified_tickers.append(canonical)
+        snapshot = build_market_snapshot(canonical)
+        technicals = build_technicals(canonical)
+        if snapshot.dataSourceConfidence != "live" or technicals.dataMode != "live":
+            rejected.append(ScannerRejectedSymbol(ticker=canonical, status="market_data_unavailable", reason="no observed live market series"))
+            continue
+        observed_at = snapshot.timestamp
 
         # Volume filter
         if snapshot.volume24h < request.minVolume:
@@ -95,7 +108,7 @@ def run_scanner(request: ScannerRunRequest) -> ScannerResult:
 
         candidates.append(
             ScannerCandidate(
-                ticker=ticker,
+                ticker=canonical,
                 signal=signal,
                 thesisSuggestion=_thesis_suggestion(ticker, signal, technicals.trend, technicals.rsi),
                 score=_score_candidate(signal, technicals.rsi, technicals.trend),
@@ -106,6 +119,13 @@ def run_scanner(request: ScannerRunRequest) -> ScannerResult:
                 dataSource=snapshot.dataSource,
                 dataMode=snapshot.dataSourceConfidence,
                 scannedAt=scanned_at,
+                instrumentId=resolution.instrument_id or canonical,
+                canonicalTicker=canonical,
+                exchange=resolution.exchange or "unknown",
+                verificationProvider=resolution.provider,
+                verifiedAt=resolution.verified_at or scanned_at,
+                observedAt=observed_at,
+                marketDataProvider=snapshot.dataSource,
             )
         )
         scanned_tickers.append(ticker)
@@ -113,9 +133,7 @@ def run_scanner(request: ScannerRunRequest) -> ScannerResult:
     candidates.sort(key=lambda c: c.score, reverse=True)
     top_candidates = candidates[: request.maxCandidates]
 
-    overall_mode: str = "fallback"
-    if top_candidates and all(candidate.dataMode == "live" for candidate in top_candidates):
-        overall_mode = "live"
+    overall_mode: str = "live" if scanned_tickers else "fallback"
 
     return ScannerResult(
         candidates=top_candidates,
@@ -123,4 +141,8 @@ def run_scanner(request: ScannerRunRequest) -> ScannerResult:
         universe=scanned_tickers,
         totalScanned=len(scanned_tickers),
         dataMode=overall_mode,
+        requestedUniverse=universe,
+        verifiedUniverse=verified_tickers,
+        scannedUniverse=scanned_tickers,
+        rejectedSymbols=rejected,
     )

@@ -53,6 +53,7 @@ from .models import (
     ScannerResult,
     SentimentData,
     TechnicalIndicators,
+    TickerIdentity,
     ThesisRequest,
     TradeReview,
     ToolBoundary,
@@ -109,7 +110,7 @@ from .phase_e_execution_loop import router as phase_e_router
 from .phase_e_market_integration import router as market_integration_router
 from .index84_platform import INDEX97_SIGNAL_SEED, router as index84_platform_router
 from .mobile_api import router as mobile_router
-from .llm_catalog import router as llm_catalog_router
+from .llm_catalog import catalog as llm_catalog, router as llm_catalog_router
 from .team_api import router as team_router
 from .product_analytics import router as product_analytics_router
 from .artifact_store import artifact_store, router as artifact_router
@@ -1059,6 +1060,19 @@ def get_market_snapshot(
     return build_market_snapshot(_verified_market_ticker(ticker))
 
 
+@app.get("/market/{ticker}/identity", response_model=TickerIdentity)
+def get_market_identity(
+    ticker: str,
+    x_ambrosia_role: str | None = Header(default=None, alias="X-Ambrosia-Role"),
+) -> TickerIdentity:
+    _require_market_intelligence_enabled()
+    _require_role(ADVANCED_ROLES, x_ambrosia_role, scope="market intelligence")
+    resolution = resolve_instrument(ticker)
+    if resolution.status != "verified":
+        raise HTTPException(status_code=422 if resolution.status == "ambiguous" else 503 if resolution.status == "provider_unavailable" else 404, detail={"status": resolution.status, "reason": resolution.reason})
+    return TickerIdentity(ticker=ticker.upper(), canonicalTicker=resolution.canonical_ticker or ticker.upper(), instrumentId=resolution.instrument_id or f"ticker:{ticker.upper()}", exchangeMic=resolution.exchange, securityType=(resolution.instrument_type or "listed_instrument").lower(), effectiveFrom=resolution.verified_at, resolutionProvider=resolution.provider, resolutionStatus="verified")
+
+
 @app.get("/market/{ticker}/technicals", response_model=TechnicalIndicators)
 def get_market_technicals(
     ticker: str,
@@ -1210,12 +1224,16 @@ def run_packet_agents(packet_id: str, body: AgentRunRequest) -> DecisionPacket:
     updated_packet = base_packet.model_copy(
         update={
             "agentOutputs": specialist_outputs,
+            "coordinatorVersion": "coordinator.v2",
             "providerInfo": {
                 "name": selected_provider.name,
                 "type": selected_provider.provider_type,
                 "fallbackChain": selected_provider.fallback_chain,
                 "fallbackUsed": runtime_fallback_used,
                 "reason": selected_provider.reason,
+                "pipelineVersion": "evidence-grounded-adversarial.v2" if selected_provider.provider_type == "ollama" else "specialist-output.v1",
+                "verifiedRoleCount": sum(1 for output in specialist_outputs.values() if output and output.verificationStatus in {"passed", "repaired", "abstained"}),
+                "humanReviewRoleCount": sum(1 for output in specialist_outputs.values() if output and output.verificationStatus == "human_review"),
             },
             "audit": [
                 *base_packet.audit,
@@ -1232,7 +1250,7 @@ def run_packet_agents(packet_id: str, body: AgentRunRequest) -> DecisionPacket:
         _originating_review_id_from_packet_id(packet_id),
         f"{packet_id}:agents.run:{selected_provider.name}:{datetime.now().isoformat()}",
         "completed",
-        "coordinator.v1",
+        "coordinator.v2",
     )
     saved = store.commit_packet_transition(
         updated_packet,
@@ -2075,7 +2093,8 @@ def generate_packet_report(packet_id: str) -> ReportArtifact:
     if packet is None:
         raise HTTPException(status_code=404, detail="Packet not found")
 
-    report = generate_report(packet)
+    principal=current_principal(); runs=llm_catalog.verified_runs_for_packet(principal.organization_id,packet_id) if principal and principal.organization_id else []
+    report = generate_report(packet, runs)
     storage = artifact_store.persist_json(
         "reports", packet_id, f"decision-report-{report.createdAt}.json",
         report.model_dump(mode="json"),
@@ -2113,7 +2132,8 @@ def generate_packet_report_async(
             if pkt is None:
                 store.fail_job(job.id, "Packet no longer found")
                 return
-            rpt = generate_report(pkt)
+            task_principal=current_principal(); runs=llm_catalog.verified_runs_for_packet(task_principal.organization_id,packet_id) if task_principal and task_principal.organization_id else []
+            rpt = generate_report(pkt, runs)
             storage = artifact_store.persist_json(
                 "reports", packet_id, f"decision-report-{rpt.createdAt}.json",
                 rpt.model_dump(mode="json"),

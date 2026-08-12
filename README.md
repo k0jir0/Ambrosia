@@ -219,9 +219,10 @@ evidence. That failure is a safety property, not missing repository work.
   Scanner uses `NEXT_PUBLIC_ENABLE_MARKET_SCANNER` with
   `MARKET_SCANNER_ENABLED`; ticker intelligence is independently controlled by
   `NEXT_PUBLIC_ENABLE_MARKET_INTELLIGENCE` with
-  `MARKET_INTELLIGENCE_ENABLED`. Market Intelligence is fail-closed in staging
-  and production until its evidence panels are qualified. AWS release builds
-  enable scanner discovery and review intake while keeping scanner promotion
+  `MARKET_INTELLIGENCE_ENABLED`. Market Intelligence is explicitly enabled in
+  staging and production release configuration after Index154 qualification;
+  either switch still provides an independent fail-closed rollback. AWS release builds
+  enable scanner discovery, ticker research, and review intake while keeping scanner promotion
   and unrelated research or execution capabilities disabled.
 - AWS staging enforces governed selective integration, while the mobile client
   still uses a legacy direct decision endpoint. Mobile parity requires an

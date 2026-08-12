@@ -62,7 +62,7 @@ jobs:
             --build-arg "NEXT_PUBLIC_API_BASE_URL=https://api-staging.example.com" \
             --build-arg "NEXT_PUBLIC_ENABLE_LABS=false" \
             --build-arg "NEXT_PUBLIC_ENABLE_MARKET_SCANNER=true" \
-            --build-arg "NEXT_PUBLIC_ENABLE_MARKET_INTELLIGENCE=false" \
+            --build-arg "NEXT_PUBLIC_ENABLE_MARKET_INTELLIGENCE=true" \
             --build-arg "NEXT_PUBLIC_ENABLE_MARKET_SCANNER_PROMOTION=false" \
             --build-arg "NEXT_PUBLIC_ENABLE_OPERATIONS=false" \
             --build-arg "NEXT_PUBLIC_ENABLE_CALIBRATION=false" \
@@ -243,7 +243,7 @@ jobs:
             --build-arg "NEXT_PUBLIC_API_BASE_URL=$API_BASE_URL" \
             --build-arg "NEXT_PUBLIC_ENABLE_LABS=false" \
             --build-arg "NEXT_PUBLIC_ENABLE_MARKET_SCANNER=true" \
-            --build-arg "NEXT_PUBLIC_ENABLE_MARKET_INTELLIGENCE=false" \
+            --build-arg "NEXT_PUBLIC_ENABLE_MARKET_INTELLIGENCE=true" \
             --build-arg "NEXT_PUBLIC_ENABLE_MARKET_SCANNER_PROMOTION=false" \
             --build-arg "NEXT_PUBLIC_ENABLE_OPERATIONS=false" \
             --build-arg "NEXT_PUBLIC_ENABLE_CALIBRATION=false" \

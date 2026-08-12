@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { Activity, ArrowRightLeft, BarChart2, RefreshCw, Search } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
+import { Activity, ArrowRight, ArrowRightLeft, BarChart2, RefreshCw, Search } from "lucide-react";
 import { useRouter } from "next/navigation";
 import {
   Bar,
@@ -23,6 +24,7 @@ import {
   getMarketSnapshot,
   getMarketTechnicals,
   getSentiment,
+  ApiRequestError,
 } from "@/lib/api";
 import {
   buildCorrelationMatrix,
@@ -41,7 +43,7 @@ import { Badge, Panel, SectionTitle, cn } from "./ui";
 
 type Tab = "primary" | "analytics" | "macro" | "performance";
 type PriceStyle = "candlestick" | "ohlc" | "line";
-type EvidenceStatus = "loading" | "live" | "unavailable";
+type EvidenceStatus = "loading" | "live" | "stale" | "fallback" | "unavailable" | "forbidden" | "disabled";
 
 const TABS: Array<{ id: Tab; label: string }> = [
   { id: "primary", label: "Primary" },
@@ -108,34 +110,27 @@ export function MarketIntelligencePage({ ticker, compare = [] }: { ticker: strin
     router.push(`/markets/${encodeURIComponent(nextTicker)}`);
   }
 
-  useEffect(() => {
-    let cancelled = false;
+  const loadEvidence = useCallback(async () => {
+    setSnapshotStatus("loading");
+    setTechnicalsStatus("loading");
+    setSentimentStatus("loading");
+    const [nextSnapshot, nextTechnicals, nextSentiment] = await Promise.allSettled([
+      getMarketSnapshot(ticker),
+      getMarketTechnicals(ticker),
+      getSentiment(ticker),
+    ]);
 
-    async function loadEvidence() {
-      setSnapshotStatus("loading");
-      setTechnicalsStatus("loading");
-      setSentimentStatus("loading");
-      const [nextSnapshot, nextTechnicals, nextSentiment] = await Promise.allSettled([
-          getMarketSnapshot(ticker),
-          getMarketTechnicals(ticker),
-          getSentiment(ticker),
-      ]);
-
-      if (cancelled) return;
-      setSnapshot(nextSnapshot.status === "fulfilled" ? nextSnapshot.value : null);
-      setSnapshotStatus(nextSnapshot.status === "fulfilled" ? "live" : "unavailable");
-      setTechnicals(nextTechnicals.status === "fulfilled" ? nextTechnicals.value : null);
-      setTechnicalsStatus(nextTechnicals.status === "fulfilled" ? "live" : "unavailable");
-      setSentiment(nextSentiment.status === "fulfilled" ? nextSentiment.value : null);
-      setSentimentStatus(nextSentiment.status === "fulfilled" ? "live" : "unavailable");
-    }
-
-    void loadEvidence();
-
-    return () => {
-      cancelled = true;
-    };
+    setSnapshot(nextSnapshot.status === "fulfilled" ? nextSnapshot.value : null);
+    setSnapshotStatus(nextSnapshot.status === "fulfilled" ? snapshotEvidenceStatus(nextSnapshot.value) : rejectedEvidenceStatus(nextSnapshot.reason));
+    setTechnicals(nextTechnicals.status === "fulfilled" ? nextTechnicals.value : null);
+    setTechnicalsStatus(nextTechnicals.status === "fulfilled" ? timedEvidenceStatus(nextTechnicals.value.dataMode, nextTechnicals.value.updateTime, 15 * 60) : rejectedEvidenceStatus(nextTechnicals.reason));
+    setSentiment(nextSentiment.status === "fulfilled" ? nextSentiment.value : null);
+    setSentimentStatus(nextSentiment.status === "fulfilled" ? timedEvidenceStatus(nextSentiment.value.dataMode, nextSentiment.value.lastUpdated, 60 * 60) : rejectedEvidenceStatus(nextSentiment.reason));
   }, [ticker]);
+
+  useEffect(() => {
+    void loadEvidence();
+  }, [loadEvidence]);
 
   const displayPrice = snapshot?.price ?? latest.close;
   const displayDelta = snapshot ? (snapshot.priceChange24h * 100).toFixed(2) : delta;
@@ -157,14 +152,20 @@ export function MarketIntelligencePage({ ticker, compare = [] }: { ticker: strin
               <Badge tone="neutral">{providerBadge}</Badge>
               {compareSymbols.length > 0 ? <Badge tone="warn">Compare: {compareSymbols.join(" · ")}</Badge> : null}
             </div>
-            <h1 className="text-2xl font-semibold">{summary.headline}</h1>
+            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-teal">Market Intelligence</p>
+            <h1 className="mt-1 text-2xl font-semibold">{summary.headline}</h1>
             <p className="mt-2 max-w-4xl text-sm text-ink/75">{summary.line}</p>
           </div>
+          <div className="flex flex-col items-end gap-2">
           <div className="rounded-md border border-line bg-fog/70 px-4 py-3 text-right">
             <p className="text-xs uppercase tracking-wide text-ink/60">Last Price</p>
             <p className="text-2xl font-semibold">${displayPrice.toFixed(2)}</p>
             <p className={cn("text-sm", Number(displayDelta) >= 0 ? "text-teal" : "text-coral")}>{Number(displayDelta) >= 0 ? "+" : ""}{displayDelta}%</p>
             <p className="mt-1 text-[11px] text-ink/55">{priceProvenance}</p>
+          </div>
+          <Link href={buildReviewHref(ticker, compareSymbols, snapshot, technicals, sentiment)} className="focus-ring inline-flex items-center gap-2 rounded-md bg-teal px-3 py-2 text-sm font-semibold text-fog">
+            Start governed review <ArrowRight className="h-4 w-4" />
+          </Link>
           </div>
         </div>
         <form onSubmit={handleTickerSearch} className="mt-4 flex flex-wrap items-center gap-2">
@@ -191,13 +192,28 @@ export function MarketIntelligencePage({ ticker, compare = [] }: { ticker: strin
         </form>
       </Panel>
 
+      <p className="sr-only" aria-live="polite">
+        Quote {snapshotStatus}. Technicals {technicalsStatus}. Sentiment {sentimentStatus}.
+      </p>
+
+      {[snapshotStatus, technicalsStatus, sentimentStatus].some((status) => ["unavailable", "forbidden", "disabled"].includes(status)) ? (
+        <Panel className="flex flex-wrap items-center justify-between gap-3 p-4">
+          <p className="text-sm text-ink/70">Some evidence is unavailable. Derived and simulated panels remain separately labelled and are not a substitute for observed data.</p>
+          <button type="button" onClick={() => void loadEvidence()} className="focus-ring inline-flex items-center gap-2 rounded-md border border-line px-3 py-2 text-sm font-semibold">
+            <RefreshCw className="h-4 w-4" /> Retry evidence
+          </button>
+        </Panel>
+      ) : null}
+
       <Panel className="p-3">
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap gap-2" role="tablist" aria-label="Market Intelligence views">
           {TABS.map((tab) => (
             <button
               key={tab.id}
               type="button"
               onClick={() => setActiveTab(tab.id)}
+              role="tab"
+              aria-selected={activeTab === tab.id}
               className={cn(
                 "focus-ring rounded-md border px-3 py-1.5 text-sm",
                 activeTab === tab.id ? "border-teal bg-teal/10 text-teal" : "border-line text-ink/70"
@@ -233,6 +249,7 @@ export function MarketIntelligencePage({ ticker, compare = [] }: { ticker: strin
               </div>
             </div>
             <div className="h-80">
+              <p className="sr-only">Simulated price series for {ticker}; this chart is not observed market history.</p>
               <ResponsiveContainer width="100%" height="100%">
                 {priceStyle === "line" ? (
                   <LineChart data={mergedLineSeries}>
@@ -290,6 +307,7 @@ export function MarketIntelligencePage({ ticker, compare = [] }: { ticker: strin
               <Badge tone="warn">Simulated</Badge>
             </div>
             <div className="mt-3 h-56">
+              <p className="sr-only">Simulated participation and momentum series for {ticker}.</p>
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={series.slice(-36)}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#2b3f4c" />
@@ -315,6 +333,7 @@ export function MarketIntelligencePage({ ticker, compare = [] }: { ticker: strin
           <Panel className="p-4">
             <LabeledSection eyebrow="Risk-Return Scatter" title="Relative efficiency view" />
             <div className="mt-3 h-80">
+              <p className="sr-only">Derived risk-return scatter for {ticker} and comparison assets.</p>
               <ResponsiveContainer width="100%" height="100%">
                 <ScatterChart>
                   <CartesianGrid strokeDasharray="3 3" stroke="#2b3f4c" />
@@ -332,6 +351,7 @@ export function MarketIntelligencePage({ ticker, compare = [] }: { ticker: strin
           <Panel className="p-4 xl:col-span-2">
             <LabeledSection eyebrow="Efficient Frontier" title="Portfolio construction reference" />
             <div className="mt-3 h-72">
+              <p className="sr-only">Derived efficient-frontier reference. It is not portfolio performance.</p>
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={frontier.curve}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#2b3f4c" />
@@ -355,6 +375,7 @@ export function MarketIntelligencePage({ ticker, compare = [] }: { ticker: strin
         <Panel className="p-4">
           <LabeledSection eyebrow="Yield Curve" title="Cross-asset macro regime" />
           <div className="mt-3 h-80">
+            <p className="sr-only">Simulated yield curve for macro-context demonstration.</p>
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={yieldCurve}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#2b3f4c" />
@@ -375,6 +396,7 @@ export function MarketIntelligencePage({ ticker, compare = [] }: { ticker: strin
           <Panel className="p-4">
             <LabeledSection eyebrow="Synthetic Path" title="Illustrative cumulative scenario" />
             <div className="mt-3 h-72">
+              <p className="sr-only">Hypothetical cumulative scenario, not realized or backtested performance.</p>
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={performance.equity}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#2b3f4c" />
@@ -390,6 +412,7 @@ export function MarketIntelligencePage({ ticker, compare = [] }: { ticker: strin
           <Panel className="p-4">
             <LabeledSection eyebrow="Synthetic Drawdown" title="Illustrative peak-to-trough scenario" />
             <div className="mt-3 h-72">
+              <p className="sr-only">Hypothetical peak-to-trough scenario, not realized drawdown.</p>
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={performance.drawdown}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#2b3f4c" />
@@ -415,8 +438,59 @@ export function MarketIntelligencePage({ ticker, compare = [] }: { ticker: strin
 }
 
 function EvidenceBadge({ label, status }: { label: string; status: EvidenceStatus }) {
-  const value = status === "live" ? "Live" : status === "loading" ? "Loading" : "Unavailable";
-  return <Badge tone={status === "live" ? "good" : status === "loading" ? "neutral" : "warn"}>{label}: {value}</Badge>;
+  const value: Record<EvidenceStatus, string> = {
+    loading: "Loading",
+    live: "Live",
+    stale: "Stale",
+    fallback: "Fallback",
+    unavailable: "Unavailable",
+    forbidden: "Forbidden",
+    disabled: "Disabled",
+  };
+  return <Badge tone={status === "live" ? "good" : status === "loading" ? "neutral" : "warn"}>{label}: {value[status]}</Badge>;
+}
+
+function rejectedEvidenceStatus(reason: unknown): EvidenceStatus {
+  if (reason instanceof ApiRequestError && (reason.status === 401 || reason.status === 403)) return "forbidden";
+  if (reason instanceof ApiRequestError && reason.status === 503) return "disabled";
+  return "unavailable";
+}
+
+function snapshotEvidenceStatus(value: MarketSnapshot): EvidenceStatus {
+  if (value.dataSourceConfidence !== "live") return "fallback";
+  return value.freshnessSeconds !== null && value.freshnessSeconds > 15 * 60 ? "stale" : "live";
+}
+
+function timedEvidenceStatus(mode: "live" | "fallback" | "demo", timestamp: string, staleAfterSeconds: number): EvidenceStatus {
+  if (mode !== "live") return "fallback";
+  const observedAt = Date.parse(timestamp);
+  if (!Number.isFinite(observedAt)) return "stale";
+  return Date.now() - observedAt > staleAfterSeconds * 1000 ? "stale" : "live";
+}
+
+function buildReviewHref(
+  ticker: string,
+  compare: string[],
+  snapshot: MarketSnapshot | null,
+  technicals: TechnicalIndicators | null,
+  sentiment: SentimentData | null,
+): string {
+  const params = new URLSearchParams({
+    source: "market-intelligence",
+    ticker: ticker.toUpperCase(),
+    assetClass: "Equities",
+    timeHorizon: "2-6 weeks",
+    expression: "Research decision only — no live order",
+    sourcePointer: [
+      `market-intelligence:${ticker.toUpperCase()}`,
+      snapshot ? `quote:${snapshot.dataSourceConfidence}:${snapshot.dataSource}:${snapshot.timestamp}` : "quote:unavailable",
+      technicals ? `technicals:${technicals.dataMode}:${technicals.updateTime}` : "technicals:unavailable",
+      sentiment ? `sentiment:${sentiment.dataMode}:${sentiment.lastUpdated}` : "sentiment:unavailable",
+      compare.length ? `compare:${compare.join(",")}` : "",
+    ].filter(Boolean).join(" | "),
+  });
+  if (compare.length) params.set("compare", compare.join(","));
+  return `/review/new?${params.toString()}`;
 }
 
 function LabeledSection({ eyebrow, title }: { eyebrow: string; title: string }) {

@@ -7,6 +7,7 @@ import { getJobStatus, listJobs, listScannerCandidatePromotions, runScanner, run
 import type { JobRecord, ScannerCandidate, ScannerCandidatePromotion, ScannerResult, ScannerRunRequest, ScannerSignal } from "@/lib/types";
 import { Badge, Panel, SectionTitle, cn } from "@/components/ui";
 import { RouteNotice, RouteStatusBadge, type RouteStatus } from "@/components/route-state";
+import { isFeatureEnabled } from "@/lib/route-availability";
 
 type WatchlistKey = "core" | "etfs" | "tech" | "custom";
 
@@ -25,6 +26,7 @@ const DEFAULT_RESULT: ScannerResult = {
 };
 
 const scannerPromotionEnabled = process.env.NEXT_PUBLIC_ENABLE_MARKET_SCANNER_PROMOTION === "true";
+const marketIntelligenceEnabled = isFeatureEnabled("market-intelligence");
 
 export default function MarketScannerPage() {
   const [status, setStatus] = useState<RouteStatus>("loading");
@@ -462,9 +464,15 @@ function CandidateRow({
           {validateBusy ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : null}
           Queue validation
         </button>
-        <Link href={`/markets/${encodeURIComponent(candidate.ticker)}`} className="focus-ring rounded-md border border-line bg-paper px-2 py-1 text-xs font-semibold text-ink/85">
-          Open ticker intelligence
-        </Link>
+        {marketIntelligenceEnabled ? (
+          <Link href={`/markets/${encodeURIComponent(candidate.ticker)}`} className="focus-ring rounded-md border border-line bg-paper px-2 py-1 text-xs font-semibold text-ink/85">
+            Open ticker intelligence
+          </Link>
+        ) : (
+          <span className="rounded-md border border-line bg-paper px-2 py-1 text-xs text-ink/50" title="Market Intelligence is not enabled in this environment">
+            Ticker intelligence unavailable
+          </span>
+        )}
       </div>
     </div>
   );

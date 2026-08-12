@@ -61,7 +61,7 @@ services:
       - key: SIGNALS_EXECUTION_HANDOFF_ENABLED
         value: "false"
       - key: MARKET_INTELLIGENCE_ENABLED
-        value: "false"
+        value: "true"
       - key: REPORT_EXPORT_ENABLED
         value: "false"
       - key: RBAC_ENABLED
@@ -104,7 +104,7 @@ services:
       - key: NEXT_PUBLIC_ENABLE_MARKET_SCANNER
         value: "false"
       - key: NEXT_PUBLIC_ENABLE_MARKET_INTELLIGENCE
-        value: "false"
+        value: "true"
       - key: NEXT_PUBLIC_ENABLE_MARKET_SCANNER_PROMOTION
         value: "false"
       - key: NEXT_PUBLIC_ENABLE_OPERATIONS
@@ -160,7 +160,7 @@ services:
       - key: SIGNALS_EXECUTION_HANDOFF_ENABLED
         value: "false"
       - key: MARKET_INTELLIGENCE_ENABLED
-        value: "false"
+        value: "true"
       - key: REPORT_EXPORT_ENABLED
         value: "false"
       - key: RBAC_ENABLED
@@ -203,7 +203,7 @@ services:
       - key: NEXT_PUBLIC_ENABLE_MARKET_SCANNER
         value: "true"
       - key: NEXT_PUBLIC_ENABLE_MARKET_INTELLIGENCE
-        value: "false"
+        value: "true"
       - key: NEXT_PUBLIC_ENABLE_MARKET_SCANNER_PROMOTION
         value: "false"
       - key: NEXT_PUBLIC_ENABLE_OPERATIONS

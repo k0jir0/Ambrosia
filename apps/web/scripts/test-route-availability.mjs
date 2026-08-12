@@ -10,7 +10,7 @@ const compiled = ts.transpileModule(source, {
 const commonJsModule = { exports: {} };
 vm.runInNewContext(compiled, { module: commonJsModule, exports: commonJsModule.exports, process: { env: { NODE_ENV: "test" } }, Set });
 
-const { ROUTE_AVAILABILITY, validateRouteManifest } = commonJsModule.exports;
+const { ROUTE_AVAILABILITY, getRouteAvailability, isRouteAvailable, validateRouteManifest } = commonJsModule.exports;
 const marketScanner = ROUTE_AVAILABILITY[0];
 const marketIntelligence = ROUTE_AVAILABILITY[1];
 
@@ -20,6 +20,12 @@ assert.equal(marketScanner.buildSwitch, "NEXT_PUBLIC_ENABLE_MARKET_SCANNER");
 assert.deepEqual(Array.from(marketIntelligence.paths), ["/markets"]);
 assert.equal(marketIntelligence.buildSwitch, "NEXT_PUBLIC_ENABLE_MARKET_INTELLIGENCE");
 assert.equal(marketIntelligence.runtimePolicy, "MARKET_INTELLIGENCE_ENABLED");
+assert.equal(getRouteAvailability("/markets/AAPL")?.featureId, "market-intelligence");
+assert.equal(isRouteAvailable("/markets/AAPL", "analyst"), true);
+assert.equal(isRouteAvailable("/markets/AAPL", "reviewer"), true);
+assert.equal(isRouteAvailable("/markets/AAPL", "owner"), true);
+assert.equal(isRouteAvailable("/markets/AAPL", "admin"), true);
+assert.equal(isRouteAvailable("/markets/AAPL", "viewer"), false);
 assert.match(
   validateRouteManifest([marketScanner, { ...marketScanner, featureId: "operations" }]).join("\n"),
   /Duplicate route prefix/,

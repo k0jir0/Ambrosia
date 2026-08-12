@@ -7,9 +7,9 @@ const evidence = [
   ["Reproducible source", "Terraform describes AWS network, ECS, RDS, Redis, SES, S3, WAF, secrets, alarms, and DNS; container builds run as non-root."],
 ];
 const pending = [
-  "AWS staging and production have not been provisioned from this repository without owner credentials and a domain.",
-  "Render data inventories, two restore rehearsals, a rollback rehearsal, and a 72-hour production observation remain external release gates.",
-  "No paid design-partner retention or performance claim is asserted; customer and finance evidence must be measured prospectively.",
+  "AWS production is gated on owner-approved provisioning and domain setup.",
+  "Data integrity, restore drills, rollback rehearsal, and a 72-hour production observation remain release criteria.",
+  "Customer and financial outcomes will be measured prospectively rather than asserted upfront.",
 ];
 
 export default function CompanyProofPage() {

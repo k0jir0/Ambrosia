@@ -26,6 +26,16 @@ def _job(*, evidence_id: str = "source-1") -> LlmJobCreate:
     )
 
 
+def _qualified_model(name: str, digest: str, context_length: int = 8192) -> dict:
+    return {
+        "name": name,
+        "digest": digest,
+        "contextLength": context_length,
+        "readiness": "preflighted",
+        "preflightCompletedAt": "2026-08-13T00:00:00Z",
+    }
+
+
 def _result(*, reference: str = "source-1", abstained: bool = False) -> WorkerResult:
     started = datetime.now(UTC)
     return WorkerResult(
@@ -178,11 +188,11 @@ def test_operation_jobs_require_compatible_model_and_fenced_lease(monkeypatch) -
         ),
     )
     assert (
-        local.claim(worker, 120, WorkerClaim(models=[{"name": "wrong", "digest": "sha256:wrong"}]))
+        local.claim(worker, 120, WorkerClaim(models=[_qualified_model("wrong", "sha256:wrong")]))
         is None
     )
     lease = local.claim(
-        worker, 120, WorkerClaim(models=[{"name": "approved", "digest": "sha256:approved"}])
+        worker, 120, WorkerClaim(models=[_qualified_model("approved", "sha256:approved")])
     )
     assert lease and lease["generation"] == 1 and lease["leaseId"]
     stale = _result().model_copy(update={"leaseId": "stale", "generation": lease["generation"]})

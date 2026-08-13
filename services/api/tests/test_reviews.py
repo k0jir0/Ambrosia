@@ -18,6 +18,16 @@ from app.store import ReviewStore
 client = TestClient(app)
 
 
+def _qualified_model(name: str, digest: str, context_length: int = 8192) -> dict:
+    return {
+        "name": name,
+        "digest": digest,
+        "contextLength": context_length,
+        "readiness": "preflighted",
+        "preflightCompletedAt": "2026-08-13T00:00:00Z",
+    }
+
+
 def test_ollama_bridge_staging_rollout_is_tenant_allowlisted(monkeypatch) -> None:
     monkeypatch.setenv("ENVIRONMENT", "staging")
     monkeypatch.setenv("OLLAMA_REVIEW_BRIDGE_ENABLED", "true")
@@ -422,7 +432,7 @@ def _enroll_ollama_worker(digest: str) -> dict[str, str]:
         json={
             "workerVersion": "test",
             "ollamaVersion": "test",
-            "models": [{"name": "llama3.1:8b", "digest": digest, "contextLength": 8192}],
+            "models": [_qualified_model("llama3.1:8b", digest)],
         },
     )
     assert response.status_code == 200
@@ -475,9 +485,7 @@ def test_browser_ollama_request_resolves_single_active_model_policy(monkeypatch)
         headers=headers,
         json={
             "leaseSeconds": 120,
-            "models": [
-                {"name": "llama3.1:8b", "digest": "sha256:browser-policy", "contextLength": 8192}
-            ],
+            "models": [_qualified_model("llama3.1:8b", "sha256:browser-policy")],
         },
     ).json()["job"]
     result = _ollama_result(claim)
@@ -485,9 +493,12 @@ def test_browser_ollama_request_resolves_single_active_model_policy(monkeypatch)
     result["resultHash"] = hashlib.sha256(
         json.dumps(result["output"], sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
-    assert client.post(
-        f"/local-worker/jobs/{claim['id']}/result", headers=headers, json=result
-    ).status_code == 200
+    assert (
+        client.post(
+            f"/local-worker/jobs/{claim['id']}/result", headers=headers, json=result
+        ).status_code
+        == 200
+    )
 
 
 def test_ollama_operation_requires_unambiguous_active_policy(monkeypatch) -> None:
@@ -508,17 +519,20 @@ def test_two_concurrent_workers_receive_only_one_lease(monkeypatch) -> None:
     assert client.post("/packets", json=_build_packet_payload(packet_id)).status_code == 200
     first = _enroll_ollama_worker(digest)
     second = _enroll_ollama_worker(digest)
-    assert client.post(
-        f"/packets/{packet_id}/agent-operations",
-        json={"providerMode": "ollama", "requestedModelDigest": digest},
-    ).status_code == 202
-    body = {"leaseSeconds": 120, "models": [{"name": "test", "digest": digest}]}
+    assert (
+        client.post(
+            f"/packets/{packet_id}/agent-operations",
+            json={"providerMode": "ollama", "requestedModelDigest": digest},
+        ).status_code
+        == 202
+    )
+    body = {"leaseSeconds": 120, "models": [_qualified_model("test", digest)]}
     with ThreadPoolExecutor(max_workers=2) as pool:
         claims = list(
             pool.map(
-                lambda headers: client.post("/local-worker/claim", headers=headers, json=body).json()[
-                    "job"
-                ],
+                lambda headers: client.post(
+                    "/local-worker/claim", headers=headers, json=body
+                ).json()["job"],
                 [first, second],
             )
         )
@@ -533,14 +547,17 @@ def test_expired_lease_cannot_commit(monkeypatch) -> None:
     packet_id = "packet-expired-lease"
     assert client.post("/packets", json=_build_packet_payload(packet_id)).status_code == 200
     headers = _enroll_ollama_worker(digest)
-    assert client.post(
-        f"/packets/{packet_id}/agent-operations",
-        json={"providerMode": "ollama", "requestedModelDigest": digest},
-    ).status_code == 202
+    assert (
+        client.post(
+            f"/packets/{packet_id}/agent-operations",
+            json={"providerMode": "ollama", "requestedModelDigest": digest},
+        ).status_code
+        == 202
+    )
     claim = client.post(
         "/local-worker/claim",
         headers=headers,
-        json={"leaseSeconds": 120, "models": [{"name": "test", "digest": digest}]},
+        json={"leaseSeconds": 120, "models": [_qualified_model("test", digest)]},
     ).json()["job"]
     if llm_catalog.durable:
         with llm_catalog._connect(tenant=False) as connection:
@@ -570,7 +587,7 @@ def test_packet_edit_supersedes_worker_result(monkeypatch) -> None:
     claim = client.post(
         "/local-worker/claim",
         headers=headers,
-        json={"leaseSeconds": 120, "models": [{"name": "test", "digest": digest}]},
+        json={"leaseSeconds": 120, "models": [_qualified_model("test", digest)]},
     ).json()["job"]
     payload["packetVersion"] = 2
     assert client.post("/packets", json=payload).status_code == 200
@@ -599,7 +616,7 @@ def test_rejected_ollama_output_completes_as_human_review_without_packet_mutatio
     claim = client.post(
         "/local-worker/claim",
         headers=headers,
-        json={"leaseSeconds": 120, "models": [{"name": "test", "digest": digest}]},
+        json={"leaseSeconds": 120, "models": [_qualified_model("test", digest)]},
     ).json()["job"]
     result = _ollama_result(claim)
     result["modelDigest"] = digest
@@ -608,9 +625,12 @@ def test_rejected_ollama_output_completes_as_human_review_without_packet_mutatio
     result["resultHash"] = hashlib.sha256(
         json.dumps(result["output"], sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
-    assert client.post(
-        f"/local-worker/jobs/{claim['id']}/result", headers=headers, json=result
-    ).status_code == 200
+    assert (
+        client.post(
+            f"/local-worker/jobs/{claim['id']}/result", headers=headers, json=result
+        ).status_code
+        == 200
+    )
     status = client.get(f"/operations/{operation['id']}").json()
     assert status["state"] == "completed"
     assert status["verificationStatus"] == "human_review"
@@ -628,26 +648,35 @@ def test_revoked_worker_cannot_complete_inference(monkeypatch) -> None:
     assert client.post("/packets", json=_build_packet_payload(packet_id)).status_code == 200
     credential = client.post("/llm/workers", json={"name": "Revoked worker"}).json()
     headers = {"Authorization": f"Bearer {credential['token']}"}
-    assert client.post(
-        "/local-worker/capabilities",
-        headers=headers,
-        json={"models": [{"name": "test", "digest": digest, "contextLength": 8192}]},
-    ).status_code == 200
-    assert client.post(
-        f"/packets/{packet_id}/agent-operations",
-        json={"providerMode": "ollama", "requestedModelDigest": digest},
-    ).status_code == 202
+    assert (
+        client.post(
+            "/local-worker/capabilities",
+            headers=headers,
+            json={"models": [_qualified_model("test", digest)]},
+        ).status_code
+        == 200
+    )
+    assert (
+        client.post(
+            f"/packets/{packet_id}/agent-operations",
+            json={"providerMode": "ollama", "requestedModelDigest": digest},
+        ).status_code
+        == 202
+    )
     claim = client.post(
         "/local-worker/claim",
         headers=headers,
-        json={"leaseSeconds": 120, "models": [{"name": "test", "digest": digest}]},
+        json={"leaseSeconds": 120, "models": [_qualified_model("test", digest)]},
     ).json()["job"]
     assert client.delete(f"/llm/workers/{credential['id']}").status_code == 200
     result = _ollama_result(claim)
     result["modelDigest"] = digest
-    assert client.post(
-        f"/local-worker/jobs/{claim['id']}/result", headers=headers, json=result
-    ).status_code == 401
+    assert (
+        client.post(
+            f"/local-worker/jobs/{claim['id']}/result", headers=headers, json=result
+        ).status_code
+        == 401
+    )
 
 
 def _ollama_result(lease: dict, *, summary: str = "Evidence supports a bounded inference.") -> dict:
@@ -729,7 +758,7 @@ def test_ollama_completion_is_effectively_once_and_packet_versioned(monkeypatch)
             "leaseSeconds": 120,
             "workerVersion": "test",
             "ollamaVersion": "test",
-            "models": [{"name": "llama3.1:8b", "digest": "sha256:index160-test"}],
+            "models": [_qualified_model("llama3.1:8b", "sha256:index160-test")],
         },
     ).json()["job"]
     result = _ollama_result(claim)

@@ -40,14 +40,26 @@ production artifact.
 $env:AMBROSIA_API_URL = 'https://staging.example.com/api'
 $env:AMBROSIA_WORKER_TOKEN = '<one-time worker credential>'
 $env:OLLAMA_MODEL = 'approved-model:tag'
+$env:OLLAMA_CONTEXT_LENGTH = '8192'
 python .\ambrosia_local_worker.py --diagnose
 python .\ambrosia_local_worker.py
 ```
 
-`--diagnose` is the supported one-command health check. It verifies configuration,
-loopback Ollama connectivity, the installed model's immutable digest, Ollama
-version, and cache location, and emits machine-readable JSON. `--once` performs
-one claim attempt for supervised testing.
+`--diagnose` is the supported one-command health check. Version 3 does not treat
+an installed manifest as readiness. It explicitly allocates the configured
+context, executes schema-constrained analyst, verifier, repair, and final-verifier
+generations, confirms the model remains loaded with the exact digest, and
+authenticates the resulting `preflighted` capability with Ambrosia. It emits
+machine-readable JSON containing the tested context, loaded size/VRAM placement,
+stage hashes, durations, worker/Ollama versions, and capability digest. A model
+that cannot allocate reports a bounded failure such as `out_of_memory` or
+`model_load_failed` and is never advertised. `--once` performs one claim attempt
+after the same mandatory preflight.
+
+The advertised context is the context actually passed to Ollama through
+`num_ctx`; it is not the model's theoretical maximum. Qualify a larger context
+separately before changing `OLLAMA_CONTEXT_LENGTH`. The staging bridge currently
+requires 8192 tokens, so a worker qualified only at 4096 will not claim its jobs.
 
 ## Rotation, revocation, and recovery
 

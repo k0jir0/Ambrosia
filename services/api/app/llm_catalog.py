@@ -15,7 +15,7 @@ from uuid import UUID
 
 import psycopg
 from fastapi import APIRouter, Header, HTTPException, Request
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from psycopg.rows import dict_row
 
 from .coordinator import INSTRUCTION_MANIFEST, SPECIALIST_RESPONSE_SCHEMA_V2, _before
@@ -91,7 +91,9 @@ class LlmJobCreate(BaseModel):
     requiredContextLength: int = Field(default=8192, ge=1024, le=1_000_000)
     inputArtifactId: str | None = None
     inputArtifactHash: str | None = Field(default=None, pattern="^[a-f0-9]{64}$")
-    traceparent: str | None = Field(default=None, pattern="^00-[a-f0-9]{32}-[a-f0-9]{16}-[0-9a-f]{2}$")
+    traceparent: str | None = Field(
+        default=None, pattern="^00-[a-f0-9]{32}-[a-f0-9]{16}-[0-9a-f]{2}$"
+    )
 
 
 class WorkerClaim(BaseModel):
@@ -101,6 +103,26 @@ class WorkerClaim(BaseModel):
     models: list[dict] = Field(default_factory=list)
     maxConcurrentJobs: int = Field(default=1, ge=1, le=16)
     waitSeconds: int = Field(default=0, ge=0, le=25)
+
+    @field_validator("models")
+    @classmethod
+    def require_hardware_qualified_models(cls, models: list[dict]) -> list[dict]:
+        for model in models:
+            if not isinstance(model, dict):
+                raise ValueError("worker model capability must be an object")
+            if (
+                not str(model.get("name") or "").strip()
+                or not str(model.get("digest") or "").strip()
+            ):
+                raise ValueError("worker model capability requires name and digest")
+            if model.get("readiness") != "preflighted":
+                raise ValueError("worker model capability requires a passed hardware preflight")
+            if not str(model.get("preflightCompletedAt") or "").strip():
+                raise ValueError("worker model capability requires preflightCompletedAt")
+            context = int(model.get("contextLength") or 0)
+            if not 1024 <= context <= 1_000_000:
+                raise ValueError("worker model capability requires a qualified contextLength")
+        return models
 
 
 class WorkerCapabilities(WorkerClaim):
@@ -112,8 +134,15 @@ class LeaseUpdate(BaseModel):
     generation: int = Field(ge=1)
     leaseSeconds: int = Field(default=120, ge=30, le=600)
     stage: Literal[
-        "claimed", "loading_model", "analyst", "deterministic_checks", "verifier",
-        "repair", "final_verifier", "uploading", "running"
+        "claimed",
+        "loading_model",
+        "analyst",
+        "deterministic_checks",
+        "verifier",
+        "repair",
+        "final_verifier",
+        "uploading",
+        "running",
     ] = "running"
     progress: int = Field(default=0, ge=0, le=99)
 
@@ -122,10 +151,21 @@ class WorkerFailure(BaseModel):
     leaseId: str
     generation: int = Field(ge=1)
     code: Literal[
-        "no_worker_available", "no_compatible_model", "lease_lost", "ollama_unreachable",
-        "model_load_failed", "timeout", "truncation", "out_of_memory", "schema_invalid",
-        "verification_rejected", "packet_superseded", "credential_revoked",
-        "prompt_injection_detected", "model_digest_changed", "worker_failure"
+        "no_worker_available",
+        "no_compatible_model",
+        "lease_lost",
+        "ollama_unreachable",
+        "model_load_failed",
+        "timeout",
+        "truncation",
+        "out_of_memory",
+        "schema_invalid",
+        "verification_rejected",
+        "packet_superseded",
+        "credential_revoked",
+        "prompt_injection_detected",
+        "model_digest_changed",
+        "worker_failure",
     ]
     message: str
     retryable: bool = True
@@ -975,10 +1015,15 @@ class Catalog:
             computed[artifact.calculationId] = artifact
         supplied = {
             item.calculationId: item
-            for item in map(CalculationArtifact.model_validate, output.get("calculationArtifacts", []))
+            for item in map(
+                CalculationArtifact.model_validate, output.get("calculationArtifacts", [])
+            )
         }
         for calculation_id, artifact in computed.items():
-            if calculation_id not in supplied or supplied[calculation_id].model_dump() != artifact.model_dump():
+            if (
+                calculation_id not in supplied
+                or supplied[calculation_id].model_dump() != artifact.model_dump()
+            ):
                 return "needs_human_review", 0.0
         allowed = {
             str(item.get("evidenceId") or item.get("id"))
@@ -1399,7 +1444,9 @@ def review_run(run_id: str, body: HumanReviewCreate) -> dict:
 
 
 @router.post("/local-worker/claim")
-def claim_job(body: WorkerClaim, request: Request, authorization: str | None = Header(default=None)) -> dict:
+def claim_job(
+    body: WorkerClaim, request: Request, authorization: str | None = Header(default=None)
+) -> dict:
     worker = _worker(authorization, request)
     deadline = time.monotonic() + body.waitSeconds
     while True:
@@ -1417,19 +1464,34 @@ def register_worker_capabilities(
 
 
 @router.post("/local-worker/jobs/{job_id}/heartbeat")
-def heartbeat_job(job_id: str, body: LeaseUpdate, request: Request, authorization: str | None = Header(default=None)):
+def heartbeat_job(
+    job_id: str,
+    body: LeaseUpdate,
+    request: Request,
+    authorization: str | None = Header(default=None),
+):
     if not catalog.heartbeat(_worker(authorization, request), job_id, body):
         raise HTTPException(409, "Job lease is invalid, fenced, or expired")
     return {"accepted": True}
 
 
 @router.post("/local-worker/jobs/{job_id}/progress")
-def progress_job(job_id: str, body: LeaseUpdate, request: Request, authorization: str | None = Header(default=None)):
+def progress_job(
+    job_id: str,
+    body: LeaseUpdate,
+    request: Request,
+    authorization: str | None = Header(default=None),
+):
     return heartbeat_job(job_id, body, request, authorization)
 
 
 @router.post("/local-worker/jobs/{job_id}/failure")
-def failure_job(job_id: str, body: WorkerFailure, request: Request, authorization: str | None = Header(default=None)):
+def failure_job(
+    job_id: str,
+    body: WorkerFailure,
+    request: Request,
+    authorization: str | None = Header(default=None),
+):
     if not catalog.fail_job(_worker(authorization, request), job_id, body):
         raise HTTPException(409, "Job lease is invalid or fenced")
     return {"accepted": True, "retrying": body.retryable}

@@ -76,6 +76,14 @@ a standards-compliant cookie jar (including the secure `__Host-` session cookie
 and CSRF cookie/header pair), then verify `/auth/me`, the worker inventory, and
 the canary organization ID before submitting the first operation.
 
+Worker readiness is hardware-qualified. An installed tag and matching digest do
+not make a model claimable. Worker v3 must allocate the exact advertised
+`num_ctx`, complete schema-bound analyst, verifier, synthetic-rejection repair,
+and final-verifier stages, confirm the loaded digest through Ollama's process
+inventory, and authenticate a `readiness=preflighted` capability. The API rejects
+inventory-only capabilities. Any model, Ollama, worker, context, or hardware
+change invalidates this evidence and requires a new preflight.
+
 Monitor operation creation and replay, queue age, claim latency, stale fencing
 rejections, failures by bounded reason code, dead-letter depth, supersession,
 explicit fallback, worker availability/version, and requested-versus-used

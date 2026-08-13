@@ -521,6 +521,17 @@ class Catalog:
                         ),
                     )
                     connection.execute(
+                        """UPDATE llm_runs SET pipeline_version='evidence-grounded-adversarial.v2',
+                        context_builder_version='evidence-pack-builder.v2', verifier_model_name=%s,
+                        verifier_model_digest=%s, verification_findings=%s::jsonb,
+                        rejected_claims=%s::jsonb, repair_lineage=%s::jsonb, finish_reason=%s,
+                        truncation_detected=%s, stage_hashes=%s::jsonb WHERE id=%s""",
+                        (body.verifierModelName, body.verifierModelDigest,
+                         json.dumps(output.get("verificationFindings", [])), json.dumps(output.get("rejectedClaims", [])),
+                         json.dumps(output.get("repairLineage", [])), body.finishReason, body.truncationDetected,
+                         json.dumps(body.stageHashes), run_id),
+                    )
+                    connection.execute(
                         "UPDATE llm_jobs SET state = 'completed', completed_at = now() WHERE id = %s",
                         (job_id,),
                     )

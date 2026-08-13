@@ -92,6 +92,21 @@ class Index90StackTests(unittest.TestCase):
         self.assertIn('"command": "ambrosia health"', registry)
         self.assertIn('"qualificationStatus": "qualified"', registry)
 
+    def test_cli_design_page_has_evidence_based_status_sections(self) -> None:
+        page = read_text("apps/web/src/app/cli-design/page.tsx")
+
+        for expected in [
+            "Capability statement",
+            "Current status",
+            "What exists today",
+            "What has been validated",
+            "Remaining release gates",
+            "Evidence and ownership",
+            "implemented and locally validated",
+            "release-gated",
+        ]:
+            self.assertIn(expected, page)
+
     def test_adversarial_review_flow_isolated_in_module_boundary(self) -> None:
         module_index = read_text("apps/web/src/modules/adversarial-review/index.ts")
         intake = read_text("apps/web/src/modules/adversarial-review/intake/new-review-flow.tsx")

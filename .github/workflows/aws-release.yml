@@ -560,6 +560,7 @@ jobs:
       TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
       TF_STATE_KMS_KEY_ARN: ${{ vars.TF_STATE_KMS_KEY_ARN }}
       ENABLE_PLAN_KEY: ${{ needs.apply-foundation.outputs.enable_plan_key }}
+      OLLAMA_REVIEW_BRIDGE_ORGANIZATIONS: ${{ vars.OLLAMA_REVIEW_BRIDGE_ORGANIZATIONS || '[]' }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
@@ -629,6 +630,28 @@ jobs:
             echo "API ready: $API_URL/ready"
             echo "Migration task: \`${{ needs.apply-foundation.outputs.migration_task_arn }}\`"
           } >> "$GITHUB_STEP_SUMMARY"
+      - name: Run authenticated staging Ollama canary
+        shell: bash
+        env:
+          API_URL: ${{ steps.urls.outputs.api }}
+          OLLAMA_CANARY_TOKEN: ${{ secrets.STAGING_OLLAMA_CANARY_BEARER_TOKEN || secrets.AMBROSIA_STAGING_API_KEY }}
+          OLLAMA_CANARY_MODEL_DIGEST: ${{ vars.STAGING_OLLAMA_CANARY_MODEL_DIGEST || vars.OLLAMA_DEFAULT_MODEL_DIGEST }}
+        run: |
+          set -euo pipefail
+          if [ "$(jq length <<< "$OLLAMA_REVIEW_BRIDGE_ORGANIZATIONS")" -eq 0 ]; then
+            echo "No Ollama bridge organization allowlist configured; skipping staging canary."
+            exit 0
+          fi
+          test -n "$OLLAMA_CANARY_TOKEN"
+          args=(
+            --base-url "$API_URL"
+            --token "$OLLAMA_CANARY_TOKEN"
+            --allow-awaiting-human-review
+          )
+          if [ -n "$OLLAMA_CANARY_MODEL_DIGEST" ]; then
+            args+=(--requested-model-digest "$OLLAMA_CANARY_MODEL_DIGEST")
+          fi
+          python scripts/run-staging-ollama-canary.py "${args[@]}"
       - name: Delete applied service-enablement plan
         if: always()
         run: aws s3 rm "s3://$TF_STATE_BUCKET/$ENABLE_PLAN_KEY" --only-show-errors

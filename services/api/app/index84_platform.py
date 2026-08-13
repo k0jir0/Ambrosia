@@ -2834,15 +2834,48 @@ def get_sso_config() -> dict:
 
 @router.get("/enterprise/deployment-bundles/offline")
 def get_offline_bundle_manifest() -> dict:
+    release_evidence: dict[str, Any] = {}
+    if _RELEASE_EVIDENCE_PATH.exists():
+        try:
+            release_evidence = json.loads(_RELEASE_EVIDENCE_PATH.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            release_evidence = {}
+
+    worker_bundle_url = os.getenv("AMBROSIA_LOCAL_WORKER_BUNDLE_URL", "").strip()
+    worker_checksum = os.getenv("AMBROSIA_LOCAL_WORKER_BUNDLE_SHA256", "").strip()
+    worker_sbom_url = os.getenv("AMBROSIA_LOCAL_WORKER_SBOM_URL", "").strip()
+    worker_provenance_url = os.getenv("AMBROSIA_LOCAL_WORKER_PROVENANCE_URL", "").strip()
+    worker_signature_url = os.getenv("AMBROSIA_LOCAL_WORKER_SIGNATURE_URL", "").strip()
+
+    local_worker_release = {
+        "availability": "published" if worker_bundle_url else "unpublished",
+        "bundleUrl": worker_bundle_url or None,
+        "checksumSha256": worker_checksum or None,
+        "sbomUrl": worker_sbom_url or None,
+        "provenanceUrl": worker_provenance_url or None,
+        "signatureUrl": worker_signature_url or None,
+        "signatureType": "sigstore-cosign" if worker_signature_url else None,
+        "sourceCommit": release_evidence.get("release", {}).get("candidateSha"),
+        "webBuildSha": release_evidence.get("release", {}).get("webBuildSha"),
+        "apiBuildSha": release_evidence.get("release", {}).get("apiBuildSha"),
+    }
+
     return {
         "schemaVersion": "enterprise-offline-bundle.v1",
         "bundleVersion": "0.1.0",
         "deliveryModes": ["private-registry", "air-gapped-offline"],
-        "components": ["ambrosia-api", "ambrosia-web", "ambrosia-cli", "ambrosia-sdk"],
+        "components": [
+            "ambrosia-api",
+            "ambrosia-web",
+            "ambrosia-cli",
+            "ambrosia-sdk",
+            "ambrosia-local-worker",
+        ],
         "integrity": {
             "checksumManifest": "artifacts/release-checksums.sha256",
             "signature": "sigstore-cosign",
         },
+        "localWorkerRelease": local_worker_release,
         "documentation": [
             "docs/roadmap/index85-evidence-matrix.md",
             "artifacts/release-evidence.json",

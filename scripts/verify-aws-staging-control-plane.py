@@ -58,6 +58,9 @@ def main() -> None:
         "same-commit API attestation": 'jq -r .buildSha "$RUNNER_TEMP/api-version.json"',
         "same-commit web attestation": 'jq -r .buildSha "$RUNNER_TEMP/web-version.json"',
         "report export write probe": 'jq -r .reportExport.writable "$RUNNER_TEMP/capabilities.json"',
+        "authenticated staging canary": "scripts/run-staging-ollama-canary.py",
+        "canary token gate": 'test -n "$OLLAMA_CANARY_TOKEN"',
+        "canary token fallback": "AMBROSIA_STAGING_API_KEY",
         "budget precondition": "aws budgets describe-budget",
         "certificate precondition": "aws acm describe-certificate",
         "explicit API capacity": '-var="api_desired_count=$API_DESIRED_COUNT"',
@@ -93,6 +96,10 @@ def main() -> None:
     require(terraform, "aws_cloudfront_function", "same-origin API prefix rewrite")
     require(terraform, "request.uri.substring(4)", "FastAPI root-path forwarding")
     require(terraform, 'path     = "/live"', "ALB process-liveness health check")
+    require(terraform, "aws_cloudwatch_log_metric_filter\" \"ollama_readiness_blockers", "Ollama readiness blocker metric filters")
+    require(terraform, "aws_cloudwatch_log_metric_filter\" \"ollama_domain_events", "Ollama domain-event metric filters")
+    require(terraform, "aws_cloudwatch_metric_alarm\" \"ollama_readiness_blockers", "Ollama readiness blocker alarms")
+    require(terraform, "aws_cloudwatch_metric_alarm\" \"ollama_domain_failures", "Ollama worker failure alarms")
     require(workflow, 'NEXT_PUBLIC_ENABLE_REVIEW_EXPORT=true', "governed report web build")
     require(compact_terraform, "count = var.enable_services ? 1 : 0", "migration-safe autoscaling gate")
     require(compact_terraform, "desired_count = var.enable_services ?", "migration-safe service gate")

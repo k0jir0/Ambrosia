@@ -6,6 +6,7 @@ from uuid import uuid4
 
 import pytest
 
+from app.llm_catalog import Catalog, LlmJobCreate, WorkerResult
 from app.db import PostgresReviewStore
 from app.models import JobRecord, JobState
 from app.tenant_context import (
@@ -17,6 +18,39 @@ from app.tenant_context import (
 
 DATABASE_URL = os.getenv("INDEX119_TEST_DATABASE_URL")
 pytestmark = pytest.mark.skipif(not DATABASE_URL, reason="INDEX119_TEST_DATABASE_URL not configured")
+
+
+def _llm_job() -> LlmJobCreate:
+    return LlmJobCreate(
+        thesis="Revenue acceleration supports a re-rating over the next year.",
+        claims=["Revenue growth will exceed consensus."],
+        evidence=[{"id": "source-1", "title": "Dated filing"}],
+        observationCutoff=datetime(2026, 8, 7, tzinfo=UTC),
+    )
+
+
+def _llm_result(*, lease_id: str, generation: int) -> WorkerResult:
+    started = datetime.now(UTC)
+    return WorkerResult(
+        leaseId=lease_id,
+        generation=generation,
+        modelName="llama3.1:8b",
+        modelDigest="sha256:fixed-model",
+        ollamaVersion="0.11.4",
+        startedAt=started,
+        completedAt=started,
+        parameters={"temperature": 0},
+        output={
+            "summary": "The supplied evidence does not independently establish the forecast.",
+            "claimsTested": ["Revenue growth will exceed consensus."],
+            "falsifiableConditions": ["Quarterly growth falls below consensus."],
+            "alternativeExplanations": ["Temporary pricing effects."],
+            "contradictions": [],
+            "missingEvidence": ["Independent demand data."],
+            "evidenceReferences": ["source-1"],
+            "abstained": False,
+        },
+    )
 
 
 def test_durable_job_claim_idempotency_completion_and_recovery() -> None:
@@ -67,3 +101,77 @@ def test_security_audit_is_globally_hash_chained() -> None:
             assert row is not None
             assert len(row["previous_hash"]) == 64
             assert len(row["event_hash"]) == 64
+
+
+def test_durable_llm_completion_rejects_stale_reclaimed_lease() -> None:
+    tenant_token = set_organization_id(LEGACY_QUARANTINE_ORGANIZATION_ID)
+    catalog = Catalog()
+    worker_id = None
+    job_id = None
+    try:
+        credential = catalog.create_worker(
+            LEGACY_QUARANTINE_ORGANIZATION_ID,
+            "index119-service",
+            f"Index119 worker {uuid4().hex[:8]}",
+        )
+        worker_id = credential["id"]
+        worker = catalog.authenticate_worker(credential["token"])
+        assert worker is not None
+
+        queued = catalog.enqueue(LEGACY_QUARANTINE_ORGANIZATION_ID, _llm_job())
+        job_id = queued["id"]
+        first = catalog.claim(worker, 30)
+        assert first is not None
+        assert first["generation"] == 1
+
+        with catalog._connect(tenant=False) as connection:
+            catalog._set_worker_tenant(connection, worker)
+            connection.execute(
+                "UPDATE llm_jobs SET lease_expires_at=now()-interval '1 second' WHERE id=%s",
+                (job_id,),
+            )
+
+        second = catalog.claim(worker, 30)
+        assert second is not None
+        assert second["id"] == job_id
+        assert second["generation"] == 2
+        assert second["leaseId"] != first["leaseId"]
+
+        stale = catalog.complete(
+            worker,
+            job_id,
+            _llm_result(lease_id=first["leaseId"], generation=first["generation"]),
+        )
+        assert stale is None
+
+        accepted = catalog.complete(
+            worker,
+            job_id,
+            _llm_result(lease_id=second["leaseId"], generation=second["generation"]),
+        )
+        assert accepted is not None
+        assert accepted["verificationStatus"] == "passed"
+
+        with catalog._connect(tenant=False) as connection:
+            catalog._set_worker_tenant(connection, worker)
+            attempts = connection.execute(
+                "SELECT lease_generation FROM llm_job_attempts WHERE job_id=%s ORDER BY attempt_number",
+                (job_id,),
+            ).fetchall()
+            assert [row["lease_generation"] for row in attempts] == [1, 2]
+    finally:
+        try:
+            with catalog._connect(tenant=False) as connection:
+                connection.execute(
+                    "DELETE FROM llm_evaluations WHERE run_id IN (SELECT id FROM llm_runs WHERE job_id=%s)",
+                    (job_id,),
+                )
+                connection.execute("DELETE FROM llm_runs WHERE job_id=%s", (job_id,))
+                connection.execute("DELETE FROM llm_job_attempts WHERE job_id=%s", (job_id,))
+                connection.execute("DELETE FROM llm_jobs WHERE id=%s", (job_id,))
+                connection.execute(
+                    "DELETE FROM local_worker_credentials WHERE id=%s",
+                    (worker_id,),
+                )
+        finally:
+            reset_organization_id(tenant_token)

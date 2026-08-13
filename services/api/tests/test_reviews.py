@@ -947,7 +947,9 @@ def test_ollama_completion_is_effectively_once_and_packet_versioned(monkeypatch)
     result = _ollama_result(claim)
     first = client.post(f"/local-worker/jobs/{claim['id']}/result", headers=headers, json=result)
     assert first.status_code == 200, first.text
-    assert client.get(f"/operations/{created['id']}").json()["state"] == "completed"
+    completed = client.get(f"/operations/{created['id']}").json()
+    assert completed["state"] == "completed"
+    assert completed["completionEvidenceArtifactId"]
     assert client.get(f"/packets/{packet_id}").json()["packetVersion"] == 2
     duplicate = client.post(
         f"/local-worker/jobs/{claim['id']}/result", headers=headers, json=result

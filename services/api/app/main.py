@@ -8,7 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from uuid import uuid4
 
-from fastapi import FastAPI, Header, HTTPException, Query, Request
+from fastapi import FastAPI, Header, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 
 from .market_data import build_market_snapshot, build_technicals
@@ -111,6 +111,7 @@ from .phase_e_market_integration import router as market_integration_router
 from .index84_platform import INDEX97_SIGNAL_SEED, router as index84_platform_router
 from .mobile_api import router as mobile_router
 from .llm_catalog import catalog as llm_catalog, router as llm_catalog_router
+from .ollama_bridge import OperationCreate, bridge as ollama_bridge, router as ollama_bridge_router
 from .team_api import router as team_router
 from .product_analytics import router as product_analytics_router
 from .artifact_store import artifact_store, router as artifact_router
@@ -192,6 +193,7 @@ app.include_router(market_integration_router)
 app.include_router(index84_platform_router)
 app.include_router(mobile_router)
 app.include_router(llm_catalog_router)
+app.include_router(ollama_bridge_router)
 app.include_router(team_router)
 app.include_router(product_analytics_router)
 app.include_router(artifact_router)
@@ -1237,11 +1239,16 @@ def list_sandbox_positions(
     return store.list_sandbox_positions()
 
 
-@app.post("/packets/{packet_id}/agents/run", response_model=DecisionPacket)
-def run_packet_agents(packet_id: str, body: AgentRunRequest) -> DecisionPacket:
+@app.post("/packets/{packet_id}/agents/run")
+def run_packet_agents(packet_id: str, body: AgentRunRequest, response: Response,
+                      idempotency_key: str | None = Header(default=None, alias="Idempotency-Key")):
     packet = store.get_packet(packet_id)
     if packet is None:
         raise HTTPException(status_code=404, detail="Packet not found")
+    if body.providerMode == "ollama":
+        operation=ollama_bridge.create(packet,OperationCreate(),idempotency_key)
+        response.status_code=202; response.headers["Location"]=f"/agent-operations/{operation['id']}"; response.headers["Retry-After"]="2"
+        return operation
 
     selected_provider = resolve_provider(body.providerMode)
     specialist_outputs, runtime_fallback_used = run_specialists(packet, selected_provider)

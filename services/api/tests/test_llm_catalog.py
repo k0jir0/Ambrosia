@@ -7,6 +7,7 @@ from app.llm_catalog import (
     HumanReviewCreate,
     LlmJobCreate,
     WorkerResult,
+    WorkerClaim,
 )
 
 
@@ -113,6 +114,35 @@ def test_abstention_and_human_review_are_first_class_catalogue_records(monkeypat
         ),
     )
     assert review and review["disposition"] == "corrected"
-    assert catalog.review_run(
-        "org-b", "reviewer-b", completed["runId"], HumanReviewCreate(disposition="accepted")
-    ) is None
+    assert (
+        catalog.review_run(
+            "org-b", "reviewer-b", completed["runId"], HumanReviewCreate(disposition="accepted")
+        )
+        is None
+    )
+
+
+def test_operation_jobs_require_compatible_model_and_fenced_lease(monkeypatch) -> None:
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    local = Catalog()
+    credential = local.create_worker("org-a", "user-a", "Pinned worker")
+    worker = local.authenticate_worker(credential["token"])
+    queued = local.enqueue(
+        "org-a",
+        _job().model_copy(
+            update={
+                "operationId": "00000000-0000-0000-0000-000000000010",
+                "requestedModelDigest": "sha256:approved",
+            }
+        ),
+    )
+    assert (
+        local.claim(worker, 120, WorkerClaim(models=[{"name": "wrong", "digest": "sha256:wrong"}]))
+        is None
+    )
+    lease = local.claim(
+        worker, 120, WorkerClaim(models=[{"name": "approved", "digest": "sha256:approved"}])
+    )
+    assert lease and lease["generation"] == 1 and lease["leaseId"]
+    stale = _result().model_copy(update={"leaseId": "stale", "generation": lease["generation"]})
+    assert local.complete(worker, queued["id"], stale) is None

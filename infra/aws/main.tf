@@ -739,6 +739,7 @@ resource "aws_ecs_task_definition" "api" {
       { name = "AWS_REGION", value = var.aws_region },
       { name = "MARKET_SCANNER_ENABLED", value = "true" },
       { name = "MARKET_INTELLIGENCE_ENABLED", value = "true" },
+      { name = "OLLAMA_REVIEW_BRIDGE_ENABLED", value = "true" },
       { name = "MARKET_SCANNER_PROMOTION_ENABLED", value = "false" },
       { name = "ALPHA_LAB_READ_ENABLED", value = "false" },
       { name = "ALPHA_LAB_WRITES_ENABLED", value = "false" },

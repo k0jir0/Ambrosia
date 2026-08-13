@@ -13,7 +13,9 @@ from app.store import ReviewStore
 client = TestClient(app)
 
 
-def test_market_intelligence_runtime_gate_is_independent_from_scanner(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_market_intelligence_runtime_gate_is_independent_from_scanner(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setenv("ENVIRONMENT", "development")
     monkeypatch.setenv("MARKET_SCANNER_ENABLED", "true")
     monkeypatch.setenv("MARKET_INTELLIGENCE_ENABLED", "false")
@@ -53,9 +55,14 @@ def test_create_review_refuses_naive_backtest_language() -> None:
 def test_record_decision() -> None:
     created = client.post(
         "/reviews",
-        json={"thesis": "Small-cap overnight liquidity may raise realized volatility", "ticker": "IWM"},
+        json={
+            "thesis": "Small-cap overnight liquidity may raise realized volatility",
+            "ticker": "IWM",
+        },
     ).json()
-    response = client.patch(f"/reviews/{created['id']}/decision", json={"decision_state": "needs_more_data"})
+    response = client.patch(
+        f"/reviews/{created['id']}/decision", json={"decision_state": "needs_more_data"}
+    )
     assert response.status_code == 200
     assert response.json()["decisionState"] == "needs_more_data"
 
@@ -73,7 +80,9 @@ def test_tradingview_webhook_flags_prompt_injection_as_untrusted_data() -> None:
     review = response.json()
     assert review["validation"]["status"] == "refused"
     assert "Untrusted instruction-like text" in review["validation"]["refusalReason"]
-    assert any(event["eventType"] == "security.prompt_injection_checked" for event in review["audit"])
+    assert any(
+        event["eventType"] == "security.prompt_injection_checked" for event in review["audit"]
+    )
 
 
 def _build_packet_payload(packet_id: str) -> dict:
@@ -387,6 +396,25 @@ def test_packet_agents_run_hosted_failure_discloses_fallback(monkeypatch) -> Non
     assert packet["agentOutputs"]["technical"]["fallbackUsed"] is True
 
 
+def test_ollama_agent_run_creates_pollable_operation(monkeypatch) -> None:
+    monkeypatch.setenv("OLLAMA_REVIEW_BRIDGE_ENABLED", "true")
+    packet_id = "packet-ollama-operation"
+    assert client.post("/packets", json=_build_packet_payload(packet_id)).status_code == 200
+    response = client.post(
+        f"/packets/{packet_id}/agent-operations",
+        json={"providerMode": "ollama", "requestedModelDigest": "sha256:test"},
+        headers={"Idempotency-Key": "ollama-operation-test-key"},
+    )
+    assert response.status_code == 202
+    operation = response.json()
+    assert operation["state"] == "queued"
+    assert operation["expectedPacketVersion"] == 1
+    assert response.headers["location"].endswith(operation["id"])
+    status = client.get(response.headers["location"])
+    assert status.status_code == 200
+    assert status.json()["requestedProvider"] == "ollama"
+
+
 def test_backtest_prepare_and_run_flow_with_gates() -> None:
     packet_id = "packet-backtest-1"
     created = client.post("/packets", json=_build_packet_payload(packet_id))
@@ -394,7 +422,11 @@ def test_backtest_prepare_and_run_flow_with_gates() -> None:
 
     prepare_response = client.post(
         f"/packets/{packet_id}/backtest/prepare",
-        json={"lookbackPeriod": 200, "holdingPeriodDays": 12, "riskConstraints": ["Liquidity floor"]},
+        json={
+            "lookbackPeriod": 200,
+            "holdingPeriodDays": 12,
+            "riskConstraints": ["Liquidity floor"],
+        },
     )
     assert prepare_response.status_code == 200
     prepared = prepare_response.json()
@@ -472,7 +504,10 @@ def test_portfolio_context_update_and_confidence_derivation() -> None:
     assert confidence_response.status_code == 200
     confidence_packet = confidence_response.json()
     assert confidence_packet["confidenceBreakdown"] is not None
-    assert confidence_packet["confidence"] == confidence_packet["confidenceBreakdown"]["overallConfidence"]
+    assert (
+        confidence_packet["confidence"]
+        == confidence_packet["confidenceBreakdown"]["overallConfidence"]
+    )
     assert any(event["eventType"] == "confidence.derived" for event in confidence_packet["audit"])
 
 
@@ -524,8 +559,11 @@ def test_scanner_run_returns_candidates_with_data_provenance() -> None:
     for candidate in result["candidates"]:
         assert candidate["ticker"] != ""
         assert candidate["signal"] in {
-            "momentum_up", "momentum_down",
-            "mean_reversion_up", "mean_reversion_down", "neutral",
+            "momentum_up",
+            "momentum_down",
+            "mean_reversion_up",
+            "mean_reversion_down",
+            "neutral",
         }
         assert candidate["dataMode"] in {"live", "fallback", "demo"}
         assert candidate["dataSource"] != ""
@@ -625,7 +663,11 @@ def test_signal_decision_writeback_accepts_finance_action() -> None:
 
     link_response = client.post(
         f"/signals/{signal_id}/link-review",
-        json={"reviewId": review_id, "hypothesisId": hypothesis_id, "signalVersion": signal_version},
+        json={
+            "reviewId": review_id,
+            "hypothesisId": hypothesis_id,
+            "signalVersion": signal_version,
+        },
     )
     assert link_response.status_code == 201
 
@@ -660,7 +702,9 @@ def test_scanner_candidate_promotions_endpoint_returns_records() -> None:
     assert "status" in first
 
 
-def test_index97_signal_seed_populates_valid_lifecycle_inventory(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_index97_signal_seed_populates_valid_lifecycle_inventory(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setenv("ALPHA_LAB_DEMO_SEED_ENABLED", "true")
     response = client.post("/signals/seed-index97")
     assert response.status_code == 200
@@ -792,7 +836,7 @@ def test_health_detailed_endpoint() -> None:
     assert "store" in health["checks"]
     assert health["checks"]["persistence"]["mode"] in {"memory", "postgres"}
     assert health["checks"]["persistence"]["databaseRequired"] is False
-    assert health["checks"]["persistence"]["dbSchemaVersion"] == "v0011"
+    assert health["checks"]["persistence"]["dbSchemaVersion"] == "v0012"
     assert "marketData" in health["checks"]
     assert "llmProviders" in health["checks"]
     assert "slo" in health
@@ -846,7 +890,9 @@ def test_roadmap_decision_and_outcome_link_to_plan() -> None:
     )
     assert decision_response.status_code == 200
     plan_after_decision = decision_response.json()
-    assert any(decision["decision_id"] == decision_id for decision in plan_after_decision["decisions"])
+    assert any(
+        decision["decision_id"] == decision_id for decision in plan_after_decision["decisions"]
+    )
 
     outcome_response = client.post(
         f"/roadmap/decisions/{decision_id}/outcomes",
@@ -860,13 +906,20 @@ def test_roadmap_decision_and_outcome_link_to_plan() -> None:
     )
     assert outcome_response.status_code == 200
     plan_after_outcome = outcome_response.json()
-    assert any(outcome["outcome_id"] == "O-P-001-TEST" for outcome in plan_after_outcome["outcomes"])
+    assert any(
+        outcome["outcome_id"] == "O-P-001-TEST" for outcome in plan_after_outcome["outcomes"]
+    )
 
 
 def test_scanner_async_job_enqueues_and_completes() -> None:
     response = client.post(
         "/scanner/run/async",
-        json={"universe": ["AAPL", "MSFT"], "maxCandidates": 2, "minVolume": 1.0, "signalFilter": "all"},
+        json={
+            "universe": ["AAPL", "MSFT"],
+            "maxCandidates": 2,
+            "minVolume": 1.0,
+            "signalFilter": "all",
+        },
     )
     assert response.status_code == 200
     job = response.json()

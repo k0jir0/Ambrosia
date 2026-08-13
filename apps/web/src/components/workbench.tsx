@@ -2243,6 +2243,9 @@ function ProviderProvenancePanel({ packet }: { packet: DecisionPacket | null }) 
           <ProofMetric label="Fallback chain" value={provider.fallbackChain.join(" -> ")} />
           <ProofMetric label="Reason" value={provider.reason} />
           <ProofMetric label="Coordinator" value={packet?.coordinatorVersion ?? "coordinator.v1"} />
+          <ProofMetric label="Requested / actual" value={`${provider.requestedProvider ?? provider.type} / ${provider.actualProvider ?? provider.type}`} />
+          <ProofMetric label="Model digest" value={provider.modelDigest ?? "Not reported"} />
+          <ProofMetric label="Worker" value={provider.workerId ?? "Hosted coordinator"} />
         </div>
       ) : null}
       <div className="mt-3 grid gap-2 md:grid-cols-2">

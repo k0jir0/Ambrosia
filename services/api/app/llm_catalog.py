@@ -73,10 +73,34 @@ class LlmJobCreate(BaseModel):
     role: str = Field(default="bear", min_length=2, max_length=80)
     tickerIdentity: dict | None = None
     pipelineVersion: str = "evidence-grounded-adversarial.v2"
+    operationId: str | None = None
+    expectedPacketVersion: int | None = Field(default=None, ge=1)
+    requestedModel: str | None = None
+    requestedModelDigest: str | None = None
 
 
 class WorkerClaim(BaseModel):
     leaseSeconds: int = Field(default=120, ge=30, le=600)
+    workerVersion: str | None = None
+    ollamaVersion: str | None = None
+    models: list[dict] = Field(default_factory=list)
+    maxConcurrentJobs: int = Field(default=1, ge=1, le=16)
+
+
+class LeaseUpdate(BaseModel):
+    leaseId: str
+    generation: int = Field(ge=1)
+    leaseSeconds: int = Field(default=120, ge=30, le=600)
+    stage: str = "running"
+    progress: int = Field(default=0, ge=0, le=99)
+
+
+class WorkerFailure(BaseModel):
+    leaseId: str
+    generation: int = Field(ge=1)
+    code: str
+    message: str
+    retryable: bool = True
 
 
 class DisconfirmationOutput(BaseModel):
@@ -103,6 +127,8 @@ class DisconfirmationOutput(BaseModel):
 
 
 class WorkerResult(BaseModel):
+    leaseId: str | None = None
+    generation: int | None = Field(default=None, ge=1)
     modelName: str = Field(min_length=1, max_length=200)
     modelDigest: str | None = Field(default=None, max_length=256)
     ollamaVersion: str | None = Field(default=None, max_length=100)
@@ -271,6 +297,10 @@ class Catalog:
             "outputSchema": DISCONFIRMATION_SCHEMA,
             "outputSchemaVersion": DISCONFIRMATION_SCHEMA_VERSION,
             "promptTemplateId": "specialist.generate-verify-repair.v2",
+            "operationId": body.operationId,
+            "expectedPacketVersion": body.expectedPacketVersion,
+            "requestedModel": body.requestedModel,
+            "requestedModelDigest": body.requestedModelDigest,
         }
         row = {
             "id": job_id,
@@ -282,6 +312,11 @@ class Catalog:
             "input_payload": payload,
             "observation_cutoff": cutoff,
             "created_at": now(),
+            "operation_id": body.operationId,
+            "requested_model_digest": body.requestedModelDigest,
+            "lease_id": None,
+            "lease_generation": 0,
+            "attempt_count": 0,
         }
         if self.durable:
             with self._connect() as connection:
@@ -289,8 +324,8 @@ class Catalog:
                     """
                     INSERT INTO llm_jobs (
                       id, organization_id, workspace_id, packet_id, task_type,
-                      input_payload, observation_cutoff
-                    ) VALUES (%s, %s, %s, %s, 'adversarial_specialist_v2', %s::jsonb, %s)
+                      input_payload, observation_cutoff, operation_id, requested_model, requested_model_digest
+                    ) VALUES (%s, %s, %s, %s, 'adversarial_specialist_v2', %s::jsonb, %s, %s, %s, %s)
                     """,
                     (
                         job_id,
@@ -299,6 +334,9 @@ class Catalog:
                         body.packetId,
                         json.dumps(payload),
                         cutoff,
+                        body.operationId,
+                        body.requestedModel,
+                        body.requestedModelDigest,
                     ),
                 )
         else:
@@ -313,8 +351,16 @@ class Catalog:
             (str(worker["organization_id"]),),
         )
 
-    def claim(self, worker: dict, lease_seconds: int) -> dict | None:
+    def claim(
+        self, worker: dict, lease_seconds: int, capabilities: WorkerClaim | None = None
+    ) -> dict | None:
         lease_until = now() + timedelta(seconds=lease_seconds)
+        lease_id = str(uuid4())
+        digests = {
+            str(x.get("digest"))
+            for x in (capabilities.models if capabilities else [])
+            if x.get("digest")
+        }
         if self.durable:
             with self._connect(tenant=False) as connection:
                 with connection.transaction():
@@ -329,26 +375,31 @@ class Catalog:
                     row = connection.execute(
                         """
                         SELECT id FROM llm_jobs
-                        WHERE state = 'queued' ORDER BY created_at
+                        WHERE state = 'queued' AND (requested_model_digest IS NULL OR requested_model_digest = ANY(%s)) ORDER BY created_at
                         FOR UPDATE SKIP LOCKED LIMIT 1
-                        """
+                        """,
+                        (list(digests),),
                     ).fetchone()
                     if not row:
                         return None
                     job = connection.execute(
                         """
                         UPDATE llm_jobs SET state = 'claimed', claimed_by = %s,
-                          claimed_at = now(), lease_expires_at = %s
+                          claimed_at = now(), lease_expires_at = %s, lease_id=%s,
+                          lease_generation=lease_generation+1, attempt_count=attempt_count+1
                         WHERE id = %s
-                        RETURNING id, task_type, input_payload
+                        RETURNING id, task_type, input_payload, lease_generation, attempt_count
                         """,
-                        (worker["id"], lease_until, row["id"]),
+                        (worker["id"], lease_until, lease_id, row["id"]),
                     ).fetchone()
             return {
                 "id": str(job["id"]),
                 "taskType": job["task_type"],
                 "input": job["input_payload"],
                 "leaseExpiresAt": lease_until.isoformat(),
+                "leaseId": lease_id,
+                "generation": job["lease_generation"],
+                "attempt": job["attempt_count"],
             }
         with self.lock:
             for job in sorted(self.jobs.values(), key=lambda item: item["created_at"]):
@@ -360,11 +411,19 @@ class Catalog:
                 if expired:
                     job.update({"state": "queued", "claimed_by": None, "lease_expires_at": None})
                 if job["organization_id"] == worker["organization_id"] and job["state"] == "queued":
+                    if (
+                        job.get("requested_model_digest")
+                        and job["requested_model_digest"] not in digests
+                    ):
+                        continue
                     job.update(
                         {
                             "state": "claimed",
                             "claimed_by": worker["id"],
                             "lease_expires_at": lease_until,
+                            "lease_id": lease_id,
+                            "lease_generation": job.get("lease_generation", 0) + 1,
+                            "attempt_count": job.get("attempt_count", 0) + 1,
                         }
                     )
                     return {
@@ -372,8 +431,102 @@ class Catalog:
                         "taskType": job["task_type"],
                         "input": job["input_payload"],
                         "leaseExpiresAt": lease_until.isoformat(),
+                        "leaseId": lease_id,
+                        "generation": job["lease_generation"],
+                        "attempt": job["attempt_count"],
                     }
         return None
+
+    def heartbeat(self, worker: dict, job_id: str, body: LeaseUpdate) -> bool:
+        until = now() + timedelta(seconds=body.leaseSeconds)
+        if self.durable:
+            with self._connect(tenant=False) as connection:
+                self._set_worker_tenant(connection, worker)
+                result = connection.execute(
+                    """UPDATE llm_jobs SET lease_expires_at=%s,workflow_stage=%s WHERE id=%s AND state='claimed' AND claimed_by=%s AND lease_id=%s AND lease_generation=%s AND lease_expires_at>now()""",
+                    (until, body.stage, job_id, worker["id"], body.leaseId, body.generation),
+                )
+            return result.rowcount == 1
+        with self.lock:
+            job = self.jobs.get(job_id)
+            if (
+                not job
+                or job.get("claimed_by") != worker["id"]
+                or job.get("lease_id") != body.leaseId
+                or job.get("lease_generation") != body.generation
+                or job.get("lease_expires_at") <= now()
+            ):
+                return False
+            job.update(lease_expires_at=until, workflow_stage=body.stage)
+            from .ollama_bridge import bridge
+
+            bridge.progress(
+                job["input_payload"].get("operationId"),
+                "running",
+                body.stage,
+                body.progress,
+                worker["id"],
+            )
+            return True
+
+    def fail_job(self, worker: dict, job_id: str, body: WorkerFailure) -> bool:
+        if self.durable:
+            with self._connect(tenant=False) as connection:
+                self._set_worker_tenant(connection, worker)
+                result = connection.execute(
+                    """UPDATE llm_jobs SET state=%s,last_error=%s::jsonb,claimed_by=NULL,lease_expires_at=NULL WHERE id=%s AND state='claimed' AND claimed_by=%s AND lease_id=%s AND lease_generation=%s""",
+                    (
+                        "queued" if body.retryable else "failed",
+                        json.dumps(body.model_dump(mode="json")),
+                        job_id,
+                        worker["id"],
+                        body.leaseId,
+                        body.generation,
+                    ),
+                )
+            return result.rowcount == 1
+        with self.lock:
+            job = self.jobs.get(job_id)
+            if (
+                not job
+                or job.get("claimed_by") != worker["id"]
+                or job.get("lease_id") != body.leaseId
+                or job.get("lease_generation") != body.generation
+            ):
+                return False
+            job.update(
+                state="queued" if body.retryable else "failed",
+                claimed_by=None,
+                lease_expires_at=None,
+                last_error=body.model_dump(mode="json"),
+            )
+            from .ollama_bridge import bridge
+
+            (
+                bridge.progress(
+                    job["input_payload"].get("operationId"), "retry_wait", "retry_wait", 0
+                )
+                if body.retryable
+                else bridge.fail(
+                    job["input_payload"].get("operationId"),
+                    {"code": body.code, "message": body.message},
+                )
+            )
+            return True
+
+    def cancel_job(self, job_id: str | None):
+        if not job_id:
+            return
+        if self.durable:
+            with self._connect() as connection:
+                connection.execute(
+                    "UPDATE llm_jobs SET state='canceled' WHERE id=%s AND state IN ('queued','claimed')",
+                    (job_id,),
+                )
+        else:
+            with self.lock:
+                if job_id in self.jobs:
+                    self.jobs[job_id]["state"] = "canceled"
 
     @staticmethod
     def _verify_output(input_payload: dict, output: dict) -> tuple[str, float]:
@@ -438,6 +591,11 @@ class Catalog:
                         (job_id, worker["id"]),
                     ).fetchone()
                     if not job:
+                        return None
+                    if job.get("operation_id") and (
+                        body.leaseId != str(job.get("lease_id"))
+                        or body.generation != int(job.get("lease_generation") or 0)
+                    ):
                         return None
                     verification, citation_ratio = self._verify_output(job["input_payload"], output)
                     connection.execute(
@@ -526,10 +684,17 @@ class Catalog:
                         verifier_model_digest=%s, verification_findings=%s::jsonb,
                         rejected_claims=%s::jsonb, repair_lineage=%s::jsonb, finish_reason=%s,
                         truncation_detected=%s, stage_hashes=%s::jsonb WHERE id=%s""",
-                        (body.verifierModelName, body.verifierModelDigest,
-                         json.dumps(output.get("verificationFindings", [])), json.dumps(output.get("rejectedClaims", [])),
-                         json.dumps(output.get("repairLineage", [])), body.finishReason, body.truncationDetected,
-                         json.dumps(body.stageHashes), run_id),
+                        (
+                            body.verifierModelName,
+                            body.verifierModelDigest,
+                            json.dumps(output.get("verificationFindings", [])),
+                            json.dumps(output.get("rejectedClaims", [])),
+                            json.dumps(output.get("repairLineage", [])),
+                            body.finishReason,
+                            body.truncationDetected,
+                            json.dumps(body.stageHashes),
+                            run_id,
+                        ),
                     )
                     connection.execute(
                         "UPDATE llm_jobs SET state = 'completed', completed_at = now() WHERE id = %s",
@@ -539,6 +704,12 @@ class Catalog:
             with self.lock:
                 job = self.jobs.get(job_id)
                 if not job or job.get("claimed_by") != worker["id"] or job["state"] != "claimed":
+                    return None
+                if job.get("operation_id") and (
+                    body.leaseId != job.get("lease_id")
+                    or body.generation != job.get("lease_generation")
+                    or job.get("lease_expires_at") <= now()
+                ):
                     return None
                 verification, citation_ratio = self._verify_output(job["input_payload"], output)
                 job["state"] = "completed"
@@ -560,6 +731,9 @@ class Catalog:
                     "repair_lineage": output.get("repairLineage", []),
                     "stage_hashes": body.stageHashes,
                 }
+        from .ollama_bridge import bridge
+
+        bridge.complete(worker, dict(job), body, verification, run_id)
         return {
             "runId": run_id,
             "verificationStatus": verification,
@@ -720,8 +894,27 @@ def review_run(run_id: str, body: HumanReviewCreate) -> dict:
 @router.post("/local-worker/claim")
 def claim_job(body: WorkerClaim, authorization: str | None = Header(default=None)) -> dict:
     worker = _worker(authorization)
-    job = catalog.claim(worker, body.leaseSeconds)
+    job = catalog.claim(worker, body.leaseSeconds, body)
     return {"job": job}
+
+
+@router.post("/local-worker/jobs/{job_id}/heartbeat")
+def heartbeat_job(job_id: str, body: LeaseUpdate, authorization: str | None = Header(default=None)):
+    if not catalog.heartbeat(_worker(authorization), job_id, body):
+        raise HTTPException(409, "Job lease is invalid, fenced, or expired")
+    return {"accepted": True}
+
+
+@router.post("/local-worker/jobs/{job_id}/progress")
+def progress_job(job_id: str, body: LeaseUpdate, authorization: str | None = Header(default=None)):
+    return heartbeat_job(job_id, body, authorization)
+
+
+@router.post("/local-worker/jobs/{job_id}/failure")
+def failure_job(job_id: str, body: WorkerFailure, authorization: str | None = Header(default=None)):
+    if not catalog.fail_job(_worker(authorization), job_id, body):
+        raise HTTPException(409, "Job lease is invalid or fenced")
+    return {"accepted": True, "retrying": body.retryable}
 
 
 @router.post("/local-worker/jobs/{job_id}/result")

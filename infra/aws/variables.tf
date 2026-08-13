@@ -39,6 +39,28 @@ variable "environment" {
   }
 }
 
+variable "ollama_review_bridge_organization_ids" {
+  type        = list(string)
+  default     = []
+  description = "Tenant UUID canary allowlist for outbound Ollama review operations"
+  validation {
+    condition     = alltrue([for id in var.ollama_review_bridge_organization_ids : can(regex("^[0-9a-fA-F-]{36}$", id))])
+    error_message = "Every Ollama bridge organization identifier must be a UUID."
+  }
+}
+
+variable "ollama_default_model_digest" {
+  type        = string
+  default     = ""
+  description = "Immutable approved Ollama digest selected when the browser does not specify a model"
+}
+
+variable "ollama_approved_model_digests" {
+  type        = list(string)
+  default     = []
+  description = "Immutable Ollama model digests allowed for staging worker execution"
+}
+
 variable "aws_region" {
   type    = string
   default = "ca-central-1"

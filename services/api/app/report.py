@@ -152,7 +152,9 @@ def _verified_outputs(
     ]
     for run in llm_runs or []:
         value = run.get("structured_output") or {}
-        if value.get("schemaVersion") != "specialist-output.v2":
+        if value.get("schemaVersion") != "specialist-output.v2" or run.get(
+            "verification_status"
+        ) != "passed":
             continue
         claims = [MaterialClaim.model_validate(item) for item in value.get("materialClaims", [])]
         outputs.append(
@@ -308,6 +310,11 @@ def generate_report(packet: DecisionPacket, llm_runs: list[dict] | None = None) 
     ]
     verified = _verified_outputs(packet, llm_runs)
     admitted, rejected = _claims(verified)
+    server_rejected = [
+        item
+        for run in llm_runs or []
+        for item in (run.get("structured_output") or {}).get("rejectedClaims", [])
+    ]
     calculations = [
         item
         for output in verified
@@ -338,6 +345,7 @@ def generate_report(packet: DecisionPacket, llm_runs: list[dict] | None = None) 
         else f"No live market data attached; mode={data_mode}"
     )
 
+    provider = packet.providerInfo or {}
     return ReportArtifact(
         packetId=packet.id,
         ticker=packet.ticker,
@@ -349,7 +357,7 @@ def generate_report(packet: DecisionPacket, llm_runs: list[dict] | None = None) 
         marketDataSource=market_source,
         marketDataFreshnessSeconds=freshness_seconds,
         schemaVersion="ticker-intelligence-report.v2"
-        if verified
+        if llm_runs
         else "ticker-intelligence-report.v1",
         tickerIdentity=_ticker_identity(packet) if verified else None,
         asOf=packet.marketSnapshot.timestamp if packet.marketSnapshot else packet.createdAt,
@@ -370,10 +378,19 @@ def generate_report(packet: DecisionPacket, llm_runs: list[dict] | None = None) 
             item.materiality in {"medium", "high"} for item in rejected
         ),
         calculationArtifacts=calculations,
-        rejectedClaimIds=[item.claimId for item in rejected],
+        rejectedClaimIds=sorted(
+            {item.claimId for item in rejected}
+            | {str(item.get("claimId")) for item in server_rejected if item.get("claimId")}
+        ),
         reportValidationStatus="passed"
         if verified and not rejected
         else "partial"
-        if verified
+        if llm_runs
         else "legacy",
+        operationId=provider.get("operationId"),
+        providerRequested=provider.get("requestedProvider"),
+        providerUsed=provider.get("actualProvider") or provider.get("type"),
+        verificationStatus=provider.get("verificationStatus"),
+        traceparent=provider.get("traceparent")
+        or next((run.get("trace_id") for run in (llm_runs or []) if run.get("trace_id")), None),
     )

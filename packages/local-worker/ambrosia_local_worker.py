@@ -372,20 +372,6 @@ def work_once(api, token, ollama, model):
     ).get("job")
     if not job:
         return False
-    allowed = {
-        x.strip()
-        for x in os.getenv("OLLAMA_ALLOWED_DIGESTS", "").split(",")
-        if x.strip()
-    }
-    if allowed and digest not in allowed:
-        raise ValueError("model digest not allowlisted")
-    if job.get("allowedModelDigests") and digest not in job["allowedModelDigests"]:
-        raise ValueError("claimed job does not allow the active model digest")
-    if job.get("inputHash") != canonical_hash(job["input"]):
-        raise ValueError("immutable input snapshot hash mismatch")
-    current_digest, current_version = model_metadata(ollama, model)
-    if current_digest != digest or current_version != version:
-        raise ValueError("Ollama model or runtime changed after capability registration")
     lease = {"leaseId": job["leaseId"], "generation": job["generation"]}
     trace = job.get("traceparent")
     lost, done = threading.Event(), threading.Event()
@@ -420,6 +406,29 @@ def work_once(api, token, ollama, model):
     )
     thread.start()
     try:
+        allowed = {
+            x.strip()
+            for x in os.getenv("OLLAMA_ALLOWED_DIGESTS", "").split(",")
+            if x.strip()
+        }
+        if allowed and digest not in allowed:
+            raise ValueError("model digest not allowlisted")
+        if job.get("allowedModelDigests") and digest not in job["allowedModelDigests"]:
+            raise ValueError("claimed job does not allow the active model digest")
+        if job.get("inputHash") != canonical_hash(job["input"]):
+            raise ValueError("immutable input snapshot hash mismatch")
+        for field, expected in {
+            "pipelineVersion": "evidence-grounded-adversarial.v2",
+            "outputSchemaVersion": "specialist-output.v2",
+            "promptTemplateId": "specialist.generate-verify-repair.v2",
+        }.items():
+            if job["input"].get(field) != expected:
+                raise ValueError(f"unsupported {field}")
+        if not job["input"].get("instructionManifest"):
+            raise ValueError("instruction manifest is missing")
+        current_digest, current_version = model_metadata(ollama, model)
+        if current_digest != digest or current_version != version:
+            raise ValueError("Ollama model or runtime changed after capability registration")
 
         def progress(name, value):
             if lost.is_set():
@@ -461,11 +470,19 @@ def work_once(api, token, ollama, model):
     except LeaseLost:
         raise
     except Exception as exc:
+        message = str(exc).lower()
+        code = (
+            "model_digest_changed" if "digest" in message or "runtime changed" in message
+            else "schema_invalid" if "schema" in message or "unsupported" in message or "manifest" in message
+            else "ollama_unreachable" if isinstance(exc, (OSError, urllib.error.URLError))
+            else "timeout" if isinstance(exc, TimeoutError)
+            else "worker_failure"
+        )
         request_json(
             f"{api}/local-worker/jobs/{job['id']}/failure",
             body={
                 **lease,
-                "code": type(exc).__name__.lower(),
+                "code": code,
                 "message": str(exc)[:2000],
                 "retryable": isinstance(
                     exc, (OSError, urllib.error.URLError, TimeoutError)

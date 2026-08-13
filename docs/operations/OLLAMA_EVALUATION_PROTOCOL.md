@@ -52,4 +52,24 @@ parseable. That result is explicitly `not_executed` and makes no model-quality
 claim. Only a catalogued live run plus completed human review can close the
 external `ollamaReleaseEvaluation` gate.
 
+## Rollout and rollback
+
+The bridge is gated by `OLLAMA_REVIEW_BRIDGE_ENABLED` and, in staging or
+production, `OLLAMA_REVIEW_BRIDGE_ORGANIZATIONS`. Start with one controlled
+organization and one approved digest. Disabling creation is the rollback:
+existing durable rows and audit events remain readable, while already queued
+operations are canceled or allowed to finish according to the incident policy.
+Never relabel an Ollama result as deterministic output.
+
+Monitor operation creation and replay, queue age, claim latency, stale fencing
+rejections, failures by bounded reason code, dead-letter depth, supersession,
+explicit fallback, worker availability/version, and requested-versus-used
+provider mismatches. A protocol deployment is not a model-quality success. A
+release requires the frozen live evaluation, blinded human review, and the
+preregistered thresholds above.
+
+Worker installation, signing, integrity verification, rotation, revocation,
+diagnostics, and cache handling are documented in
+`packages/local-worker/README.md`.
+
 References: [Ollama structured outputs](https://docs.ollama.com/capabilities/structured-outputs), [NIST AI RMF](https://www.nist.gov/itl/ai-risk-management-framework), [NIST AI 600-1 Generative AI Profile](https://nvlpubs.nist.gov/nistpubs/ai/NIST.AI.600-1.pdf), and [Model Cards](https://arxiv.org/abs/1810.03993).

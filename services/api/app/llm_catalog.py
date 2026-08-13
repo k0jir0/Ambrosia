@@ -9,17 +9,22 @@ import secrets
 import time
 from datetime import UTC, datetime, timedelta
 from threading import RLock
+from typing import Literal
 from uuid import uuid4
 from uuid import UUID
 
 import psycopg
-from fastapi import APIRouter, Header, HTTPException
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, Header, HTTPException, Request
+from pydantic import BaseModel, Field, model_validator
 from psycopg.rows import dict_row
 
-from .coordinator import INSTRUCTION_MANIFEST, SPECIALIST_RESPONSE_SCHEMA_V2
-from .identity import hash_token
-from .operations import current_principal
+from .coordinator import INSTRUCTION_MANIFEST, SPECIALIST_RESPONSE_SCHEMA_V2, _before
+from .artifact_store import artifact_store
+from .financial_calculations import evaluate_calculation_intent
+from .identity import hash_token, ip_prefix
+from .models import CalculationArtifact, SpecialistOutputV2, TickerIdentity
+from .operations import current_principal, record_domain_event
+from .review_engine import detects_prompt_injection
 from .tenant_context import apply_tenant_context
 
 router = APIRouter(tags=["local-llm"])
@@ -84,6 +89,8 @@ class LlmJobCreate(BaseModel):
     requestedModel: str | None = None
     requestedModelDigest: str | None = None
     requiredContextLength: int = Field(default=8192, ge=1024, le=1_000_000)
+    inputArtifactId: str | None = None
+    inputArtifactHash: str | None = Field(default=None, pattern="^[a-f0-9]{64}$")
     traceparent: str | None = Field(default=None, pattern="^00-[a-f0-9]{32}-[a-f0-9]{16}-[0-9a-f]{2}$")
 
 
@@ -104,14 +111,22 @@ class LeaseUpdate(BaseModel):
     leaseId: str
     generation: int = Field(ge=1)
     leaseSeconds: int = Field(default=120, ge=30, le=600)
-    stage: str = "running"
+    stage: Literal[
+        "claimed", "loading_model", "analyst", "deterministic_checks", "verifier",
+        "repair", "final_verifier", "uploading", "running"
+    ] = "running"
     progress: int = Field(default=0, ge=0, le=99)
 
 
 class WorkerFailure(BaseModel):
     leaseId: str
     generation: int = Field(ge=1)
-    code: str
+    code: Literal[
+        "no_worker_available", "no_compatible_model", "lease_lost", "ollama_unreachable",
+        "model_load_failed", "timeout", "truncation", "out_of_memory", "schema_invalid",
+        "verification_rejected", "packet_superseded", "credential_revoked",
+        "prompt_injection_detected", "model_digest_changed", "worker_failure"
+    ]
     message: str
     retryable: bool = True
 
@@ -163,6 +178,26 @@ class WorkerResult(BaseModel):
     truncationDetected: bool = False
     stageHashes: dict[str, str] = Field(default_factory=dict)
 
+    @model_validator(mode="after")
+    def bound_untrusted_json(self):
+        payload = self.model_dump(mode="json")
+        encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+        if len(encoded) > 1_000_000:
+            raise ValueError("Worker result exceeds the one-megabyte protocol limit")
+
+        def check_depth(value: object, depth: int = 0) -> None:
+            if depth > 32:
+                raise ValueError("Worker result exceeds the maximum JSON depth")
+            if isinstance(value, dict):
+                for child in value.values():
+                    check_depth(child, depth + 1)
+            elif isinstance(value, list):
+                for child in value:
+                    check_depth(child, depth + 1)
+
+        check_depth(payload)
+        return self
+
 
 class HumanReviewCreate(BaseModel):
     disposition: str = Field(pattern="^(accepted|corrected|rejected)$")
@@ -189,6 +224,21 @@ class Catalog:
     @property
     def durable(self) -> bool:
         return bool(self.database_url)
+
+    @staticmethod
+    def resolved_input(payload: dict) -> dict:
+        artifact_id = payload.get("inputArtifactId")
+        if not artifact_id:
+            return payload
+        pack = artifact_store.load_json(artifact_id)
+        if canonical_hash(pack) != payload.get("inputArtifactHash"):
+            raise ValueError("Immutable evidence artifact hash mismatch")
+        return {
+            **payload,
+            "evidence": pack["evidence"],
+            "tickerIdentity": pack["tickerIdentity"],
+            "observationCutoff": pack["observationCutoff"],
+        }
 
     def create_worker(self, organization_id: str, user_id: str, name: str) -> dict:
         worker_id = str(uuid4())
@@ -226,7 +276,7 @@ class Catalog:
                 }
         return {"id": worker_id, "name": name, "token": token}
 
-    def authenticate_worker(self, token: str) -> dict | None:
+    def authenticate_worker(self, token: str, remote_ip: str | None = None) -> dict | None:
         digest = hash_token(token)
         if self.durable:
             with self._connect(tenant=False) as connection:
@@ -240,8 +290,9 @@ class Catalog:
                 ).fetchone()
                 if row:
                     connection.execute(
-                        "UPDATE local_worker_credentials SET last_seen_at = now() WHERE id = %s",
-                        (row["id"],),
+                        """UPDATE local_worker_credentials SET last_seen_at=now(),last_ip_prefix=%s
+                        WHERE id=%s""",
+                        (ip_prefix(remote_ip), row["id"]),
                     )
             return dict(row) if row else None
         with self.lock:
@@ -253,8 +304,12 @@ class Catalog:
             with self._connect() as connection:
                 rows = connection.execute(
                     """
-                    SELECT id, name, status, last_seen_at, created_at, revoked_at
-                    FROM local_worker_credentials
+                    SELECT w.id,w.name,w.status,w.last_seen_at,w.last_ip_prefix,w.worker_version,
+                    w.ollama_version,w.capability_digest,w.capabilities,w.max_concurrent_jobs,
+                    w.created_at,w.revoked_at,
+                    (SELECT count(*) FROM llm_jobs j WHERE j.claimed_by=w.id AND j.state='claimed'
+                     AND j.lease_expires_at>now()) AS active_lease_count
+                    FROM local_worker_credentials w
                     WHERE organization_id = ambrosia_current_organization_id()
                     ORDER BY created_at DESC
                     """
@@ -297,6 +352,35 @@ class Catalog:
                 ):
                     return True
         return False
+
+    def active_model_policies(self, organization_id: str) -> list[dict]:
+        if self.durable:
+            with self._connect() as connection:
+                rows = connection.execute(
+                    """SELECT capabilities->'models' AS models FROM local_worker_credentials
+                    WHERE organization_id=%s AND status='active'
+                    AND last_seen_at>now()-interval '2 minutes'""",
+                    (organization_id,),
+                ).fetchall()
+            models = [model for row in rows for model in (row["models"] or [])]
+        else:
+            models = [
+                model
+                for worker in self.devices.values()
+                if worker["organization_id"] == organization_id and worker["status"] == "active"
+                for model in worker.get("capabilities", {}).get("models", [])
+            ]
+        by_digest = {str(model.get("digest")): model for model in models if model.get("digest")}
+        approved = {
+            item.strip()
+            for item in os.getenv("OLLAMA_APPROVED_MODEL_DIGESTS", "").split(",")
+            if item.strip()
+        }
+        return [
+            {**model, "approved": True}
+            for digest, model in sorted(by_digest.items())
+            if not approved or digest in approved
+        ]
 
     def revoke_worker(self, organization_id: str, worker_id: str) -> bool:
         if self.durable:
@@ -419,6 +503,8 @@ class Catalog:
             "requestedModelDigest": body.requestedModelDigest,
             "requiredContextLength": body.requiredContextLength,
             "traceparent": body.traceparent,
+            "inputArtifactId": body.inputArtifactId,
+            "inputArtifactHash": body.inputArtifactHash,
         }
         row = {
             "id": job_id,
@@ -520,11 +606,20 @@ class Catalog:
                     connection.execute(
                         """
                         UPDATE llm_jobs SET
-                          state=CASE WHEN attempt_count>=max_attempts THEN 'failed' ELSE 'queued' END,
+                          state=CASE WHEN attempt_count>=max_attempts THEN 'dead_letter' ELSE 'queued' END,
                           claimed_by=NULL,claimed_at=NULL,lease_expires_at=NULL,
                           last_error=jsonb_build_object('code','lease_lost','retryable',attempt_count<max_attempts)
                         WHERE state='claimed' AND lease_expires_at<=now()
                         """
+                    )
+                    connection.execute(
+                        """UPDATE ollama_review_operations o SET
+                        state=CASE WHEN j.state='dead_letter' THEN 'dead_letter' ELSE 'retry_wait' END,
+                        stage=CASE WHEN j.state='dead_letter' THEN 'dead_letter' ELSE 'retry_wait' END,
+                        reason_code='lease_lost',updated_at=now()
+                        FROM llm_jobs j WHERE j.operation_id=o.id
+                        AND j.last_error->>'code'='lease_lost'
+                        AND o.state IN ('leased','running','verifying','repairing')"""
                     )
                     row = connection.execute(
                         """
@@ -602,17 +697,18 @@ class Catalog:
                                 operation["trace_id"],
                             ),
                         )
+            record_domain_event("ollama_job_claimed", str(job["attempt_count"]))
             return {
                 "id": str(job["id"]),
                 "taskType": job["task_type"],
-                "input": job["input_payload"],
+                "input": self.resolved_input(job["input_payload"]),
                 "leaseExpiresAt": lease_until.isoformat(),
                 "leaseId": lease_id,
                 "generation": job["lease_generation"],
                 "attempt": job["attempt_count"],
                 "attemptId": str(attempt["id"]),
                 "traceparent": operation["trace_id"] if operation else None,
-                "inputHash": canonical_hash(job["input_payload"]),
+                "inputHash": canonical_hash(self.resolved_input(job["input_payload"])),
                 "allowedModelDigests": [job["requested_model_digest"]]
                 if job["requested_model_digest"]
                 else sorted(digests),
@@ -655,14 +751,14 @@ class Catalog:
                     return {
                         "id": job["id"],
                         "taskType": job["task_type"],
-                        "input": job["input_payload"],
+                        "input": self.resolved_input(job["input_payload"]),
                         "leaseExpiresAt": lease_until.isoformat(),
                         "leaseId": lease_id,
                         "generation": job["lease_generation"],
                         "attempt": job["attempt_count"],
                         "attemptId": f"attempt:{job['id']}:{job['attempt_count']}",
                         "traceparent": job["input_payload"].get("traceparent"),
-                        "inputHash": canonical_hash(job["input_payload"]),
+                        "inputHash": canonical_hash(self.resolved_input(job["input_payload"])),
                         "allowedModelDigests": [job["requested_model_digest"]]
                         if job.get("requested_model_digest")
                         else sorted(digests),
@@ -722,6 +818,8 @@ class Catalog:
                                     f"progress:{body.stage}",
                                 ),
                             )
+            if result is None:
+                record_domain_event("ollama_stale_fence_rejected", "heartbeat")
             return result is not None
         with self.lock:
             job = self.jobs.get(job_id)
@@ -758,13 +856,15 @@ class Catalog:
                     if not job:
                         return False
                     retry = body.retryable and job["attempt_count"] < job["max_attempts"]
-                    delay = min(300, 2 ** max(1, job["attempt_count"]))
+                    base_delay = min(240, 2 ** max(1, job["attempt_count"]))
+                    delay = base_delay + secrets.randbelow(max(1, base_delay))
+                    terminal_state = "failed" if not body.retryable else "dead_letter"
                     connection.execute(
                         """UPDATE llm_jobs SET state=%s,last_error=%s::jsonb,claimed_by=NULL,
                         lease_expires_at=NULL,next_attempt_at=CASE WHEN %s THEN now()+(%s * interval '1 second') ELSE NULL END
                         WHERE id=%s""",
                         (
-                            "retry_wait" if retry else "failed",
+                            "retry_wait" if retry else terminal_state,
                             json.dumps(body.model_dump(mode="json")),
                             retry,
                             delay,
@@ -782,8 +882,8 @@ class Catalog:
                             error=%s::jsonb,updated_at=now(),completed_at=CASE WHEN %s THEN NULL ELSE now() END
                             WHERE id=%s""",
                             (
-                                "retry_wait" if retry else "failed",
-                                "retry_wait" if retry else "failed",
+                                "retry_wait" if retry else terminal_state,
+                                "retry_wait" if retry else terminal_state,
                                 body.code,
                                 json.dumps({"code": body.code, "message": body.message}),
                                 retry,
@@ -798,10 +898,11 @@ class Catalog:
                                 worker["organization_id"],
                                 job["operation_id"],
                                 worker["id"],
-                                "retry_wait" if retry else "failed",
+                                "retry_wait" if retry else terminal_state,
                                 body.code,
                             ),
                         )
+            record_domain_event("ollama_job_failure", body.code)
             return True
         with self.lock:
             job = self.jobs.get(job_id)
@@ -812,10 +913,9 @@ class Catalog:
                 or job.get("lease_generation") != body.generation
             ):
                 return False
+            retry = body.retryable and job.get("attempt_count", 0) < job.get("max_attempts", 3)
             job.update(
-                state="retry_wait"
-                if body.retryable and job.get("attempt_count", 0) < job.get("max_attempts", 3)
-                else "failed",
+                state="retry_wait" if retry else ("dead_letter" if body.retryable else "failed"),
                 claimed_by=None,
                 lease_expires_at=None,
                 last_error=body.model_dump(mode="json"),
@@ -826,12 +926,13 @@ class Catalog:
                 bridge.progress(
                     job["input_payload"].get("operationId"), "retry_wait", "retry_wait", 0
                 )
-                if body.retryable
+                if retry
                 else bridge.fail(
                     job["input_payload"].get("operationId"),
                     {"code": body.code, "message": body.message},
                 )
             )
+            record_domain_event("ollama_job_failure", body.code)
             return True
 
     def cancel_job(self, job_id: str | None):
@@ -850,6 +951,35 @@ class Catalog:
 
     @staticmethod
     def _verify_output(input_payload: dict, output: dict) -> tuple[str, float]:
+        parsed = (
+            SpecialistOutputV2.model_validate(output)
+            if output.get("schemaVersion") == "specialist-output.v2"
+            else None
+        )
+        cutoff = str(input_payload.get("observationCutoff") or "")
+        evidence = input_payload.get("evidence", [])
+        if parsed:
+            identity_data = dict(input_payload.get("tickerIdentity") or {})
+            identity_data.setdefault("ticker", identity_data.get("canonicalTicker", "UNRESOLVED"))
+            identity = TickerIdentity.model_validate(identity_data)
+            if any(detects_prompt_injection(json.dumps(item, sort_keys=True)) for item in evidence):
+                return "prompt_injection_detected", 0.0
+            for item in evidence:
+                if item.get("subjectInstrumentId") != identity.instrumentId:
+                    return "needs_human_review", 0.0
+                if not _before(str(item.get("observedAt", "")), cutoff):
+                    return "needs_human_review", 0.0
+        computed = {}
+        for raw in parsed.calculationIntents if parsed else []:
+            artifact = evaluate_calculation_intent(raw, evidence)
+            computed[artifact.calculationId] = artifact
+        supplied = {
+            item.calculationId: item
+            for item in map(CalculationArtifact.model_validate, output.get("calculationArtifacts", []))
+        }
+        for calculation_id, artifact in computed.items():
+            if calculation_id not in supplied or supplied[calculation_id].model_dump() != artifact.model_dump():
+                return "needs_human_review", 0.0
         allowed = {
             str(item.get("evidenceId") or item.get("id"))
             for item in input_payload.get("evidence", [])
@@ -890,6 +1020,8 @@ class Catalog:
                     and not claim.get("falsifier")
                 ):
                     passed = False
+                if claim.get("calculationId") and claim["calculationId"] not in computed:
+                    passed = False
         return ("passed" if passed else "needs_human_review", ratio)
 
     def complete(self, worker: dict, job_id: str, body: WorkerResult) -> dict | None:
@@ -920,12 +1052,14 @@ class Catalog:
                             (job_id,),
                         ).fetchone()
                         if existing and existing["content_hash"] == output_hash:
+                            record_domain_event("ollama_completion_replay", "identical")
                             return {
                                 "runId": str(existing["id"]),
                                 "verificationStatus": existing["verification_status"],
                                 "citationResolution": 1.0,
                                 "duplicate": True,
                             }
+                        record_domain_event("ollama_completion_replay", "divergent")
                         raise CompletionConflict("conflicting duplicate completion")
                     if job["state"] != "claimed" or job["lease_expires_at"] <= now():
                         return None
@@ -938,9 +1072,10 @@ class Catalog:
                         "requested_model_digest"
                     ):
                         raise ValueError("executed model digest does not match the approved digest")
-                    if body.inputHash and body.inputHash != canonical_hash(job["input_payload"]):
+                    resolved_input = self.resolved_input(job["input_payload"])
+                    if body.inputHash and body.inputHash != canonical_hash(resolved_input):
                         raise ValueError("inputHash does not match the immutable job snapshot")
-                    verification, citation_ratio = self._verify_output(job["input_payload"], output)
+                    verification, citation_ratio = self._verify_output(resolved_input, output)
                     connection.execute(
                         """
                         INSERT INTO llm_runs (
@@ -969,7 +1104,7 @@ class Catalog:
                             body.modelDigest,
                             body.ollamaVersion,
                             worker["id"],
-                            canonical_hash(job["input_payload"]),
+                            canonical_hash(resolved_input),
                             job["observation_cutoff"],
                             json.dumps(body.parameters),
                             body.startedAt,
@@ -1008,7 +1143,7 @@ class Catalog:
                         context_builder_version='evidence-pack-builder.v2', verifier_model_name=%s,
                         verifier_model_digest=%s, verification_findings=%s::jsonb,
                         rejected_claims=%s::jsonb, repair_lineage=%s::jsonb, finish_reason=%s,
-                        truncation_detected=%s, stage_hashes=%s::jsonb WHERE id=%s""",
+                        truncation_detected=%s,stage_hashes=%s::jsonb,trace_id=%s WHERE id=%s""",
                         (
                             body.verifierModelName,
                             body.verifierModelDigest,
@@ -1018,6 +1153,7 @@ class Catalog:
                             body.finishReason,
                             body.truncationDetected,
                             json.dumps(body.stageHashes),
+                            resolved_input.get("traceparent"),
                             run_id,
                         ),
                     )
@@ -1041,12 +1177,14 @@ class Catalog:
                         (run for run in self.runs.values() if run["job_id"] == job_id), None
                     )
                     if existing and existing["content_hash"] == output_hash:
+                        record_domain_event("ollama_completion_replay", "identical")
                         return {
                             "runId": existing["id"],
                             "verificationStatus": existing["verification_status"],
                             "citationResolution": existing["citation_resolution"],
                             "duplicate": True,
                         }
+                    record_domain_event("ollama_completion_replay", "divergent")
                     raise CompletionConflict("conflicting duplicate completion")
                 if job["state"] != "claimed":
                     return None
@@ -1060,7 +1198,10 @@ class Catalog:
                     "requested_model_digest"
                 ):
                     raise ValueError("executed model digest does not match the approved digest")
-                verification, citation_ratio = self._verify_output(job["input_payload"], output)
+                resolved_input = self.resolved_input(job["input_payload"])
+                if body.inputHash and body.inputHash != canonical_hash(resolved_input):
+                    raise ValueError("inputHash does not match the immutable job snapshot")
+                verification, citation_ratio = self._verify_output(resolved_input, output)
                 job["state"] = "completed"
                 self.runs[run_id] = {
                     "id": run_id,
@@ -1079,6 +1220,7 @@ class Catalog:
                     "rejected_claims": output.get("rejectedClaims", []),
                     "repair_lineage": output.get("repairLineage", []),
                     "stage_hashes": body.stageHashes,
+                    "trace_id": resolved_input.get("traceparent"),
                 }
         if not self.durable:
             from .ollama_bridge import bridge
@@ -1110,7 +1252,10 @@ class Catalog:
         if self.durable:
             with self._connect() as connection:
                 rows = connection.execute(
-                    """SELECT id, packet_id, model_name, model_digest, prompt_template_id, evidence_pack_hash, observation_cutoff, verification_status, structured_output, content_hash, created_at FROM llm_runs WHERE packet_id = %s AND verification_status = 'passed' AND output_schema_version = 'specialist-output.v2' ORDER BY created_at""",
+                    """SELECT id, packet_id, model_name, model_digest, prompt_template_id,
+                    evidence_pack_hash,observation_cutoff,verification_status,structured_output,
+                    content_hash,trace_id,created_at FROM llm_runs WHERE packet_id=%s
+                    AND output_schema_version='specialist-output.v2' ORDER BY created_at""",
                     (packet_id,),
                 ).fetchall()
             return [{**dict(row), "id": str(row["id"])} for row in rows]
@@ -1120,7 +1265,6 @@ class Catalog:
                 for row in self.runs.values()
                 if row["organization_id"] == organization_id
                 and row.get("packet_id") == packet_id
-                and row.get("verification_status") == "passed"
                 and row.get("structured_output", {}).get("schemaVersion") == "specialist-output.v2"
             ]
 
@@ -1185,10 +1329,12 @@ def _principal():
     return principal
 
 
-def _worker(authorization: str | None) -> dict:
+def _worker(authorization: str | None, request: Request | None = None) -> dict:
     if not authorization or not authorization.lower().startswith("bearer "):
         raise HTTPException(status_code=401, detail="Worker credential required")
-    worker = catalog.authenticate_worker(authorization[7:].strip())
+    worker = catalog.authenticate_worker(
+        authorization[7:].strip(), request.client.host if request and request.client else None
+    )
     if not worker:
         raise HTTPException(status_code=401, detail="Worker credential is invalid or revoked")
     return worker
@@ -1253,8 +1399,8 @@ def review_run(run_id: str, body: HumanReviewCreate) -> dict:
 
 
 @router.post("/local-worker/claim")
-def claim_job(body: WorkerClaim, authorization: str | None = Header(default=None)) -> dict:
-    worker = _worker(authorization)
+def claim_job(body: WorkerClaim, request: Request, authorization: str | None = Header(default=None)) -> dict:
+    worker = _worker(authorization, request)
     deadline = time.monotonic() + body.waitSeconds
     while True:
         job = catalog.claim(worker, body.leaseSeconds, body)
@@ -1265,26 +1411,26 @@ def claim_job(body: WorkerClaim, authorization: str | None = Header(default=None
 
 @router.post("/local-worker/capabilities")
 def register_worker_capabilities(
-    body: WorkerCapabilities, authorization: str | None = Header(default=None)
+    body: WorkerCapabilities, request: Request, authorization: str | None = Header(default=None)
 ) -> dict:
-    return catalog.register_capabilities(_worker(authorization), body)
+    return catalog.register_capabilities(_worker(authorization, request), body)
 
 
 @router.post("/local-worker/jobs/{job_id}/heartbeat")
-def heartbeat_job(job_id: str, body: LeaseUpdate, authorization: str | None = Header(default=None)):
-    if not catalog.heartbeat(_worker(authorization), job_id, body):
+def heartbeat_job(job_id: str, body: LeaseUpdate, request: Request, authorization: str | None = Header(default=None)):
+    if not catalog.heartbeat(_worker(authorization, request), job_id, body):
         raise HTTPException(409, "Job lease is invalid, fenced, or expired")
     return {"accepted": True}
 
 
 @router.post("/local-worker/jobs/{job_id}/progress")
-def progress_job(job_id: str, body: LeaseUpdate, authorization: str | None = Header(default=None)):
-    return heartbeat_job(job_id, body, authorization)
+def progress_job(job_id: str, body: LeaseUpdate, request: Request, authorization: str | None = Header(default=None)):
+    return heartbeat_job(job_id, body, request, authorization)
 
 
 @router.post("/local-worker/jobs/{job_id}/failure")
-def failure_job(job_id: str, body: WorkerFailure, authorization: str | None = Header(default=None)):
-    if not catalog.fail_job(_worker(authorization), job_id, body):
+def failure_job(job_id: str, body: WorkerFailure, request: Request, authorization: str | None = Header(default=None)):
+    if not catalog.fail_job(_worker(authorization, request), job_id, body):
         raise HTTPException(409, "Job lease is invalid or fenced")
     return {"accepted": True, "retrying": body.retryable}
 
@@ -1293,9 +1439,10 @@ def failure_job(job_id: str, body: WorkerFailure, authorization: str | None = He
 def complete_job(
     job_id: str,
     body: WorkerResult,
+    request: Request,
     authorization: str | None = Header(default=None),
 ) -> dict:
-    worker = _worker(authorization)
+    worker = _worker(authorization, request)
     try:
         result = catalog.complete(worker, job_id, body)
     except CompletionConflict as exc:

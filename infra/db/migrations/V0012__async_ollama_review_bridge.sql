@@ -12,7 +12,7 @@ ALTER TABLE local_worker_credentials
 
 ALTER TABLE llm_jobs DROP CONSTRAINT IF EXISTS llm_jobs_state_check;
 ALTER TABLE llm_jobs ADD CONSTRAINT llm_jobs_state_check CHECK (state IN
-  ('queued','claimed','completed','failed','canceled','cancelled','retry_wait','superseded','expired'));
+  ('queued','claimed','completed','failed','dead_letter','canceled','cancelled','retry_wait','superseded','expired'));
 ALTER TABLE llm_jobs
   ADD COLUMN IF NOT EXISTS operation_id UUID,
   ADD COLUMN IF NOT EXISTS requested_model TEXT,
@@ -27,6 +27,8 @@ ALTER TABLE llm_jobs
   ADD COLUMN IF NOT EXISTS workflow_stage TEXT NOT NULL DEFAULT 'queued',
   ADD COLUMN IF NOT EXISTS last_error JSONB;
 
+ALTER TABLE llm_runs ADD COLUMN IF NOT EXISTS trace_id TEXT;
+
 CREATE TABLE IF NOT EXISTS ollama_review_operations (
   id UUID PRIMARY KEY,
   organization_id UUID NOT NULL DEFAULT ambrosia_current_organization_id()
@@ -39,16 +41,18 @@ CREATE TABLE IF NOT EXISTS ollama_review_operations (
   provider_requested TEXT NOT NULL DEFAULT 'ollama' CHECK (provider_requested='ollama'),
   provider_used TEXT,
   state TEXT NOT NULL CHECK (state IN
-    ('queued','leased','running','verifying','repairing','retry_wait','completed','failed','expired','canceled','superseded')),
+    ('queued','leased','running','verifying','repairing','retry_wait','completed','failed','dead_letter','expired','canceled','superseded')),
   stage TEXT NOT NULL,
   progress INTEGER NOT NULL DEFAULT 0 CHECK (progress BETWEEN 0 AND 100),
   reason_code TEXT,
   input_hash CHAR(64) NOT NULL,
+  input_artifact_id UUID REFERENCES artifact_records(id) ON DELETE RESTRICT,
   result_hash CHAR(64),
   requested_model TEXT,
   requested_model_digest TEXT,
   model_name TEXT,
   model_digest TEXT,
+  verification_status TEXT CHECK (verification_status IN ('passed','repaired','abstained','human_review')),
   worker_id UUID REFERENCES local_worker_credentials(id) ON DELETE SET NULL,
   deadline_at TIMESTAMPTZ NOT NULL,
   completed_at TIMESTAMPTZ,
@@ -61,6 +65,27 @@ CREATE TABLE IF NOT EXISTS ollama_review_operations (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   UNIQUE (organization_id, idempotency_key_hash)
 );
+
+CREATE OR REPLACE FUNCTION enforce_ollama_operation_transition() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+  IF OLD.state = NEW.state THEN RETURN NEW; END IF;
+  IF NOT (
+    (OLD.state='queued' AND NEW.state IN ('leased','canceled','expired','failed')) OR
+    (OLD.state='leased' AND NEW.state IN ('running','verifying','completed','superseded','retry_wait','failed','dead_letter','expired','canceled')) OR
+    (OLD.state='running' AND NEW.state IN ('verifying','repairing','retry_wait','completed','failed','dead_letter','expired','canceled','superseded')) OR
+    (OLD.state='verifying' AND NEW.state IN ('repairing','retry_wait','completed','failed','dead_letter','expired','superseded')) OR
+    (OLD.state='repairing' AND NEW.state IN ('retry_wait','completed','failed','dead_letter','expired','superseded')) OR
+    (OLD.state='retry_wait' AND NEW.state IN ('queued','leased','failed','dead_letter','expired','canceled')) OR
+    (OLD.state='failed' AND NEW.state='queued') OR
+    (OLD.state='expired' AND NEW.state='queued')
+  ) THEN RAISE EXCEPTION 'illegal ollama operation transition: % -> %', OLD.state, NEW.state;
+  END IF;
+  RETURN NEW;
+END $$;
+DROP TRIGGER IF EXISTS trg_ollama_operation_transition ON ollama_review_operations;
+CREATE TRIGGER trg_ollama_operation_transition BEFORE UPDATE OF state ON ollama_review_operations
+FOR EACH ROW EXECUTE FUNCTION enforce_ollama_operation_transition();
 
 ALTER TABLE llm_jobs DROP CONSTRAINT IF EXISTS llm_jobs_operation_id_fkey;
 ALTER TABLE llm_jobs ADD CONSTRAINT llm_jobs_operation_id_fkey

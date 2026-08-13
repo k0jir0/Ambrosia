@@ -157,6 +157,46 @@ class ArtifactStore:
             ExpiresIn=60,
         )
 
+    def load_json(self, artifact_id: str) -> object:
+        """Read and hash-verify one tenant-scoped durable JSON artifact server-side."""
+        database_url = os.getenv("DATABASE_URL", "").strip()
+        if not database_url or not self._bucket():
+            raise RuntimeError("Durable artifact storage is unavailable")
+        with psycopg.connect(database_url, row_factory=dict_row) as connection:
+            apply_tenant_context(connection)
+            row = connection.execute(
+                """SELECT storage_key,content_hash FROM artifact_records
+                WHERE id=%s AND storage_status='durable'""",
+                (artifact_id,),
+            ).fetchone()
+        if not row:
+            raise FileNotFoundError("Governed artifact not found")
+        encoded = self._client().get_object(Bucket=self._bucket(), Key=row["storage_key"])[
+            "Body"
+        ].read()
+        if hashlib.sha256(encoded).hexdigest() != row["content_hash"]:
+            raise ValueError("Governed artifact content hash mismatch")
+        return json.loads(encoded)
+
+    def discard(self, artifact_id: str) -> None:
+        """Compensate a failed parent transaction without leaving readable input data."""
+        database_url = os.getenv("DATABASE_URL", "").strip()
+        if not database_url or not self._bucket():
+            return
+        with psycopg.connect(database_url, row_factory=dict_row) as connection:
+            apply_tenant_context(connection)
+            row = connection.execute(
+                "SELECT storage_key FROM artifact_records WHERE id=%s FOR UPDATE",
+                (artifact_id,),
+            ).fetchone()
+            if not row:
+                return
+            self._client().delete_object(Bucket=self._bucket(), Key=row["storage_key"])
+            connection.execute(
+                "UPDATE artifact_records SET storage_status='deleted',updated_at=now() WHERE id=%s",
+                (artifact_id,),
+            )
+
 
 artifact_store = ArtifactStore()
 

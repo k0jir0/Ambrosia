@@ -1177,13 +1177,17 @@ def list_alert_queue(
 @app.get("/providers/status")
 def get_provider_status(
     x_ambrosia_role: str | None = Header(default=None, alias="X-Ambrosia-Role"),
-) -> dict[str, bool]:
+) -> dict:
     _require_role(ADVANCED_ROLES, x_ambrosia_role, scope="advanced")
     status = provider_status()
     principal = current_principal()
     status["activeTenantWorkerCompatible"] = bool(
         principal and principal.organization_id
         and llm_catalog.has_compatible_worker(principal.organization_id)
+    )
+    status["ollamaModelPolicies"] = (
+        llm_catalog.active_model_policies(principal.organization_id)
+        if principal and principal.organization_id else []
     )
     return status
 
@@ -1252,8 +1256,10 @@ def run_packet_agents(packet_id: str, body: AgentRunRequest, response: Response,
     if packet is None:
         raise HTTPException(status_code=404, detail="Packet not found")
     if body.providerMode == "ollama":
-        operation=ollama_bridge.create(packet,OperationCreate(),idempotency_key)
-        response.status_code=202; response.headers["Location"]=f"/agent-operations/{operation['id']}"; response.headers["Retry-After"]="2"
+        operation = ollama_bridge.create(packet, OperationCreate(), idempotency_key)
+        response.status_code = 202
+        response.headers["Location"] = f"/operations/{operation['id']}"
+        response.headers["Retry-After"] = "2"
         return operation
 
     selected_provider = resolve_provider(body.providerMode)
@@ -2167,6 +2173,12 @@ def generate_packet_report(packet_id: str) -> ReportArtifact:
     packet = store.get_packet(packet_id)
     if packet is None:
         raise HTTPException(status_code=404, detail="Packet not found")
+    operations = ollama_bridge.list(packet_id)
+    if operations and operations[0]["state"] != "completed":
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "ollama_operation_incomplete", "operation": operations[0]},
+        )
 
     principal = current_principal()
     runs = (
@@ -2201,6 +2213,12 @@ def generate_packet_report_async(
     _require_report_export_enabled()
     if store.get_packet(packet_id) is None:
         raise HTTPException(status_code=404, detail="Packet not found")
+    operations = ollama_bridge.list(packet_id)
+    if operations and operations[0]["state"] != "completed":
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "ollama_operation_incomplete", "operation": operations[0]},
+        )
 
     job = store.enqueue_job("report.generate", f"packet={packet_id}", idempotency_key)
     principal = current_principal()

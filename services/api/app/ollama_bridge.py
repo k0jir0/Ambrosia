@@ -12,24 +12,33 @@ from uuid import uuid4
 from fastapi import APIRouter, Header, HTTPException, Response
 from pydantic import BaseModel, Field
 
+from .artifact_store import artifact_store
 from .coordinator import build_evidence_pack, run_specialists
 from .llm_catalog import LlmJobCreate, WorkerResult, canonical_hash, catalog
 from .models import AuditEvent, DecisionPacket, SpecialistAgentOutput
-from .operations import current_principal
+from .operations import current_principal, record_domain_event, record_domain_measurement
 from .providers import resolve_provider
 from .selective_integration import invalidate_integration
 from .store import store
 
 router = APIRouter(tags=["ollama-review-bridge"])
-TERMINAL = {"completed", "failed", "expired", "canceled", "superseded"}
+TERMINAL = {"completed", "failed", "dead_letter", "expired", "canceled", "superseded"}
 
 
 def now():
     return datetime.now(UTC).isoformat()
 
 
-def enabled():
-    return os.getenv("OLLAMA_REVIEW_BRIDGE_ENABLED", "true").lower() in {"1", "true", "yes", "on"}
+def enabled(tenant: str | None = None):
+    if os.getenv("OLLAMA_REVIEW_BRIDGE_ENABLED", "true").lower() not in {"1", "true", "yes", "on"}:
+        return False
+    allowlist = {
+        item.strip()
+        for item in os.getenv("OLLAMA_REVIEW_BRIDGE_ORGANIZATIONS", "").split(",")
+        if item.strip()
+    }
+    protected = os.getenv("ENVIRONMENT", "development").lower() in {"staging", "production"}
+    return bool(tenant and tenant in allowlist) if protected or allowlist else True
 
 
 def traceparent():
@@ -40,6 +49,7 @@ class OperationCreate(BaseModel):
     providerMode: Literal["ollama"] = "ollama"
     requestedModel: str | None = Field(default=None, max_length=200)
     requestedModelDigest: str | None = Field(default=None, max_length=256)
+    traceparent: str | None = Field(default=None, pattern="^00-[a-f0-9]{32}-[a-f0-9]{16}-[0-9a-f]{2}$")
 
 
 class OperationView(BaseModel):
@@ -55,12 +65,18 @@ class OperationView(BaseModel):
     workerId: str | None = None
     modelName: str | None = None
     modelDigest: str | None = None
+    workerName: str | None = None
+    verificationStatus: str | None = None
     resultPacketVersion: int | None = None
     fallbackOperationId: str | None = None
     error: dict | None = None
     createdAt: str
     updatedAt: str
     deadlineAt: str | None = None
+    operationId: str
+    statusUrl: str
+    cancelUrl: str
+    traceparent: str
 
 
 class Bridge:
@@ -80,7 +96,26 @@ class Bridge:
         )
 
     def public(self, row):
-        return {k: v for k, v in row.items() if k not in {"tenant", "semantic", "resultHash"}}
+        value = {k: v for k, v in row.items() if k not in {"tenant", "semantic", "resultHash"}}
+        value.update(
+            operationId=row["id"],
+            statusUrl=f"/operations/{row['id']}",
+            cancelUrl=f"/operations/{row['id']}/cancel",
+            traceparent=row["traceId"],
+        )
+        return value
+
+    @staticmethod
+    def approved_digest(tenant: str, requested: str | None) -> str:
+        policies = catalog.active_model_policies(tenant)
+        available = {str(item["digest"]) for item in policies}
+        default = os.getenv("OLLAMA_DEFAULT_MODEL_DIGEST", "").strip()
+        selected = requested or default or (next(iter(available)) if len(available) == 1 else "")
+        if not selected:
+            raise HTTPException(503, "No unambiguous active tenant Ollama model policy is available")
+        if selected not in available:
+            raise HTTPException(503, "No active tenant worker provides the approved model digest")
+        return selected
 
     def persist(self, row, connection=None):
         """Upsert operation state before jobs reference it and after every transition."""
@@ -93,13 +128,16 @@ class Bridge:
             connection.execute(
                 """INSERT INTO ollama_review_operations
                 (id,organization_id,packet_id,expected_packet_version,semantic_key_hash,idempotency_key_hash,state,stage,
-                 progress,provider_requested,provider_used,input_hash,requested_model_digest,model_name,model_digest,
-                 worker_id,job_id,fallback_operation_id,result_packet_version,result_hash,deadline_at,trace_id,created_by,error,created_at,updated_at)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s,%s)
+                 progress,provider_requested,provider_used,input_hash,input_artifact_id,
+                 requested_model_digest,model_name,model_digest,
+                 worker_id,job_id,fallback_operation_id,result_packet_version,result_hash,verification_status,
+                 deadline_at,trace_id,created_by,error,created_at,updated_at)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s,%s)
                 ON CONFLICT(id) DO UPDATE SET state=EXCLUDED.state,stage=EXCLUDED.stage,progress=EXCLUDED.progress,
                  provider_used=EXCLUDED.provider_used,model_name=EXCLUDED.model_name,model_digest=EXCLUDED.model_digest,
                  worker_id=EXCLUDED.worker_id,job_id=EXCLUDED.job_id,fallback_operation_id=EXCLUDED.fallback_operation_id,
-                 result_packet_version=EXCLUDED.result_packet_version,result_hash=EXCLUDED.result_hash,error=EXCLUDED.error,
+                 result_packet_version=EXCLUDED.result_packet_version,result_hash=EXCLUDED.result_hash,
+                 verification_status=EXCLUDED.verification_status,error=EXCLUDED.error,
                  deadline_at=EXCLUDED.deadline_at,updated_at=EXCLUDED.updated_at""",
                 (
                     row["id"],
@@ -107,13 +145,16 @@ class Bridge:
                     row["packetId"],
                     row["expectedPacketVersion"],
                     row["semantic"],
-                    canonical_hash(row["idempotencyKey"]) if row.get("idempotencyKey") else None,
+                    canonical_hash([row["tenant"], row["createdBy"], row["idempotencyKey"]])
+                    if row.get("idempotencyKey")
+                    else None,
                     row["state"],
                     row["stage"],
                     row["progress"],
                     row["requestedProvider"],
                     row.get("actualProvider"),
                     row["inputHash"],
+                    row.get("inputArtifactId"),
                     row.get("modelDigest"),
                     row.get("modelName"),
                     row.get("modelDigest"),
@@ -122,6 +163,7 @@ class Bridge:
                     row.get("fallbackOperationId"),
                     row.get("resultPacketVersion"),
                     row.get("resultHash"),
+                    row.get("verificationStatus"),
                     row["deadlineAt"],
                     row["traceId"],
                     row["createdBy"],
@@ -143,7 +185,9 @@ class Bridge:
         with catalog._connect(tenant=False) as connection:
             catalog._set_worker_tenant(connection, {"organization_id": tenant})
             value = connection.execute(
-                "SELECT * FROM ollama_review_operations WHERE id=%s", (operation_id,)
+                """SELECT o.*,w.name AS worker_name FROM ollama_review_operations o
+                LEFT JOIN local_worker_credentials w ON w.id=o.worker_id WHERE o.id=%s""",
+                (operation_id,),
             ).fetchone()
         if not value:
             return None
@@ -160,6 +204,8 @@ class Bridge:
             "workerId": str(value["worker_id"]) if value["worker_id"] else None,
             "modelName": value["model_name"],
             "modelDigest": value["model_digest"],
+            "workerName": value["worker_name"],
+            "verificationStatus": value["verification_status"],
             "resultPacketVersion": value["result_packet_version"],
             "fallbackOperationId": str(value["fallback_operation_id"])
             if value["fallback_operation_id"]
@@ -172,6 +218,9 @@ class Bridge:
             "resultHash": value["result_hash"],
             "idempotencyKey": None,
             "inputHash": value["input_hash"],
+            "inputArtifactId": str(value["input_artifact_id"])
+            if value["input_artifact_id"]
+            else None,
             "deadlineAt": value["deadline_at"].isoformat(),
             "traceId": value["trace_id"],
             "createdBy": value["created_by"],
@@ -181,19 +230,21 @@ class Bridge:
         return row
 
     def create(self, packet: DecisionPacket, body: OperationCreate, key: str | None):
-        if not enabled():
-            raise HTTPException(503, "Ollama review bridge is disabled")
         tenant = self.tenant()
+        if not enabled(tenant):
+            raise HTTPException(503, "Ollama review bridge is disabled for this organization")
         principal = current_principal()
+        requested_digest = self.approved_digest(tenant, body.requestedModelDigest)
+        created_by = principal.subject if principal else "system"
         pack = build_evidence_pack(packet)
-        if len(json.dumps(pack, default=str).encode()) > 2_000_000:
-            raise HTTPException(413, "Governed evidence snapshot exceeds the worker limit")
+        pack_size = len(json.dumps(pack, default=str).encode())
+        artifact_id = None
         semantic = canonical_hash(
             [
                 tenant,
                 packet.id,
                 packet.packetVersion,
-                body.requestedModelDigest,
+                requested_digest,
                 pack["contentHash"],
                 "v2",
             ]
@@ -208,15 +259,18 @@ class Bridge:
                     ORDER BY created_at DESC LIMIT 1""",
                     (
                         semantic,
-                        canonical_hash(key) if key else None,
-                        canonical_hash(key) if key else None,
+                        canonical_hash([tenant, created_by, key]) if key else None,
+                        canonical_hash([tenant, created_by, key]) if key else None,
                     ),
                 ).fetchone()
             if existing:
+                record_domain_event("ollama_operation_replay", "durable")
                 return self.public(self.hydrate(str(existing["id"]), tenant))
         with self.lock:
-            if key and (tenant, key) in self.idempotency:
-                return self.public(self.operations[self.idempotency[tenant, key]])
+            memory_key = (tenant, created_by, key)
+            if key and memory_key in self.idempotency:
+                record_domain_event("ollama_operation_replay", "memory")
+                return self.public(self.operations[self.idempotency[memory_key]])
             old = next(
                 (
                     x
@@ -228,6 +282,14 @@ class Bridge:
             )
             if old:
                 return self.public(old)
+            if pack_size > 512_000 and catalog.durable:
+                artifact_id = artifact_store.persist_json(
+                    "llm", packet.id, f"ollama-input-{packet.packetVersion}.json", pack
+                ).get("artifactId")
+            if pack_size > 2_000_000 and not artifact_id:
+                raise HTTPException(
+                    413, "Governed evidence snapshot requires durable artifact storage"
+                )
             oid = str(uuid4())
             row = {
                 "id": oid,
@@ -241,7 +303,9 @@ class Bridge:
                 "jobId": None,
                 "workerId": None,
                 "modelName": body.requestedModel,
-                "modelDigest": body.requestedModelDigest,
+                "modelDigest": requested_digest,
+                "workerName": None,
+                "verificationStatus": None,
                 "resultPacketVersion": None,
                 "fallbackOperationId": None,
                 "error": None,
@@ -252,47 +316,60 @@ class Bridge:
                 "resultHash": None,
                 "idempotencyKey": key,
                 "inputHash": pack["contentHash"],
+                "inputArtifactId": artifact_id,
                 "deadlineAt": (datetime.now(UTC) + timedelta(minutes=15)).isoformat(),
-                "traceId": traceparent(),
-                "createdBy": principal.subject if principal else "system",
+                "traceId": body.traceparent or traceparent(),
+                "createdBy": created_by,
             }
             self.operations[oid] = row
             if key:
-                self.idempotency[tenant, key] = oid
+                self.idempotency[memory_key] = oid
         job_body = LlmJobCreate(
             packetId=packet.id,
             thesis=packet.thesis,
             claims=[c.text for c in packet.claims],
-            evidence=pack["evidence"],
+            evidence=[] if artifact_id else pack["evidence"],
             observationCutoff=pack["observationCutoff"],
             role="pmSynthesis",
             tickerIdentity=pack["tickerIdentity"],
             operationId=oid,
             expectedPacketVersion=packet.packetVersion,
             requestedModel=body.requestedModel,
-            requestedModelDigest=body.requestedModelDigest,
+            requestedModelDigest=requested_digest,
             traceparent=row["traceId"],
+            inputArtifactId=artifact_id,
+            inputArtifactHash=canonical_hash(pack) if artifact_id else None,
         )
         if catalog.durable:
-            with catalog._connect(tenant=False) as connection:
-                with connection.transaction():
-                    catalog._set_worker_tenant(connection, {"organization_id": tenant})
-                    self.persist(row, connection)
-                    q = catalog.enqueue(tenant, job_body, connection=connection)
-                    row["jobId"] = q["id"]
-                    row["updatedAt"] = now()
-                    self.persist(row, connection)
-                    connection.execute(
-                        """INSERT INTO llm_operation_events
-                        (organization_id,operation_id,actor_type,actor_id,to_state,reason_code,trace_id)
-                        VALUES (%s,%s,'user',%s,'queued','provider_requested',%s)""",
-                        (tenant, oid, row["createdBy"], row["traceId"]),
-                    )
+            try:
+                with catalog._connect(tenant=False) as connection:
+                    with connection.transaction():
+                        catalog._set_worker_tenant(connection, {"organization_id": tenant})
+                        self.persist(row, connection)
+                        q = catalog.enqueue(tenant, job_body, connection=connection)
+                        row["jobId"] = q["id"]
+                        row["updatedAt"] = now()
+                        self.persist(row, connection)
+                        connection.execute(
+                            """INSERT INTO llm_operation_events
+                            (organization_id,operation_id,actor_type,actor_id,to_state,reason_code,trace_id)
+                            VALUES (%s,%s,'user',%s,'queued','provider_requested',%s)""",
+                            (tenant, oid, row["createdBy"], row["traceId"]),
+                        )
+            except Exception:
+                if artifact_id:
+                    artifact_store.discard(artifact_id)
+                raise
         else:
             q = catalog.enqueue(tenant, job_body)
             with self.lock:
                 row["jobId"] = q["id"]
                 row["updatedAt"] = now()
+        record_domain_event("ollama_operation_created", "queued")
+        record_domain_event(
+            "ollama_evidence_disclosed", "artifact" if artifact_id else "inline"
+        )
+        record_domain_measurement("ollama_evidence_bytes", pack_size)
         return self.public(row)
 
     def get(self, oid):
@@ -464,6 +541,7 @@ class Bridge:
                 else:
                     catalog.cancel_job(row["jobId"])
                     self.persist(row)
+                record_domain_event("ollama_operation_canceled", previous_state)
             return self.public(row)
 
     def complete(self, worker, job, body: WorkerResult, verification, run_id):
@@ -504,13 +582,29 @@ class Bridge:
                     updatedAt=now(),
                 )
                 self.persist(row)
+            record_domain_event("ollama_packet_superseded", "memory")
             return
         if verification != "passed":
-            self.fail(
-                str(oid), {"code": "verification_failed", "message": "Output requires human review"}
+            row.update(
+                state="completed",
+                stage="completed",
+                progress=100,
+                actualProvider="ollama-local-worker",
+                modelName=body.modelName,
+                modelDigest=body.modelDigest,
+                verificationStatus="abstained" if body.output.abstained else "human_review",
+                resultHash=digest,
+                error={
+                    "code": verification,
+                    "message": "Output was retained but not admitted to the packet.",
+                },
+                updatedAt=now(),
             )
+            self.persist(row)
             return
-        updated = self.result_packet(packet, worker, body, verification, run_id, str(oid))
+        updated = self.result_packet(
+            packet, worker, body, verification, run_id, str(oid), row["traceId"]
+        )
         saved = store.commit_packet_transition(
             updated,
             event_type="agents.completed",
@@ -523,6 +617,7 @@ class Bridge:
                 stage="completed",
                 progress=100,
                 actualProvider="ollama-local-worker",
+                verificationStatus=verification,
                 modelName=body.modelName,
                 modelDigest=body.modelDigest,
                 resultPacketVersion=saved.packetVersion,
@@ -532,7 +627,9 @@ class Bridge:
             self.persist(row)
 
     @staticmethod
-    def result_packet(packet, worker, body: WorkerResult, verification, run_id, operation_id):
+    def result_packet(
+        packet, worker, body: WorkerResult, verification, run_id, operation_id, trace_id=None
+    ):
         output = body.output.model_dump(mode="json", exclude_unset=True)
         role = output.get("role") or "pmSynthesis"
         specialist = SpecialistAgentOutput(
@@ -585,7 +682,12 @@ class Bridge:
                     "modelName": body.modelName,
                     "modelDigest": body.modelDigest,
                     "verificationStatus": verification,
+                    "verifiedRoleCount": 1 if verification == "passed" and not output.get("repairLineage") and not output.get("abstained") else 0,
+                    "repairedRoleCount": 1 if output.get("repairLineage") else 0,
+                    "abstainedRoleCount": 1 if output.get("abstained") else 0,
+                    "humanReviewRoleCount": 0,
                     "runId": run_id,
+                    "traceparent": trace_id,
                 },
                 "audit": [
                     *base.audit,
@@ -636,13 +738,25 @@ class Bridge:
                 "packet_superseded",
                 job.get("attempt_id"),
             )
+            record_domain_event("ollama_packet_superseded", "durable")
             return {"duplicate": False, "superseded": True}
         if verification != "passed":
+            status = "abstained" if body.output.abstained else "human_review"
             connection.execute(
-                """UPDATE ollama_review_operations SET state='failed',stage='server_verification',
-                reason_code='verification_rejected',result_hash=%s,updated_at=now(),completed_at=now()
+                """UPDATE ollama_review_operations SET state='completed',stage='completed',progress=100,
+                provider_used='ollama-local-worker',model_name=%s,model_digest=%s,worker_id=%s,
+                verification_status=%s,reason_code=%s,result_hash=%s,
+                updated_at=now(),completed_at=now()
                 WHERE id=%s""",
-                (result_hash, operation_id),
+                (
+                    body.modelName,
+                    body.modelDigest,
+                    worker["id"],
+                    status,
+                    verification,
+                    result_hash,
+                    operation_id,
+                ),
             )
             self.event(
                 connection,
@@ -650,12 +764,14 @@ class Bridge:
                 "server",
                 None,
                 operation["state"],
-                "failed",
-                "verification_rejected",
+                "completed",
+                verification,
                 job.get("attempt_id"),
             )
             return {"duplicate": False, "superseded": False, "rejected": True}
-        updated = self.result_packet(packet, worker, body, verification, run_id, operation_id)
+        updated = self.result_packet(
+            packet, worker, body, verification, run_id, operation_id, operation["trace_id"]
+        )
         packet_store = store._packet_db
         if packet_store is None:
             raise RuntimeError("Durable packet store is unavailable")
@@ -671,12 +787,14 @@ class Bridge:
         connection.execute(
             """UPDATE ollama_review_operations SET state='completed',stage='completed',progress=100,
             provider_used='ollama-local-worker',model_name=%s,model_digest=%s,worker_id=%s,
+            verification_status=%s,
             result_packet_version=%s,result_hash=%s,updated_at=now(),completed_at=now()
             WHERE id=%s""",
             (
                 body.modelName,
                 body.modelDigest,
                 worker["id"],
+                "repaired" if body.output.repairLineage else ("abstained" if body.output.abstained else "passed"),
                 updated.packetVersion,
                 result_hash,
                 operation_id,
@@ -720,7 +838,7 @@ class Bridge:
             original = self.hydrate(oid, self.tenant())
             if not original or original["tenant"] != self.tenant():
                 return None
-            if original["state"] not in {"failed", "expired", "superseded"}:
+            if original["state"] not in {"failed", "dead_letter", "expired", "superseded"}:
                 raise HTTPException(
                     409, "Deterministic fallback is available only after Ollama stops or expires"
                 )
@@ -741,6 +859,7 @@ class Bridge:
             }
             self.operations[fid] = row
             original["fallbackOperationId"] = fid
+        record_domain_event("ollama_explicit_fallback", original["state"])
         if catalog.durable:
             with catalog._connect(tenant=False) as connection:
                 with connection.transaction():
@@ -863,7 +982,7 @@ def create_operation(
     if not packet:
         raise HTTPException(404, "Packet not found")
     result = bridge.create(packet, body, idempotency_key)
-    response.headers["Location"] = f"/agent-operations/{result['id']}"
+    response.headers["Location"] = f"/operations/{result['id']}"
     response.headers["Retry-After"] = "2"
     return result
 

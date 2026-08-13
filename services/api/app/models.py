@@ -917,6 +917,11 @@ class ReportArtifact(BaseModel):
     calculationArtifacts: list[CalculationArtifact] = Field(default_factory=list)
     rejectedClaimIds: list[str] = Field(default_factory=list)
     reportValidationStatus: Literal["passed", "partial", "legacy", "failed"] = "legacy"
+    operationId: str | None = None
+    providerRequested: str | None = None
+    providerUsed: str | None = None
+    verificationStatus: str | None = None
+    traceparent: str | None = None
 
 
 class JobRecord(BaseModel):

@@ -1,16 +1,33 @@
 from fastapi.testclient import TestClient
+from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, datetime, timedelta
 import hashlib
 import hmac
+import json
 import os
 import pytest
 import time as time_module
 
 from app import coordinator
 from app.main import app
+from app.llm_catalog import catalog as llm_catalog
+from app.ollama_bridge import enabled as ollama_bridge_enabled
 from app.store import ReviewStore
 
 
 client = TestClient(app)
+
+
+def test_ollama_bridge_staging_rollout_is_tenant_allowlisted(monkeypatch) -> None:
+    monkeypatch.setenv("ENVIRONMENT", "staging")
+    monkeypatch.setenv("OLLAMA_REVIEW_BRIDGE_ENABLED", "true")
+    monkeypatch.setenv("OLLAMA_REVIEW_BRIDGE_ORGANIZATIONS", "org-canary,org-second")
+
+    assert ollama_bridge_enabled("org-canary")
+    assert not ollama_bridge_enabled("org-unlisted")
+
+    monkeypatch.setenv("OLLAMA_REVIEW_BRIDGE_ENABLED", "false")
+    assert not ollama_bridge_enabled("org-canary")
 
 
 def test_market_intelligence_runtime_gate_is_independent_from_scanner(
@@ -396,10 +413,27 @@ def test_packet_agents_run_hosted_failure_discloses_fallback(monkeypatch) -> Non
     assert packet["agentOutputs"]["technical"]["fallbackUsed"] is True
 
 
+def _enroll_ollama_worker(digest: str) -> dict[str, str]:
+    credential = client.post("/llm/workers", json={"name": "Index160 worker"}).json()
+    headers = {"Authorization": f"Bearer {credential['token']}"}
+    response = client.post(
+        "/local-worker/capabilities",
+        headers=headers,
+        json={
+            "workerVersion": "test",
+            "ollamaVersion": "test",
+            "models": [{"name": "llama3.1:8b", "digest": digest, "contextLength": 8192}],
+        },
+    )
+    assert response.status_code == 200
+    return headers
+
+
 def test_ollama_agent_run_creates_pollable_operation(monkeypatch) -> None:
     monkeypatch.setenv("OLLAMA_REVIEW_BRIDGE_ENABLED", "true")
     packet_id = "packet-ollama-operation"
     assert client.post("/packets", json=_build_packet_payload(packet_id)).status_code == 200
+    _enroll_ollama_worker("sha256:test")
     response = client.post(
         f"/packets/{packet_id}/agent-operations",
         json={"providerMode": "ollama", "requestedModelDigest": "sha256:test"},
@@ -415,6 +449,207 @@ def test_ollama_agent_run_creates_pollable_operation(monkeypatch) -> None:
     assert status.json()["requestedProvider"] == "ollama"
 
 
+def test_browser_ollama_request_resolves_single_active_model_policy(monkeypatch) -> None:
+    monkeypatch.setenv("OLLAMA_REVIEW_BRIDGE_ENABLED", "true")
+    monkeypatch.setenv("OLLAMA_DEFAULT_MODEL_DIGEST", "sha256:browser-policy")
+    packet_id = "packet-browser-ollama-policy"
+    assert client.post("/packets", json=_build_packet_payload(packet_id)).status_code == 200
+    headers = _enroll_ollama_worker("sha256:browser-policy")
+    provider_status = client.get("/providers/status")
+    assert provider_status.status_code == 200
+    assert any(
+        policy["digest"] == "sha256:browser-policy" and policy["approved"] is True
+        for policy in provider_status.json()["ollamaModelPolicies"]
+    )
+    created = client.post(
+        f"/packets/{packet_id}/agent-operations",
+        json={"providerMode": "ollama"},
+        headers={"Idempotency-Key": "browser-policy"},
+    )
+    assert created.status_code == 202
+    assert created.json()["modelDigest"] == "sha256:browser-policy"
+    assert created.json()["operationId"] == created.json()["id"]
+    assert created.json()["statusUrl"].startswith("/operations/")
+    claim = client.post(
+        "/local-worker/claim",
+        headers=headers,
+        json={
+            "leaseSeconds": 120,
+            "models": [
+                {"name": "llama3.1:8b", "digest": "sha256:browser-policy", "contextLength": 8192}
+            ],
+        },
+    ).json()["job"]
+    result = _ollama_result(claim)
+    result["modelDigest"] = "sha256:browser-policy"
+    result["resultHash"] = hashlib.sha256(
+        json.dumps(result["output"], sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    assert client.post(
+        f"/local-worker/jobs/{claim['id']}/result", headers=headers, json=result
+    ).status_code == 200
+
+
+def test_ollama_operation_requires_unambiguous_active_policy(monkeypatch) -> None:
+    monkeypatch.setenv("OLLAMA_REVIEW_BRIDGE_ENABLED", "true")
+    packet_id = "packet-no-worker-policy"
+    assert client.post("/packets", json=_build_packet_payload(packet_id)).status_code == 200
+    response = client.post(
+        f"/packets/{packet_id}/agent-operations",
+        json={"providerMode": "ollama", "requestedModelDigest": "sha256:not-installed"},
+    )
+    assert response.status_code == 503
+
+
+def test_two_concurrent_workers_receive_only_one_lease(monkeypatch) -> None:
+    monkeypatch.setenv("OLLAMA_REVIEW_BRIDGE_ENABLED", "true")
+    digest = "sha256:concurrent-claim"
+    packet_id = "packet-concurrent-claim"
+    assert client.post("/packets", json=_build_packet_payload(packet_id)).status_code == 200
+    first = _enroll_ollama_worker(digest)
+    second = _enroll_ollama_worker(digest)
+    assert client.post(
+        f"/packets/{packet_id}/agent-operations",
+        json={"providerMode": "ollama", "requestedModelDigest": digest},
+    ).status_code == 202
+    body = {"leaseSeconds": 120, "models": [{"name": "test", "digest": digest}]}
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        claims = list(
+            pool.map(
+                lambda headers: client.post("/local-worker/claim", headers=headers, json=body).json()[
+                    "job"
+                ],
+                [first, second],
+            )
+        )
+    accepted = [claim for claim in claims if claim]
+    assert len(accepted) == 1
+    assert accepted[0]["generation"] == 1
+
+
+def test_expired_lease_cannot_commit(monkeypatch) -> None:
+    monkeypatch.setenv("OLLAMA_REVIEW_BRIDGE_ENABLED", "true")
+    digest = "sha256:expired-lease"
+    packet_id = "packet-expired-lease"
+    assert client.post("/packets", json=_build_packet_payload(packet_id)).status_code == 200
+    headers = _enroll_ollama_worker(digest)
+    assert client.post(
+        f"/packets/{packet_id}/agent-operations",
+        json={"providerMode": "ollama", "requestedModelDigest": digest},
+    ).status_code == 202
+    claim = client.post(
+        "/local-worker/claim",
+        headers=headers,
+        json={"leaseSeconds": 120, "models": [{"name": "test", "digest": digest}]},
+    ).json()["job"]
+    if llm_catalog.durable:
+        with llm_catalog._connect(tenant=False) as connection:
+            connection.execute(
+                "UPDATE llm_jobs SET lease_expires_at=now()-interval '1 second' WHERE id=%s",
+                (claim["id"],),
+            )
+    else:
+        llm_catalog.jobs[claim["id"]]["lease_expires_at"] = datetime.now(UTC) - timedelta(seconds=1)
+    result = _ollama_result(claim)
+    result["modelDigest"] = digest
+    response = client.post(f"/local-worker/jobs/{claim['id']}/result", headers=headers, json=result)
+    assert response.status_code == 409
+
+
+def test_packet_edit_supersedes_worker_result(monkeypatch) -> None:
+    monkeypatch.setenv("OLLAMA_REVIEW_BRIDGE_ENABLED", "true")
+    digest = "sha256:superseded-packet"
+    packet_id = "packet-superseded-worker-result"
+    payload = _build_packet_payload(packet_id)
+    assert client.post("/packets", json=payload).status_code == 200
+    headers = _enroll_ollama_worker(digest)
+    operation = client.post(
+        f"/packets/{packet_id}/agent-operations",
+        json={"providerMode": "ollama", "requestedModelDigest": digest},
+    ).json()
+    claim = client.post(
+        "/local-worker/claim",
+        headers=headers,
+        json={"leaseSeconds": 120, "models": [{"name": "test", "digest": digest}]},
+    ).json()["job"]
+    payload["packetVersion"] = 2
+    assert client.post("/packets", json=payload).status_code == 200
+    result = _ollama_result(claim)
+    result["modelDigest"] = digest
+    response = client.post(f"/local-worker/jobs/{claim['id']}/result", headers=headers, json=result)
+    assert response.status_code == 200
+    status = client.get(f"/operations/{operation['id']}").json()
+    assert status["state"] == "superseded"
+    assert client.get(f"/packets/{packet_id}").json()["packetVersion"] == 2
+
+
+def test_rejected_ollama_output_completes_as_human_review_without_packet_mutation(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("OLLAMA_REVIEW_BRIDGE_ENABLED", "true")
+    digest = "sha256:human-review"
+    packet_id = "packet-human-review-output"
+    assert client.post("/packets", json=_build_packet_payload(packet_id)).status_code == 200
+    headers = _enroll_ollama_worker(digest)
+    operation = client.post(
+        f"/packets/{packet_id}/agent-operations",
+        json={"providerMode": "ollama", "requestedModelDigest": digest},
+    ).json()
+    assert client.post(f"/packets/{packet_id}/report").status_code == 409
+    claim = client.post(
+        "/local-worker/claim",
+        headers=headers,
+        json={"leaseSeconds": 120, "models": [{"name": "test", "digest": digest}]},
+    ).json()["job"]
+    result = _ollama_result(claim)
+    result["modelDigest"] = digest
+    result["output"]["materialClaims"][0]["supportingEvidenceIds"] = ["invented-source"]
+    result["output"]["evidenceReferences"] = ["invented-source"]
+    result["resultHash"] = hashlib.sha256(
+        json.dumps(result["output"], sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    assert client.post(
+        f"/local-worker/jobs/{claim['id']}/result", headers=headers, json=result
+    ).status_code == 200
+    status = client.get(f"/operations/{operation['id']}").json()
+    assert status["state"] == "completed"
+    assert status["verificationStatus"] == "human_review"
+    assert client.get(f"/packets/{packet_id}").json()["packetVersion"] == 1
+    report = client.post(f"/packets/{packet_id}/report")
+    assert report.status_code == 200
+    assert report.json()["schemaVersion"] == "ticker-intelligence-report.v2"
+    assert report.json()["reportValidationStatus"] == "partial"
+
+
+def test_revoked_worker_cannot_complete_inference(monkeypatch) -> None:
+    monkeypatch.setenv("OLLAMA_REVIEW_BRIDGE_ENABLED", "true")
+    digest = "sha256:revoked-worker"
+    packet_id = "packet-revoked-worker"
+    assert client.post("/packets", json=_build_packet_payload(packet_id)).status_code == 200
+    credential = client.post("/llm/workers", json={"name": "Revoked worker"}).json()
+    headers = {"Authorization": f"Bearer {credential['token']}"}
+    assert client.post(
+        "/local-worker/capabilities",
+        headers=headers,
+        json={"models": [{"name": "test", "digest": digest, "contextLength": 8192}]},
+    ).status_code == 200
+    assert client.post(
+        f"/packets/{packet_id}/agent-operations",
+        json={"providerMode": "ollama", "requestedModelDigest": digest},
+    ).status_code == 202
+    claim = client.post(
+        "/local-worker/claim",
+        headers=headers,
+        json={"leaseSeconds": 120, "models": [{"name": "test", "digest": digest}]},
+    ).json()["job"]
+    assert client.delete(f"/llm/workers/{credential['id']}").status_code == 200
+    result = _ollama_result(claim)
+    result["modelDigest"] = digest
+    assert client.post(
+        f"/local-worker/jobs/{claim['id']}/result", headers=headers, json=result
+    ).status_code == 401
+
+
 def _ollama_result(lease: dict, *, summary: str = "Evidence supports a bounded inference.") -> dict:
     timestamp = "2026-08-12T20:00:00Z"
     output = {
@@ -423,6 +658,13 @@ def _ollama_result(lease: dict, *, summary: str = "Evidence supports a bounded i
         "instructionReferences": ["I1", "I2", "I3", "I4"],
         "summary": summary,
         "roleConclusion": summary,
+        "confidence": {
+            "direction": "supports",
+            "evidenceStrength": 0.7,
+            "modelUncertainty": 0.3,
+            "coverage": 0.8,
+            "materiality": "high",
+        },
         "claimsTested": ["Relative strength improved."],
         "materialClaims": [
             {
@@ -454,8 +696,6 @@ def _ollama_result(lease: dict, *, summary: str = "Evidence supports a bounded i
         "evidenceReferences": ["src-1"],
         "abstained": False,
     }
-    import json
-
     return {
         "leaseId": lease["leaseId"],
         "generation": lease["generation"],
@@ -476,15 +716,12 @@ def test_ollama_completion_is_effectively_once_and_packet_versioned(monkeypatch)
     monkeypatch.setenv("OLLAMA_REVIEW_BRIDGE_ENABLED", "true")
     packet_id = "packet-ollama-completion"
     assert client.post("/packets", json=_build_packet_payload(packet_id)).status_code == 200
+    headers = _enroll_ollama_worker("sha256:index160-test")
     created = client.post(
         f"/packets/{packet_id}/agent-operations",
         json={"providerMode": "ollama", "requestedModelDigest": "sha256:index160-test"},
         headers={"Idempotency-Key": "completion-once"},
     ).json()
-    credential_response = client.post("/llm/workers", json={"name": "Index160 worker"})
-    assert credential_response.status_code == 201
-    credential = credential_response.json()
-    headers = {"Authorization": f"Bearer {credential['token']}"}
     claim = client.post(
         "/local-worker/claim",
         headers=headers,
@@ -497,7 +734,7 @@ def test_ollama_completion_is_effectively_once_and_packet_versioned(monkeypatch)
     ).json()["job"]
     result = _ollama_result(claim)
     first = client.post(f"/local-worker/jobs/{claim['id']}/result", headers=headers, json=result)
-    assert first.status_code == 200
+    assert first.status_code == 200, first.text
     assert client.get(f"/operations/{created['id']}").json()["state"] == "completed"
     assert client.get(f"/packets/{packet_id}").json()["packetVersion"] == 2
     duplicate = client.post(

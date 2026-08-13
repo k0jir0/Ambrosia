@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
+import pytest
+from pydantic import ValidationError
+
 from app.llm_catalog import (
     Catalog,
     HumanReviewCreate,
@@ -10,6 +13,7 @@ from app.llm_catalog import (
     WorkerClaim,
     LeaseUpdate,
     WorkerFailure,
+    canonical_hash,
 )
 
 
@@ -42,6 +46,41 @@ def _result(*, reference: str = "source-1", abstained: bool = False) -> WorkerRe
             "abstained": abstained,
         },
     )
+
+
+def test_governed_input_artifact_is_loaded_and_hash_verified(monkeypatch) -> None:
+    pack = {
+        "evidence": [{"id": "source-artifact", "title": "Governed filing"}],
+        "tickerIdentity": {"canonical": "AAPL"},
+        "observationCutoff": "2026-08-07T00:00:00+00:00",
+    }
+    monkeypatch.setattr("app.llm_catalog.artifact_store.load_json", lambda _: pack)
+    payload = {
+        "inputArtifactId": "artifact-1",
+        "inputArtifactHash": canonical_hash(pack),
+        "evidence": [],
+    }
+
+    resolved = Catalog.resolved_input(payload)
+    assert resolved["evidence"] == pack["evidence"]
+    assert resolved["tickerIdentity"] == pack["tickerIdentity"]
+
+    payload["inputArtifactHash"] = "0" * 64
+    with pytest.raises(ValueError, match="hash mismatch"):
+        Catalog.resolved_input(payload)
+
+
+def test_worker_result_rejects_excessive_json_depth() -> None:
+    result = _result().model_dump(mode="json")
+    nested: dict = {}
+    cursor = nested
+    for _ in range(40):
+        cursor["child"] = {}
+        cursor = cursor["child"]
+    result["output"]["confidence"] = nested
+
+    with pytest.raises(ValidationError, match="maximum JSON depth"):
+        WorkerResult.model_validate(result)
 
 
 def test_worker_queue_is_tenant_scoped_and_credentials_can_be_revoked(monkeypatch) -> None:

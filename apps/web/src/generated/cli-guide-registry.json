@@ -47,7 +47,7 @@
     "usage": "ambrosia commands show [-h] index",
     "authority": "read",
     "implementationStatus": "implemented",
-    "testStatus": "not-tested",
+    "testStatus": "tested",
     "qualificationStatus": "not-qualified",
     "endpoint": null
   },
@@ -73,7 +73,7 @@
     "usage": "ambrosia auth login [-h]",
     "authority": "read",
     "implementationStatus": "implemented",
-    "testStatus": "not-tested",
+    "testStatus": "tested",
     "qualificationStatus": "not-qualified",
     "endpoint": null
   },
@@ -87,7 +87,7 @@
     "usage": "ambrosia auth token [-h]",
     "authority": "read",
     "implementationStatus": "implemented",
-    "testStatus": "not-tested",
+    "testStatus": "tested",
     "qualificationStatus": "not-qualified",
     "endpoint": null
   },
@@ -101,7 +101,7 @@
     "usage": "ambrosia auth whoami [-h]",
     "authority": "read",
     "implementationStatus": "implemented",
-    "testStatus": "not-tested",
+    "testStatus": "tested",
     "qualificationStatus": "not-qualified",
     "endpoint": null
   },
@@ -115,7 +115,7 @@
     "usage": "ambrosia auth logout [-h]",
     "authority": "read",
     "implementationStatus": "implemented",
-    "testStatus": "not-tested",
+    "testStatus": "tested",
     "qualificationStatus": "not-qualified",
     "endpoint": null
   },
@@ -129,7 +129,7 @@
     "usage": "ambrosia config show [-h]",
     "authority": "read",
     "implementationStatus": "implemented",
-    "testStatus": "not-tested",
+    "testStatus": "tested",
     "qualificationStatus": "not-qualified",
     "endpoint": null
   },
@@ -143,7 +143,7 @@
     "usage": "ambrosia config profiles [-h]",
     "authority": "read",
     "implementationStatus": "implemented",
-    "testStatus": "not-tested",
+    "testStatus": "tested",
     "qualificationStatus": "not-qualified",
     "endpoint": null
   },
@@ -157,7 +157,7 @@
     "usage": "ambrosia config get [-h] key",
     "authority": "read",
     "implementationStatus": "implemented",
-    "testStatus": "not-tested",
+    "testStatus": "tested",
     "qualificationStatus": "not-qualified",
     "endpoint": null
   },
@@ -171,7 +171,7 @@
     "usage": "ambrosia config set [-h] key value",
     "authority": "read",
     "implementationStatus": "implemented",
-    "testStatus": "not-tested",
+    "testStatus": "tested",
     "qualificationStatus": "not-qualified",
     "endpoint": null
   },
@@ -185,7 +185,7 @@
     "usage": "ambrosia config set-api-url [-h] profile_name api_url",
     "authority": "write",
     "implementationStatus": "implemented",
-    "testStatus": "not-tested",
+    "testStatus": "tested",
     "qualificationStatus": "not-qualified",
     "endpoint": null
   },
@@ -211,7 +211,7 @@
     "usage": "ambrosia reviews list [-h]",
     "authority": "read",
     "implementationStatus": "implemented",
-    "testStatus": "not-tested",
+    "testStatus": "tested",
     "qualificationStatus": "qualified",
     "endpoint": "/reviews"
   },
@@ -225,7 +225,7 @@
     "usage": "ambrosia reviews get [-h] review_id",
     "authority": "read",
     "implementationStatus": "implemented",
-    "testStatus": "not-tested",
+    "testStatus": "tested",
     "qualificationStatus": "qualified",
     "endpoint": "/reviews/{review_id}"
   },
@@ -239,7 +239,7 @@
     "usage": "ambrosia reviews create [-h] --thesis THESIS [--ticker TICKER]\n                               [--asset-class ASSET_CLASS]\n                               [--time-horizon TIME_HORIZON]",
     "authority": "write",
     "implementationStatus": "implemented",
-    "testStatus": "not-tested",
+    "testStatus": "tested",
     "qualificationStatus": "not-qualified",
     "endpoint": null
   },
@@ -253,7 +253,7 @@
     "usage": "ambrosia packets list [-h]",
     "authority": "read",
     "implementationStatus": "implemented",
-    "testStatus": "not-tested",
+    "testStatus": "tested",
     "qualificationStatus": "qualified",
     "endpoint": "/packets"
   },
@@ -267,7 +267,7 @@
     "usage": "ambrosia packets get [-h] packet_id",
     "authority": "read",
     "implementationStatus": "implemented",
-    "testStatus": "not-tested",
+    "testStatus": "tested",
     "qualificationStatus": "qualified",
     "endpoint": "/packets/{packet_id}"
   },
@@ -281,7 +281,7 @@
     "usage": "ambrosia packets create [-h] --payload PAYLOAD",
     "authority": "write",
     "implementationStatus": "implemented",
-    "testStatus": "not-tested",
+    "testStatus": "tested",
     "qualificationStatus": "not-qualified",
     "endpoint": null
   },
@@ -295,7 +295,7 @@
     "usage": "ambrosia packets audit [-h] packet_id",
     "authority": "read",
     "implementationStatus": "implemented",
-    "testStatus": "not-tested",
+    "testStatus": "tested",
     "qualificationStatus": "qualified",
     "endpoint": "/packets/{packet_id}/audit"
   },
@@ -323,7 +323,7 @@
     "usage": "ambrosia scanner run [-h] [--universe UNIVERSE]\n                            [--max-candidates MAX_CANDIDATES]",
     "authority": "write",
     "implementationStatus": "implemented",
-    "testStatus": "not-tested",
+    "testStatus": "tested",
     "qualificationStatus": "not-qualified",
     "endpoint": null
   },
@@ -337,7 +337,7 @@
     "usage": "ambrosia jobs list [-h]",
     "authority": "read",
     "implementationStatus": "implemented",
-    "testStatus": "not-tested",
+    "testStatus": "tested",
     "qualificationStatus": "qualified",
     "endpoint": "/jobs"
   },
@@ -351,7 +351,7 @@
     "usage": "ambrosia jobs get [-h] job_id",
     "authority": "read",
     "implementationStatus": "implemented",
-    "testStatus": "not-tested",
+    "testStatus": "tested",
     "qualificationStatus": "qualified",
     "endpoint": "/jobs/{job_id}"
   },
@@ -365,7 +365,7 @@
     "usage": "ambrosia jobs wait [-h] job_id",
     "authority": "read",
     "implementationStatus": "implemented",
-    "testStatus": "not-tested",
+    "testStatus": "tested",
     "qualificationStatus": "not-qualified",
     "endpoint": null
   },
@@ -379,7 +379,7 @@
     "usage": "ambrosia plans list [-h]",
     "authority": "read",
     "implementationStatus": "implemented",
-    "testStatus": "not-tested",
+    "testStatus": "tested",
     "qualificationStatus": "qualified",
     "endpoint": "/roadmap/plans"
   },
@@ -393,7 +393,7 @@
     "usage": "ambrosia plans get [-h] plan_id",
     "authority": "read",
     "implementationStatus": "implemented",
-    "testStatus": "not-tested",
+    "testStatus": "tested",
     "qualificationStatus": "qualified",
     "endpoint": "/roadmap/plans/{plan_id}"
   },
@@ -407,7 +407,7 @@
     "usage": "ambrosia relay evaluate [-h] --question QUESTION",
     "authority": "write",
     "implementationStatus": "implemented",
-    "testStatus": "not-tested",
+    "testStatus": "tested",
     "qualificationStatus": "not-qualified",
     "endpoint": null
   },
@@ -421,7 +421,7 @@
     "usage": "ambrosia relay scorecard [-h]",
     "authority": "read",
     "implementationStatus": "implemented",
-    "testStatus": "not-tested",
+    "testStatus": "tested",
     "qualificationStatus": "not-qualified",
     "endpoint": null
   },
@@ -449,7 +449,7 @@
     "usage": "ambrosia relay get [-h] run_id",
     "authority": "read",
     "implementationStatus": "implemented",
-    "testStatus": "not-tested",
+    "testStatus": "tested",
     "qualificationStatus": "not-qualified",
     "endpoint": null
   },
@@ -463,7 +463,7 @@
     "usage": "ambrosia signals create [-h] --name NAME --formula FORMULA\n                               [--universe UNIVERSE] [--horizon HORIZON]",
     "authority": "write",
     "implementationStatus": "implemented",
-    "testStatus": "not-tested",
+    "testStatus": "tested",
     "qualificationStatus": "not-qualified",
     "endpoint": null
   },
@@ -477,7 +477,7 @@
     "usage": "ambrosia signals list [-h]",
     "authority": "read",
     "implementationStatus": "implemented",
-    "testStatus": "not-tested",
+    "testStatus": "tested",
     "qualificationStatus": "qualified",
     "endpoint": "/signals"
   },
@@ -491,7 +491,7 @@
     "usage": "ambrosia signals get [-h] signal_id",
     "authority": "read",
     "implementationStatus": "implemented",
-    "testStatus": "not-tested",
+    "testStatus": "tested",
     "qualificationStatus": "qualified",
     "endpoint": "/signals/{signal_id}"
   },
@@ -533,7 +533,7 @@
     "usage": "ambrosia signals writeback-outcome [-h] --signal-id SIGNAL_ID\n                                          --review-id REVIEW_ID\n                                          --outcome-quality OUTCOME_QUALITY\n                                          [--last-reviewed-at LAST_REVIEWED_AT]",
     "authority": "write",
     "implementationStatus": "implemented",
-    "testStatus": "not-tested",
+    "testStatus": "tested",
     "qualificationStatus": "not-qualified",
     "endpoint": null
   },
@@ -561,7 +561,7 @@
     "usage": "ambrosia alpha create [-h] --title TITLE --signal-family SIGNAL_FAMILY\n                             --thesis THESIS [--universe UNIVERSE]\n                             [--horizon HORIZON]",
     "authority": "write",
     "implementationStatus": "implemented",
-    "testStatus": "not-tested",
+    "testStatus": "tested",
     "qualificationStatus": "not-qualified",
     "endpoint": null
   },
@@ -575,7 +575,7 @@
     "usage": "ambrosia alpha list [-h]",
     "authority": "read",
     "implementationStatus": "implemented",
-    "testStatus": "not-tested",
+    "testStatus": "tested",
     "qualificationStatus": "qualified",
     "endpoint": "/alpha/hypotheses"
   },
@@ -589,7 +589,7 @@
     "usage": "ambrosia alpha decay [-h] --signal-id SIGNAL_ID",
     "authority": "read",
     "implementationStatus": "implemented",
-    "testStatus": "not-tested",
+    "testStatus": "tested",
     "qualificationStatus": "qualified",
     "endpoint": "/signals/{signal_id}/alpha-decay"
   },
@@ -603,7 +603,7 @@
     "usage": "ambrosia backtests run [-h] --signal-id SIGNAL_ID",
     "authority": "write",
     "implementationStatus": "implemented",
-    "testStatus": "not-tested",
+    "testStatus": "tested",
     "qualificationStatus": "not-qualified",
     "endpoint": null
   },
@@ -617,7 +617,7 @@
     "usage": "ambrosia paper-trades create [-h] --decision-id DECISION_ID --ticker\n                                    TICKER --quantity QUANTITY [--side SIDE]\n                                    [--intended-price INTENDED_PRICE]",
     "authority": "write",
     "implementationStatus": "implemented",
-    "testStatus": "not-tested",
+    "testStatus": "tested",
     "qualificationStatus": "not-qualified",
     "endpoint": null
   },
@@ -631,7 +631,7 @@
     "usage": "ambrosia paper-trades list [-h] [--limit LIMIT] [--offset OFFSET]",
     "authority": "read",
     "implementationStatus": "implemented",
-    "testStatus": "not-tested",
+    "testStatus": "tested",
     "qualificationStatus": "not-qualified",
     "endpoint": null
   },
@@ -645,7 +645,7 @@
     "usage": "ambrosia warm-path ingest [-h] --event-type EVENT_TYPE --ticker TICKER\n                                 --latency-ms LATENCY_MS --notional-usd\n                                 NOTIONAL_USD",
     "authority": "write",
     "implementationStatus": "implemented",
-    "testStatus": "not-tested",
+    "testStatus": "tested",
     "qualificationStatus": "not-qualified",
     "endpoint": null
   },
@@ -659,7 +659,7 @@
     "usage": "ambrosia warm-path list [-h] [--limit LIMIT] [--offset OFFSET]",
     "authority": "read",
     "implementationStatus": "implemented",
-    "testStatus": "not-tested",
+    "testStatus": "tested",
     "qualificationStatus": "not-qualified",
     "endpoint": null
   },
@@ -673,7 +673,7 @@
     "usage": "ambrosia enterprise service-account [-h] --name NAME [--scopes SCOPES]",
     "authority": "write",
     "implementationStatus": "implemented",
-    "testStatus": "not-tested",
+    "testStatus": "tested",
     "qualificationStatus": "not-qualified",
     "endpoint": null
   },
@@ -687,7 +687,7 @@
     "usage": "ambrosia enterprise service-account-rotate [-h]\n                                                  [--rotated-by ROTATED_BY]\n                                                  service_account_id",
     "authority": "write",
     "implementationStatus": "implemented",
-    "testStatus": "not-tested",
+    "testStatus": "tested",
     "qualificationStatus": "not-qualified",
     "endpoint": null
   },
@@ -701,7 +701,7 @@
     "usage": "ambrosia enterprise service-account-revoke [-h] service_account_id",
     "authority": "write",
     "implementationStatus": "implemented",
-    "testStatus": "not-tested",
+    "testStatus": "tested",
     "qualificationStatus": "not-qualified",
     "endpoint": null
   },
@@ -715,7 +715,7 @@
     "usage": "ambrosia enterprise service-accounts [-h]",
     "authority": "read",
     "implementationStatus": "implemented",
-    "testStatus": "not-tested",
+    "testStatus": "tested",
     "qualificationStatus": "qualified",
     "endpoint": "/enterprise/service-accounts"
   },
@@ -729,7 +729,7 @@
     "usage": "ambrosia enterprise audit-export [-h] [--requested-by REQUESTED_BY]\n                                        [--scope SCOPE]",
     "authority": "write",
     "implementationStatus": "implemented",
-    "testStatus": "not-tested",
+    "testStatus": "tested",
     "qualificationStatus": "not-qualified",
     "endpoint": null
   },
@@ -743,7 +743,7 @@
     "usage": "ambrosia enterprise sso-config [-h] --provider {oidc,saml} --issuer-url\n                                      ISSUER_URL --audience AUDIENCE\n                                      [--default-role DEFAULT_ROLE]\n                                      [--role-mappings ROLE_MAPPINGS]",
     "authority": "write",
     "implementationStatus": "implemented",
-    "testStatus": "not-tested",
+    "testStatus": "tested",
     "qualificationStatus": "not-qualified",
     "endpoint": null
   },
@@ -757,7 +757,7 @@
     "usage": "ambrosia enterprise sso-get [-h]",
     "authority": "read",
     "implementationStatus": "implemented",
-    "testStatus": "not-tested",
+    "testStatus": "tested",
     "qualificationStatus": "qualified",
     "endpoint": "/enterprise/sso/config"
   },
@@ -771,7 +771,7 @@
     "usage": "ambrosia enterprise offline-bundle [-h]",
     "authority": "read",
     "implementationStatus": "implemented",
-    "testStatus": "not-tested",
+    "testStatus": "tested",
     "qualificationStatus": "qualified",
     "endpoint": "/enterprise/deployment-bundles/offline"
   },
@@ -785,7 +785,7 @@
     "usage": "ambrosia enterprise security-packet [-h]",
     "authority": "read",
     "implementationStatus": "implemented",
-    "testStatus": "not-tested",
+    "testStatus": "tested",
     "qualificationStatus": "qualified",
     "endpoint": "/enterprise/support/security-packet"
   },
@@ -799,7 +799,7 @@
     "usage": "ambrosia enterprise readiness [-h]",
     "authority": "read",
     "implementationStatus": "implemented",
-    "testStatus": "not-tested",
+    "testStatus": "tested",
     "qualificationStatus": "qualified",
     "endpoint": "/enterprise/readiness"
   }

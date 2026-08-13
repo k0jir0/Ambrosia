@@ -1,0 +1,99 @@
+Index 161 — CLI design page: moving all commands to "tested"
+
+Decision
+The public CLI design page at https://d1c00nr674401f.cloudfront.net/cli-design should not say "tested" unless the underlying command catalog has actual contract coverage. The current page is generated from the registry in apps/web/src/generated/cli-guide-registry.json, and the test state is derived from packages/cli/ambrosia_cli/guide_registry.py.
+
+Current evidence
+Verified repo state:
+- Total commands in registry: 58
+- Tested commands: 10
+- Not-tested commands: 48
+- Qualified read contracts: 21
+
+The current page is therefore truthful in showing a mixed state. The page is not "all tested" because the registry still marks most commands as not-tested.
+
+Root cause
+This is not a web-page-only problem. The label is not hard-coded into the page. The page reads the command registry and renders each row's `testStatus`. The source of truth is:
+- apps/web/src/generated/cli-guide-registry.json
+- packages/cli/ambrosia_cli/guide_registry.py
+- packages/cli/tests/test_cli_contract.py
+
+The page can only be fully "tested" if every command in the registry is explicitly present in TESTED_COMMANDS and each command is backed by an executable contract test that proves the parser and dispatch path behave as expected.
+
+Required operating rule
+"tested" means:
+1. The command exists in the parser catalog.
+2. A focused CLI contract test exists in packages/cli/tests/test_cli_contract.py.
+3. The test asserts the command dispatch path, method, route, payload, or output contract.
+4. The command is included in TESTED_COMMANDS in guide_registry.py.
+5. The generated registry is refreshed and checked into the branch.
+6. The web page renders the updated state without manual overrides.
+
+Do not mark the entire page as tested by editing the UI alone. That would produce a false claim.
+
+Execution plan
+1. Start from the active evidence branch
+   Branch: cli-design-evidence-status
+   Reason: this is the branch already created for CLI status/evidence cleanup and matches the workstream.
+
+2. Audit each command that is still not-tested
+   Use the generated registry as the truth source.
+   Review command families such as:
+   - auth commands
+   - config commands
+   - reviews and packets
+   - scanner, relay, enterprise, alpha, warm-path, paper-trade commands
+   - signal workflow commands not yet in TESTED_COMMANDS
+
+3. Add a focused contract test for each command class
+   In packages/cli/tests/test_cli_contract.py, add tests that validate the actual behavior of each command path.
+   For each test, assert at least one of the following:
+   - parser accepts the intended CLI arguments
+   - dispatch returns the correct HTTP method
+   - dispatch targets the correct path
+   - payload shape matches expected request schema
+   - output structure includes the expected fields
+
+4. Promote commands into the tested set
+   In packages/cli/ambrosia_cli/guide_registry.py, add the command names to TESTED_COMMANDS.
+   This is the direct control that causes the page to render a command as "tested".
+
+5. Regenerate the registry data
+   Refresh apps/web/src/generated/cli-guide-registry.json so the frontend reflects the new source-of-truth values.
+   Keep the registry generation logic in sync with the CLI parser and contract coverage.
+
+6. Run the CLI contract suite
+   Run the relevant tests and confirm they pass.
+   This is the proof gate before the status can be updated.
+
+7. Review the rendered page
+   Open the public page and confirm the command table and summary counts match the under-the-hood registry. The number of tested entries should increase only when tests actually exist.
+
+8. Open or update PR
+   Use the branch already created for the work: cli-design-evidence-status
+   Open a PR against staging if the branch is not already attached to one.
+
+Acceptance criteria
+The CLI design page can be called fully "tested" only when all of the following are true:
+- all commands in the registry are marked tested
+- all corresponding tests are present and passing
+- TESTED_COMMANDS and the generated registry are aligned with the parser catalog
+- the page reflects the same data source as the repo's contract and parser evidence
+- no UI-only status overrides are used
+
+Recommended first pass
+If the goal is to move the whole page to tested without waiting for deep feature verification of every command, use a staged plan:
+- phase 1: move all clearly parser-backed read commands to tested with real contract tests
+- phase 2: do the same for write-side flows that already have defined request bodies
+- phase 3: validate enterprise and operational commands after their external dependencies are known
+
+This keeps the status honest while still moving the page toward full evidence coverage.
+
+Important guardrail
+Do not claim the page is production-validated simply because it is on the public site. The data is evidence based, not marketing based. The CLI can be implemented and locally validated without being production-gated; the page should reflect that distinction explicitly.
+
+Operational note
+The correct branch for this work is currently:
+- cli-design-evidence-status
+
+This should remain the working branch for status-evidence cleanup until the PR is merged or a new branch is intentionally created. 

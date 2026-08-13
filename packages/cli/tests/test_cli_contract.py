@@ -54,6 +54,12 @@ def test_cli_guide_registry_is_parser_derived_and_truthful() -> None:
     assert next(entry for entry in catalog if entry["command"] == "ambrosia health")["endpoint"] == "/health"
 
 
+def test_every_command_in_catalog_is_marked_tested() -> None:
+    catalog = get_command_catalog()
+
+    assert all(entry["testStatus"] == "tested" for entry in catalog)
+
+
 def test_no_args_prints_help(capsys) -> None:
     exit_code = main([])
     captured = capsys.readouterr()

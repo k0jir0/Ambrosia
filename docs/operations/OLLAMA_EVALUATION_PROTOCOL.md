@@ -68,6 +68,14 @@ environment, and verify both values round-trip as JSON before dispatch. Because
 ECR tags are immutable, a changed canary policy must use a new reviewed commit;
 do not rebuild an existing commit tag after its base image may have changed.
 
+The browser acceptance principal and local worker are separate credentials that
+must resolve to the same controlled organization. Preserve the authenticated
+browser session until operation creation and report verification finish; do not
+mistake a valid worker diagnostic for browser authorization. Automation must use
+a standards-compliant cookie jar (including the secure `__Host-` session cookie
+and CSRF cookie/header pair), then verify `/auth/me`, the worker inventory, and
+the canary organization ID before submitting the first operation.
+
 Monitor operation creation and replay, queue age, claim latency, stale fencing
 rejections, failures by bounded reason code, dead-letter depth, supersession,
 explicit fallback, worker availability/version, and requested-versus-used

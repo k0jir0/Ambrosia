@@ -3,12 +3,14 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import logging
 import os
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from uuid import uuid4
 
 from fastapi import FastAPI, Header, HTTPException, Query, Request, Response
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 
 from .market_data import build_market_snapshot, build_technicals
@@ -116,6 +118,7 @@ from .ollama_bridge import OperationCreate, bridge as ollama_bridge, router as o
 from .team_api import router as team_router
 from .product_analytics import router as product_analytics_router
 from .artifact_store import artifact_store, router as artifact_router
+from .api_problems import normalize_error_code, problem_response
 from .tenant_context import reset_organization_id, set_organization_id
 from .operations import (
     ApiPrefixMiddleware,
@@ -128,10 +131,44 @@ from .operations import (
 )
 
 _executor = ThreadPoolExecutor(max_workers=4)
+LOGGER = logging.getLogger("ambrosia.api")
 ROADMAP_LEDGER_PATH = PROJECT_ROOT / "docs" / "roadmap" / "pdo-ledger.seed.json"
 DB_SCHEMA_VERSION_PATH = PROJECT_ROOT / "infra" / "db" / "schema-version.json"
 
 app = FastAPI(title="Ambrosia Trade Review API", version="0.1.0")
+
+
+@app.exception_handler(HTTPException)
+async def http_problem_handler(request: Request, exc: HTTPException):
+    code = normalize_error_code(exc.status_code, exc.detail, request.url.path)
+    telemetry.increment("api_request_failure", code)
+    LOGGER.warning(
+        "api_problem code=%s status=%s route=%s request_id=%s",
+        code, exc.status_code, request.url.path,
+        getattr(request.state, "request_id", "unknown"),
+    )
+    return problem_response(request, exc.status_code, exc.detail, headers=exc.headers)
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_problem_handler(request: Request, exc: RequestValidationError):
+    telemetry.increment("api_request_failure", "VALIDATION_FAILED")
+    return problem_response(
+        request, 422, exc.errors(), code="VALIDATION_FAILED", retryable=False
+    )
+
+
+@app.exception_handler(Exception)
+async def internal_problem_handler(request: Request, exc: Exception):
+    telemetry.increment("api_request_failure", "INTERNAL_ERROR")
+    LOGGER.error(
+        "api_problem code=INTERNAL_ERROR status=500 route=%s request_id=%s",
+        request.url.path, getattr(request.state, "request_id", "unknown"),
+    )
+    return problem_response(
+        request, 500, "The request could not be completed.",
+        code="INTERNAL_ERROR", retryable=False,
+    )
 
 
 def _submit_tenant_task(function) -> None:
@@ -233,8 +270,6 @@ def _report_export_readiness() -> None:
 
 
 register_readiness_check("persistence", _persistence_readiness)
-register_readiness_check("artifactStorage", artifact_store.healthcheck)
-register_readiness_check("reportExport", _report_export_readiness)
 register_audit_sink(store.append_security_audit)
 register_identity_audit_sink(store.append_security_audit)
 
@@ -417,8 +452,56 @@ def _require_report_export_enabled() -> None:
     default = environment not in {"production", "staging"}
     if not _feature_enabled("REPORT_EXPORT_ENABLED", default=default):
         raise HTTPException(
-            status_code=503, detail="Governed report export is temporarily unavailable"
+            status_code=503,
+            detail={
+                "code": "REPORT_EXPORT_DISABLED",
+                "message": "Governed report export is disabled by deployment policy",
+            },
         )
+
+
+def _build_sha() -> str:
+    return os.getenv("AMBROSIA_BUILD_SHA", "development").strip() or "development"
+
+
+@app.get("/version")
+def deployment_version() -> dict:
+    return {
+        "service": "ambrosia-api",
+        "buildSha": _build_sha(),
+        **_load_db_schema_version(),
+        "apiVersion": app.version,
+    }
+
+
+@app.get("/capabilities")
+def deployment_capabilities(requested_model_digest: str | None = Query(default=None)) -> dict:
+    principal = current_principal()
+    report_enabled = _feature_enabled(
+        "REPORT_EXPORT_ENABLED",
+        default=os.getenv("ENVIRONMENT", "development").strip().lower()
+        not in {"production", "staging"},
+    )
+    worker = (
+        llm_catalog.worker_readiness(principal.organization_id, requested_model_digest)
+        if principal and principal.organization_id
+        else {"ready": False, "reasonCode": "tenant_identity_required", "compatibleCount": 0}
+    )
+    if report_enabled:
+        try:
+            artifact_store.report_export_healthcheck()
+        except Exception:
+            pass
+    report_status = artifact_store.report_export_status()
+    return {
+        "schemaVersion": "deployment-capabilities.v1",
+        "buildSha": _build_sha(),
+        **_load_db_schema_version(),
+        "apiBasePath": "/api",
+        "reportExport": {**report_status, "enabled": report_enabled},
+        "marketData": market_provider_status(),
+        "ollamaWorker": worker,
+    }
 
 
 @app.get("/report/export/status")
@@ -2140,6 +2223,14 @@ def health_detailed() -> dict:
                 "riskPolicyVersion": "risk-policy.v1",
             },
             "marketData": mkt_status,
+            "reportExport": {
+                **artifact_store.report_export_status(),
+                "enabled": _feature_enabled(
+                    "REPORT_EXPORT_ENABLED",
+                    default=os.getenv("ENVIRONMENT", "development").strip().lower()
+                    not in {"production", "staging"},
+                ),
+            },
             "llmProviders": provider_status(),
             "calibrationMetrics": {
                 "reviewValidity": {
@@ -2213,8 +2304,20 @@ def health_detailed() -> dict:
 
 
 @app.post("/packets/{packet_id}/report", response_model=ReportArtifact)
-def generate_packet_report(packet_id: str) -> ReportArtifact:
+def generate_packet_report(
+    packet_id: str,
+    request: Request,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> ReportArtifact:
     _require_report_export_enabled()
+    protected = os.getenv("ENVIRONMENT", "development").strip().lower() in {
+        "staging", "production"
+    }
+    if protected and not idempotency_key:
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "VALIDATION_FAILED", "message": "Idempotency-Key is required"},
+        )
     packet = store.get_packet(packet_id)
     if packet is None:
         raise HTTPException(status_code=404, detail="Packet not found")
@@ -2225,29 +2328,62 @@ def generate_packet_report(packet_id: str) -> ReportArtifact:
             detail={"code": "ollama_operation_incomplete", "operation": operations[0]},
         )
 
-    principal = current_principal()
-    runs = (
-        llm_catalog.verified_runs_for_packet(principal.organization_id, packet_id)
-        if principal and principal.organization_id
-        else []
+    request_hash = hashlib.sha256(
+        json.dumps(
+            {"packetId": packet_id, "packetVersion": packet.packetVersion,
+             "schema": "ticker-intelligence-report.v2"},
+            sort_keys=True, separators=(",", ":"),
+        ).encode()
+    ).hexdigest()
+    state, replay = artifact_store.begin_report_request(
+        idempotency_key, request_hash, packet_id, packet.packetVersion
     )
-    report = generate_report(packet, runs)
-    storage = artifact_store.persist_json(
-        "reports",
-        packet_id,
-        f"decision-report-{report.createdAt}.json",
-        report.model_dump(mode="json"),
-    )
-    report = report.model_copy(update=storage)
+    if state == "conflict":
+        raise HTTPException(409, {"code": "IDEMPOTENCY_KEY_REUSED"})
+    if state == "pending":
+        raise HTTPException(
+            409, {"code": "REPORT_GENERATION_IN_PROGRESS", "packetId": packet_id}
+        )
+    if state == "replay" and replay:
+        return ReportArtifact.model_validate(replay)
 
-    store.add_packet_audit_event(
-        packet_id,
-        AuditEventCreate(
-            eventType="report.generated",
-            detail=f"Report generated; mode={report.dataMode}; provenance={report.provenanceLabel}",
-        ),
-    )
-    return report
+    try:
+        principal = current_principal()
+        runs = (
+            llm_catalog.verified_runs_for_packet(principal.organization_id, packet_id)
+            if principal and principal.organization_id
+            else []
+        )
+        report = generate_report(packet, runs).model_copy(
+            update={
+                "apiBuildSha": _build_sha(),
+                "dbSchemaVersion": _load_db_schema_version()["dbSchemaVersion"],
+                "requestId": getattr(request.state, "request_id", None),
+            }
+        )
+        storage = _persist_report_json(
+            packet_id,
+            f"decision-report-{report.createdAt}.json",
+            report.model_dump(mode="json"),
+        )
+        report = report.model_copy(update=storage)
+        store.add_packet_audit_event(
+            packet_id,
+            AuditEventCreate(
+                eventType="report.generated",
+                detail=(f"Report generated; mode={report.dataMode}; "
+                        f"provenance={report.provenanceLabel}"),
+            ),
+        )
+        artifact_store.finish_report_request(
+            idempotency_key, request_hash, report.model_dump(mode="json")
+        )
+        return report
+    except Exception:
+        artifact_store.finish_report_request(
+            idempotency_key, request_hash, None, failed=True
+        )
+        raise
 
 
 def _report_hash(report: ReportArtifact) -> str:
@@ -2257,6 +2393,32 @@ def _report_hash(report: ReportArtifact) -> str:
         separators=(",", ":"),
     ).encode()
     return hashlib.sha256(encoded).hexdigest()
+
+
+def _persist_report_json(
+    packet_id: str,
+    filename: str,
+    payload: object,
+    *,
+    created_by_user_id: str | None = None,
+) -> dict:
+    try:
+        storage = artifact_store.persist_json(
+            "reports",
+            packet_id,
+            filename,
+            payload,
+            created_by_user_id=created_by_user_id,
+        )
+    except Exception as exc:
+        telemetry.increment("report_artifact_write", "failed")
+        code = "KMS_ACCESS_DENIED" if "kms" in str(exc).lower() else "ARTIFACT_STORAGE_UNAVAILABLE"
+        raise HTTPException(
+            status_code=503,
+            detail={"code": code, "message": "Governed report artifact persistence failed"},
+        ) from exc
+    telemetry.increment("report_artifact_write", "durable")
+    return storage
 
 
 def _report_claim_ids(report: ReportArtifact) -> set[str]:
@@ -2295,14 +2457,12 @@ def generate_packet_report_diff(packet_id: str) -> ReportDiff:
     )
     citation_before = sum(len(section.citationEvidenceIds) for section in before.sections)
     citation_after = sum(len(section.citationEvidenceIds) for section in after.sections)
-    before_storage = artifact_store.persist_json(
-        "reports",
+    before_storage = _persist_report_json(
         packet_id,
         f"decision-report-baseline-v{before_packet.packetVersion}.json",
         before.model_dump(mode="json"),
     )
-    after_storage = artifact_store.persist_json(
-        "reports",
+    after_storage = _persist_report_json(
         packet_id,
         f"decision-report-mutated-v{after_packet.packetVersion}.json",
         after.model_dump(mode="json"),
@@ -2349,6 +2509,8 @@ def generate_packet_report_diff(packet_id: str) -> ReportDiff:
         if before_packet.confidence != after_packet.confidence
         else [],
         provenance={
+            "apiBuildSha": _build_sha(),
+            "dbSchemaVersion": _load_db_schema_version()["dbSchemaVersion"],
             "beforePacketHash": hashlib.sha256(
                 json.dumps(before_packet.model_dump(mode="json"), sort_keys=True).encode()
             ).hexdigest(),
@@ -2368,8 +2530,7 @@ def generate_packet_report_diff(packet_id: str) -> ReportDiff:
             "admittedClaimsOnly": True,
         },
     )
-    storage = artifact_store.persist_json(
-        "reports",
+    storage = _persist_report_json(
         packet_id,
         f"decision-report-diff-v{before_packet.packetVersion}-v{after_packet.packetVersion}.json",
         diff.model_dump(mode="json"),
@@ -2416,6 +2577,7 @@ def generate_packet_report_async(
     job = store.enqueue_job("report.generate", f"packet={packet_id}", idempotency_key)
     principal = current_principal()
     created_by_user_id = principal.subject if principal else None
+    organization_id = principal.organization_id if principal else None
 
     def _execute() -> None:
         if not store.start_job(job.id):
@@ -2425,15 +2587,18 @@ def generate_packet_report_async(
             if pkt is None:
                 store.fail_job(job.id, "Packet no longer found")
                 return
-            task_principal = current_principal()
             runs = (
-                llm_catalog.verified_runs_for_packet(task_principal.organization_id, packet_id)
-                if task_principal and task_principal.organization_id
+                llm_catalog.verified_runs_for_packet(organization_id, packet_id)
+                if organization_id
                 else []
             )
-            rpt = generate_report(pkt, runs)
-            storage = artifact_store.persist_json(
-                "reports",
+            rpt = generate_report(pkt, runs).model_copy(
+                update={
+                    "apiBuildSha": _build_sha(),
+                    "dbSchemaVersion": _load_db_schema_version()["dbSchemaVersion"],
+                }
+            )
+            storage = _persist_report_json(
                 packet_id,
                 f"decision-report-{rpt.createdAt}.json",
                 rpt.model_dump(mode="json"),

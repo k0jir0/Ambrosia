@@ -91,6 +91,8 @@ class LlmJobCreate(BaseModel):
     requiredContextLength: int = Field(default=8192, ge=1024, le=1_000_000)
     inputArtifactId: str | None = None
     inputArtifactHash: str | None = Field(default=None, pattern="^[a-f0-9]{64}$")
+    verificationCandidate: dict | None = None
+    verificationBindingHash: str | None = Field(default=None, pattern="^[a-f0-9]{64}$")
     traceparent: str | None = Field(
         default=None, pattern="^00-[a-f0-9]{32}-[a-f0-9]{16}-[0-9a-f]{2}$"
     )
@@ -636,13 +638,20 @@ class Catalog:
             "traceparent": body.traceparent,
             "inputArtifactId": body.inputArtifactId,
             "inputArtifactHash": body.inputArtifactHash,
+            "verificationCandidate": body.verificationCandidate,
+            "verificationBindingHash": body.verificationBindingHash,
         }
+        task_type = (
+            "correction_verification_v1"
+            if body.verificationCandidate is not None
+            else "adversarial_specialist_v2"
+        )
         row = {
             "id": job_id,
             "organization_id": organization_id,
             "workspace_id": body.workspaceId,
             "packet_id": body.packetId,
-            "task_type": "adversarial_specialist_v2",
+            "task_type": task_type,
             "state": "queued",
             "input_payload": payload,
             "observation_cutoff": cutoff,
@@ -666,13 +675,14 @@ class Catalog:
                       id, organization_id, workspace_id, packet_id, task_type,
                       input_payload, observation_cutoff, operation_id, requested_model,
                       requested_model_digest, required_context_length
-                    ) VALUES (%s, %s, %s, %s, 'adversarial_specialist_v2', %s::jsonb, %s, %s, %s, %s, %s)
+                    ) VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s)
                     """,
                     (
                         job_id,
                         organization_id,
                         body.workspaceId,
                         body.packetId,
+                        task_type,
                         json.dumps(payload),
                         cutoff,
                         body.operationId,
@@ -689,7 +699,7 @@ class Catalog:
         else:
             with self.lock:
                 self.jobs[job_id] = row
-        return {"id": job_id, "state": "queued", "taskType": "adversarial_specialist_v2"}
+        return {"id": job_id, "state": "queued", "taskType": task_type}
 
     @staticmethod
     def _set_worker_tenant(connection, worker: dict) -> None:
@@ -1219,12 +1229,12 @@ class Catalog:
                         raise CompletionConflict("conflicting duplicate completion")
                     if job["state"] != "claimed" or job["lease_expires_at"] <= now():
                         return None
-                    if job.get("operation_id") and (
+                    if (job.get("operation_id") or job.get("task_type") == "correction_verification_v1") and (
                         body.leaseId != str(job.get("lease_id"))
                         or body.generation != int(job.get("lease_generation") or 0)
                     ):
                         return None
-                    if job.get("operation_id") and body.modelDigest != job.get(
+                    if job.get("requested_model_digest") and body.modelDigest != job.get(
                         "requested_model_digest"
                     ):
                         raise ValueError("executed model digest does not match the approved digest")
@@ -1315,8 +1325,12 @@ class Catalog:
                     )
                     from .ollama_bridge import bridge
 
-                    completion = bridge.complete_durable(
-                        connection, worker, dict(job), body, verification, run_id
+                    completion = (
+                        bridge.complete_durable(
+                            connection, worker, dict(job), body, verification, run_id
+                        )
+                        if job.get("operation_id")
+                        else {"superseded": False}
                     )
                     connection.execute(
                         """UPDATE llm_jobs SET state = %s, completed_at = now()
@@ -1344,13 +1358,13 @@ class Catalog:
                     raise CompletionConflict("conflicting duplicate completion")
                 if job["state"] != "claimed":
                     return None
-                if job.get("operation_id") and (
+                if (job.get("operation_id") or job.get("task_type") == "correction_verification_v1") and (
                     body.leaseId != job.get("lease_id")
                     or body.generation != job.get("lease_generation")
                     or job.get("lease_expires_at") <= now()
                 ):
                     return None
-                if job.get("operation_id") and body.modelDigest != job.get(
+                if job.get("requested_model_digest") and body.modelDigest != job.get(
                     "requested_model_digest"
                 ):
                     raise ValueError("executed model digest does not match the approved digest")
@@ -1423,6 +1437,74 @@ class Catalog:
                 and row.get("packet_id") == packet_id
                 and row.get("structured_output", {}).get("schemaVersion") == "specialist-output.v2"
             ]
+
+    def job_status(self, organization_id: str, job_id: str) -> dict | None:
+        """Expose bounded completion evidence for one tenant-owned LLM job."""
+        if self.durable:
+            with self._connect(tenant=False) as connection:
+                self._set_worker_tenant(connection, {"organization_id": organization_id})
+                row = connection.execute(
+                    """SELECT j.id,j.state,j.task_type,r.id AS run_id,
+                    r.verification_status FROM llm_jobs j LEFT JOIN llm_runs r ON r.job_id=j.id
+                    WHERE j.id=%s AND j.organization_id=%s""",
+                    (job_id, organization_id),
+                ).fetchone()
+            if not row:
+                return None
+            return {
+                "id": str(row["id"]), "state": row["state"],
+                "taskType": row["task_type"],
+                "runId": str(row["run_id"]) if row.get("run_id") else None,
+                "verificationStatus": row.get("verification_status"),
+            }
+        job = self.jobs.get(job_id)
+        if not job or job["organization_id"] != organization_id:
+            return None
+        run = next((value for value in self.runs.values() if value["job_id"] == job_id), None)
+        return {
+            "id": job_id, "state": job["state"], "taskType": job["task_type"],
+            "runId": run["id"] if run else None,
+            "verificationStatus": run["verification_status"] if run else None,
+        }
+
+    def correction_verification(
+        self, organization_id: str, run_id: str, binding_hash: str
+    ) -> dict | None:
+        """Return a worker result only when its immutable input binds this correction."""
+        if self.durable:
+            with self._connect(tenant=False) as connection:
+                self._set_worker_tenant(connection, {"organization_id": organization_id})
+                row = connection.execute(
+                    """SELECT r.structured_output,r.verification_status,
+                    r.verifier_model_name,r.verifier_model_digest,j.input_payload
+                    FROM llm_runs r JOIN llm_jobs j ON j.id=r.job_id
+                    WHERE r.id=%s AND r.organization_id=%s
+                      AND j.task_type='correction_verification_v1'""",
+                    (run_id, organization_id),
+                ).fetchone()
+            if (
+                not row or row["verification_status"] != "passed"
+                or row["input_payload"].get("verificationBindingHash") != binding_hash
+            ):
+                return None
+            return dict(row)
+        run = self.runs.get(run_id)
+        if not run or run["organization_id"] != organization_id:
+            return None
+        job = self.jobs.get(run["job_id"])
+        if (
+            not job or job["task_type"] != "correction_verification_v1"
+            or job["input_payload"].get("verificationBindingHash") != binding_hash
+            or run["verification_status"] != "passed"
+        ):
+            return None
+        return {
+            "structured_output": run["structured_output"],
+            "verification_status": run["verification_status"],
+            "verifier_model_name": run.get("model_name"),
+            "verifier_model_digest": run.get("model_digest"),
+            "input_payload": job["input_payload"],
+        }
 
     def review_run(
         self, organization_id: str, user_id: str, run_id: str, body: HumanReviewCreate
@@ -1537,6 +1619,15 @@ def rotate_worker(worker_id: str) -> dict:
 def enqueue_job(body: LlmJobCreate) -> dict:
     principal = _principal()
     return catalog.enqueue(principal.organization_id, body)
+
+
+@router.get("/llm/jobs/{job_id}")
+def get_llm_job(job_id: str) -> dict:
+    principal = _principal()
+    result = catalog.job_status(principal.organization_id, job_id)
+    if not result:
+        raise HTTPException(status_code=404, detail="LLM job not found")
+    return result
 
 
 @router.get("/llm/runs")

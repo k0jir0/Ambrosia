@@ -537,6 +537,9 @@ export interface ReportArtifact {
   contentHash?: string | null;
   schemaVersion?: string; asOf?: string|null; knowledgeCutoff?: string|null; modelDigest?: string|null; sourceSnapshotHash?: string|null;
   verifiedClaimCoverage?: number; unresolvedMaterialClaimCount?: number; rejectedClaimIds?: string[]; reportValidationStatus?: "passed"|"partial"|"legacy"|"failed";
+  packetVersion?: number|null; apiBuildSha?: string|null; dbSchemaVersion?: string|null;
+  proposalId?: string|null; admissionState?: string|null; reviewerDecisionHash?: string|null;
+  degradedCapabilities?: string[]; requestId?: string|null;
 }
 export interface ReportDiff {
   packetId: string;

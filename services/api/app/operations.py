@@ -33,6 +33,7 @@ from .identity import (
     password_reset_delivery_available,
     session_cookie_name,
 )
+from .api_problems import problem_document
 from .tenant_context import (
     LEGACY_QUARANTINE_ORGANIZATION_ID,
     reset_organization_id,
@@ -57,6 +58,8 @@ PUBLIC_PATHS = {
     "/health",
     "/live",
     "/ready",
+    "/version",
+    "/capabilities",
     "/openapi.json",
     "/auth/signup",
     "/auth/login",
@@ -716,9 +719,16 @@ class ProductionBoundaryMiddleware:
     @staticmethod
     async def _json(send, status: int, payload: dict, request_id: str,
                     extra_headers: list[tuple[bytes, bytes]] | None = None) -> None:
-        body = json.dumps(payload).encode()
+        body = json.dumps(
+            problem_document(
+                status=status,
+                detail=payload.get("detail", payload),
+                request_id=request_id,
+                path="boundary",
+            )
+        ).encode()
         headers = [
-            (b"content-type", b"application/json"),
+            (b"content-type", b"application/problem+json"),
             (b"content-length", str(len(body)).encode()),
             (b"x-request-id", request_id.encode()),
             (b"x-content-type-options", b"nosniff"),

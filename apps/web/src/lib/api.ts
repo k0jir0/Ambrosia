@@ -27,6 +27,8 @@ import type {
 } from "./types";
 
 const CONFIGURED_API_BASE_URL = (process.env.NEXT_PUBLIC_API_BASE_URL ?? process.env.NEXT_PUBLIC_API_URL)?.trim();
+export const WEB_BUILD_SHA = process.env.NEXT_PUBLIC_BUILD_SHA ?? "development";
+export const GOVERNED_REPORT_EXPORT_ENABLED = process.env.NEXT_PUBLIC_ENABLE_REVIEW_EXPORT === "true";
 const DEFAULT_API_TIMEOUT_MS = 65000;
 const CREATE_REVIEW_TIMEOUT_MS = 65000;
 
@@ -37,47 +39,88 @@ export class ApiUnavailableError extends Error {
   }
 }
 
+export type ApiErrorCode =
+  | "API_UNREACHABLE" | "REQUEST_TIMEOUT" | "RESPONSE_CONTRACT_INVALID"
+  | "API_VERSION_MISMATCH" | "AUTHENTICATION_REQUIRED" | "AUTHORIZATION_DENIED"
+  | "CSRF_REJECTED" | "NOT_FOUND" | "VALIDATION_FAILED" | "PERSISTENCE_UNAVAILABLE"
+  | "REPORT_EXPORT_DISABLED" | "ARTIFACT_STORAGE_UNAVAILABLE" | "KMS_ACCESS_DENIED"
+  | "IDEMPOTENCY_KEY_REUSED" | "REPORT_GENERATION_IN_PROGRESS"
+  | "PROPOSAL_CONTENT_RETAINED_DATA_DELETED"
+  | "CORRECTION_REVERIFICATION_REQUIRED" | "CORRECTION_REVERIFICATION_FAILED"
+  | "MARKET_DATA_UNAVAILABLE" | "MODEL_POLICY_UNCONFIGURED" | "WORKER_OFFLINE"
+  | "DIGEST_MISMATCH" | "PREFLIGHT_INCOMPLETE" | "PROPOSAL_AWAITING_REVIEW"
+  | "PROPOSAL_STALE" | "RATE_LIMITED" | "PAYLOAD_TOO_LARGE" | "INTERNAL_ERROR";
+
+export type ApiProblem = {
+  type: string; title: string; status: number; detail: unknown; instance: string;
+  code: ApiErrorCode; requestId?: string; traceId?: string | null; retryable: boolean;
+  dependency?: string; operationId?: string; packetId?: string;
+  expectedVersion?: number; actualVersion?: number;
+};
+
+type ApiErrorPayload = Partial<ApiProblem> & { detail?: unknown };
+
 export class ApiRequestError extends Error {
-  constructor(public readonly status: number, message: string) {
+  constructor(
+    public readonly status: number,
+    message: string,
+    public readonly code: ApiErrorCode = "VALIDATION_FAILED",
+    public readonly retryable = false,
+    public readonly requestId?: string,
+  ) {
     super(message);
     this.name = "ApiRequestError";
   }
 }
 
-function isApiUnavailableStatus(status: number): boolean {
-  return status === 404 || (status >= 500 && status !== 503);
+export class ApiProblemError extends ApiRequestError {
+  constructor(public readonly problem: ApiProblem) {
+    super(problem.status, `${problem.title}: ${formatApiErrorDetail(problem.detail)}`,
+      problem.code, problem.retryable, problem.requestId);
+    this.name = "ApiProblemError";
+  }
 }
 
 async function readJsonResponse<T>(response: Response): Promise<T> {
   const contentType = response.headers.get("content-type") ?? "";
+  const isJson = contentType.includes("application/json") || contentType.includes("+json");
 
   if (!response.ok) {
-    if (isApiUnavailableStatus(response.status)) {
-      throw new ApiUnavailableError();
-    }
-    let detail = "";
-    if (contentType.includes("application/json")) {
+    let payload: ApiErrorPayload | null = null;
+    if (isJson) {
       try {
-        const payload = await response.json() as { detail?: unknown };
-        detail = formatApiErrorDetail(payload.detail);
+        payload = await response.json() as ApiErrorPayload;
       } catch {
-        detail = "";
-      }
-    } else {
-      try {
-        detail = (await response.text()).trim();
-      } catch {
-        detail = "";
+        payload = null;
       }
     }
+    if (payload?.code && payload.title && payload.type) {
+      throw new ApiProblemError({
+        type: payload.type, title: payload.title, status: response.status,
+        detail: payload.detail, instance: payload.instance ?? "unknown",
+        code: payload.code, requestId: payload.requestId, traceId: payload.traceId,
+        retryable: payload.retryable ?? false,
+      });
+    }
+    const detail = formatApiErrorDetail(payload?.detail);
     throw new ApiRequestError(
       response.status,
       detail ? `API request failed: ${response.status} - ${detail}` : `API request failed: ${response.status}`,
+      response.status === 401 ? "AUTHENTICATION_REQUIRED"
+        : response.status === 403 ? "AUTHORIZATION_DENIED"
+        : response.status === 404 ? "NOT_FOUND"
+        : response.status === 429 ? "RATE_LIMITED"
+        : response.status >= 500 ? "INTERNAL_ERROR" : "VALIDATION_FAILED",
+      [429, 502, 503, 504].includes(response.status),
+      response.headers.get("x-request-id") ?? undefined,
     );
   }
 
-  if (!contentType.includes("application/json")) {
-    throw new ApiUnavailableError();
+  if (!isJson) {
+    throw new ApiRequestError(
+      response.status, "API response did not match the JSON contract.",
+      "RESPONSE_CONTRACT_INVALID", false, response.headers.get("x-request-id") ?? undefined,
+    );
   }
 
   return response.json() as Promise<T>;
@@ -119,6 +162,21 @@ function normalizeTickerForPath(ticker: string): string {
   return ticker.replace(/\//g, " ").replace(/\s+/g, " ").trim();
 }
 
+async function apiLivenessReachable(): Promise<boolean> {
+  const base = getApiBaseUrl();
+  if (!base) return false;
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 3000);
+  try {
+    const response = await fetch(`${base}/live`, { credentials: "include", signal: controller.signal });
+    return response.ok;
+  } catch {
+    return false;
+  } finally {
+    window.clearTimeout(timeout);
+  }
+}
+
 async function fetchWithTimeout(input: RequestInfo | URL, init?: RequestInit, timeoutMs = DEFAULT_API_TIMEOUT_MS): Promise<Response> {
   const controller = new AbortController();
   const timeout = window.setTimeout(() => controller.abort(new ApiUnavailableError()), timeoutMs);
@@ -143,10 +201,16 @@ async function fetchWithTimeout(input: RequestInfo | URL, init?: RequestInit, ti
       signal: controller.signal,
     });
   } catch (error) {
-    if (error instanceof ApiUnavailableError || (error instanceof DOMException && error.name === "AbortError")) {
-      throw new ApiUnavailableError();
+    const timedOut = error instanceof ApiUnavailableError
+      || (error instanceof DOMException && error.name === "AbortError");
+    if (await apiLivenessReachable()) {
+      throw new ApiRequestError(
+        timedOut ? 504 : 502,
+        timedOut ? "The request timed out while the API remained live." : "The request transport failed while the API remained live.",
+        timedOut ? "REQUEST_TIMEOUT" : "RESPONSE_CONTRACT_INVALID", true,
+      );
     }
-    throw error;
+    throw new ApiUnavailableError("Ambrosia API liveness probe failed.");
   } finally {
     window.clearTimeout(timeout);
   }
@@ -624,16 +688,51 @@ export type OllamaModelPolicy = { name?: string; digest: string; contextLength?:
 export type OllamaWorkerReadiness = { ready: boolean; reasonCode: "ready" | "no_enrolled_worker" | "worker_offline" | "worker_revoked" | "preflight_incomplete" | "digest_mismatch" | "model_policy_ambiguous" | "tenant_identity_required"; compatibleCount: number; lastSeenAt?: string | null; lastHeartbeatAgeSeconds?: number | null; freshnessSeconds?: number };
 export type ProviderStatus = { activeTenantWorkerCompatible: boolean; ollamaWorkerReadiness: OllamaWorkerReadiness; ollamaModelPolicies: OllamaModelPolicy[]; [key: string]: unknown };
 export type ProposalClaim = { claimId: string; text: string; supportingEvidenceIds?: string[]; contradictingEvidenceIds?: string[]; falsifier?: string; materiality?: string; admissionStatus?: string };
-export type PacketMutationProposal = { id: string; operationId: string; runId: string; packetId: string; basePacketVersion: number; basePacketHash: string; evidencePackHash: string; modelName: string; modelDigest: string; workerId?: string | null; originalOutputHash: string; proposedPatchHash: string; originalOutput: { materialClaims?: ProposalClaim[]; [key: string]: unknown }; proposedPatch: Record<string, unknown>; deterministicFindings: Array<Record<string, unknown>>; admissionState: AdmissionState; resultPacketVersion?: number | null; rollbackPacketVersion?: number | null; reviewerDecisionHash?: string | null; evidenceSnapshot: Array<Record<string, unknown>>; reviewImpact: Array<{ claimId?: string; reportSection: string }>; claimDecisions: Array<Record<string, unknown>>; proposalEvents: Array<Record<string, unknown>>; createdAt: string };
+export type PacketMutationProposal = { id: string; operationId: string; runId: string; packetId: string; basePacketVersion: number; basePacketHash: string; evidencePackHash: string; modelName: string; modelDigest: string; workerId?: string | null; originalOutputHash: string; proposedPatchHash: string; originalOutputArtifactId?: string | null; retentionUntil?: string | null; deletionState?: "active" | "content_deleted"; originalOutput: { materialClaims?: ProposalClaim[]; [key: string]: unknown }; proposedPatch: Record<string, unknown>; deterministicFindings: Array<Record<string, unknown>>; admissionState: AdmissionState; resultPacketVersion?: number | null; rollbackPacketVersion?: number | null; reviewerDecisionHash?: string | null; evidenceSnapshot: Array<Record<string, unknown>>; reviewImpact: Array<{ claimId?: string; reportSection: string }>; claimDecisions: Array<Record<string, unknown>>; proposalEvents: Array<Record<string, unknown>>; createdAt: string };
 export type ClaimDecision = { claimId: string; decision: "accept_as_proposed" | "accept_with_human_correction" | "reject"; correctedText?: string; supportingEvidenceIds?: string[]; falsifier?: string };
-export type AdmissionRequest = { proposalId: string; expectedPacketVersion: number; expectedProposalHash: string; disposition: "accepted" | "corrected" | "rejected"; claimDecisions: ClaimDecision[]; rationale: string; unsupportedClaimCount?: number; citationIssueCount?: number; usefulnessScore?: number };
+export type AdmissionRequest = { proposalId: string; expectedPacketVersion: number; expectedProposalHash: string; disposition: "accepted" | "corrected" | "rejected"; claimDecisions: ClaimDecision[]; rationale: string; unsupportedClaimCount?: number; citationIssueCount?: number; usefulnessScore?: number; correctionVerificationRunId?: string };
+export type LlmJobStatus = { id: string; state: string; taskType: string; runId?: string | null; verificationStatus?: string | null };
 export const TERMINAL_AGENT_OPERATION_STATES = new Set<AgentOperation["state"]>(["completed", "failed", "dead_letter", "expired", "canceled", "superseded"]);
 const TERMINAL = TERMINAL_AGENT_OPERATION_STATES;
 export async function getProviderStatus(requestedModelDigest?: string): Promise<ProviderStatus> { const base = getApiBaseUrl(); if (!base) throw new ApiUnavailableError(); const query = requestedModelDigest ? `?requestedModelDigest=${encodeURIComponent(requestedModelDigest)}` : ""; return readJsonResponse(await fetchWithTimeout(`${base}/providers/status${query}`)); }
 export async function createAgentOperation(packetId: string, idempotencyKey = crypto.randomUUID(), requestedModelDigest?: string): Promise<AgentOperation> { const base = getApiBaseUrl(); if (!base) throw new ApiUnavailableError(); const trace = crypto.randomUUID().replaceAll("-", "") + crypto.randomUUID().replaceAll("-", ""); const traceparent = `00-${trace.slice(0, 32)}-${trace.slice(32, 48)}-01`; return readJsonResponse(await fetchWithTimeout(`${base}/packets/${encodeURIComponent(packetId)}/agent-operations`, { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": idempotencyKey, traceparent }, body: JSON.stringify({ providerMode: "ollama", requestedModelDigest, traceparent }) })); }
 export async function getAgentOperation(id: string): Promise<AgentOperation> { const base = getApiBaseUrl(); if (!base) throw new ApiUnavailableError(); return readJsonResponse(await fetchWithTimeout(`${base}/operations/${encodeURIComponent(id)}`)); }
 export async function getAgentOperationProposal(id: string): Promise<PacketMutationProposal> { const base = getApiBaseUrl(); if (!base) throw new ApiUnavailableError(); return readJsonResponse(await fetchWithTimeout(`${base}/operations/${encodeURIComponent(id)}/proposal`)); }
-export async function admitAgentOperationProposal(id: string, body: AdmissionRequest, idempotencyKey = crypto.randomUUID()): Promise<AgentOperation> { const base = getApiBaseUrl(); if (!base) throw new ApiUnavailableError(); return readJsonResponse(await fetchWithTimeout(`${base}/operations/${encodeURIComponent(id)}/admission`, { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": idempotencyKey }, body: JSON.stringify(body) })); }
+export async function admitAgentOperationProposal(id: string, body: AdmissionRequest, idempotencyKey = crypto.randomUUID()): Promise<AgentOperation> {
+  const base = getApiBaseUrl();
+  if (!base) throw new ApiUnavailableError();
+  let request = body;
+  if (body.disposition === "corrected" && !body.correctionVerificationRunId) {
+    const queued = await readJsonResponse<LlmJobStatus>(await fetchWithTimeout(
+      `${base}/operations/${encodeURIComponent(id)}/correction-verification`,
+      { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) },
+    ));
+    const deadline = Date.now() + 12 * 60 * 1000;
+    let status = queued;
+    let delay = 1500;
+    while (!["completed", "failed", "dead_letter", "expired", "canceled"].includes(status.state) && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, delay));
+      status = await readJsonResponse<LlmJobStatus>(await fetchWithTimeout(
+        `${base}/llm/jobs/${encodeURIComponent(queued.id)}`,
+      ));
+      delay = Math.min(8000, Math.round(delay * 1.5));
+    }
+    if (status.state !== "completed" || status.verificationStatus !== "passed" || !status.runId) {
+      throw new ApiRequestError(
+        409,
+        `Corrected claims were not independently verified (job ${status.id}: ${status.state}).`,
+        "CORRECTION_REVERIFICATION_FAILED",
+        status.state === "queued" || status.state === "retry_wait",
+      );
+    }
+    request = { ...body, correctionVerificationRunId: status.runId };
+  }
+  return readJsonResponse(await fetchWithTimeout(`${base}/operations/${encodeURIComponent(id)}/admission`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Idempotency-Key": idempotencyKey },
+    body: JSON.stringify(request),
+  }));
+}
 export async function rollbackAgentOperationProposal(id: string, expectedPacketVersion: number, rationale: string, idempotencyKey = crypto.randomUUID()): Promise<AgentOperation> { const base = getApiBaseUrl(); if (!base) throw new ApiUnavailableError(); return readJsonResponse(await fetchWithTimeout(`${base}/operations/${encodeURIComponent(id)}/rollback`, { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": idempotencyKey }, body: JSON.stringify({ expectedPacketVersion, rationale }) })); }
 export async function cancelAgentOperation(id: string): Promise<AgentOperation> { const base = getApiBaseUrl(); if (!base) throw new ApiUnavailableError(); return readJsonResponse(await fetchWithTimeout(`${base}/operations/${encodeURIComponent(id)}/cancel`, { method: "POST" })); }
 export async function fallbackAgentOperation(id: string): Promise<AgentOperation> { const base = getApiBaseUrl(); if (!base) throw new ApiUnavailableError(); return readJsonResponse(await fetchWithTimeout(`${base}/operations/${encodeURIComponent(id)}/fallback`, { method: "POST" })); }
@@ -813,14 +912,32 @@ export async function listJobs(): Promise<JobRecord[]> {
 // Report
 // ---------------------------------------------------------------------------
 
+const reportIdempotencyKeys = new Map<string, string>();
+
 export async function generateReport(packetId: string): Promise<ReportArtifact> {
   const apiBaseUrl = getApiBaseUrl();
   if (!apiBaseUrl) throw new ApiUnavailableError();
+  let idempotencyKey = reportIdempotencyKeys.get(packetId);
+  if (!idempotencyKey) {
+    idempotencyKey = crypto.randomUUID();
+    reportIdempotencyKeys.set(packetId, idempotencyKey);
+  }
   const response = await fetchWithTimeout(
     `${apiBaseUrl}/packets/${encodeURIComponent(packetId)}/report`,
-    { method: "POST" },
+    { method: "POST", headers: { "Idempotency-Key": idempotencyKey } },
   );
-  return readJsonResponse<ReportArtifact>(response);
+  const report = await readJsonResponse<ReportArtifact>(response);
+  if (!["ticker-intelligence-report.v1", "ticker-intelligence-report.v2"].includes(report.schemaVersion ?? "")) {
+    throw new ApiRequestError(502, "Unsupported report schema returned by API.", "RESPONSE_CONTRACT_INVALID");
+  }
+  if (!report.reportValidationStatus || report.reportValidationStatus === "failed") {
+    throw new ApiRequestError(502, "Report validation did not pass the governed API contract.", "RESPONSE_CONTRACT_INVALID");
+  }
+  if (GOVERNED_REPORT_EXPORT_ENABLED
+      && (!report.artifactId || !report.contentHash || report.storageStatus !== "durable")) {
+    throw new ApiRequestError(503, "Governed report did not include durable artifact evidence.", "ARTIFACT_STORAGE_UNAVAILABLE", true, report.requestId ?? undefined);
+  }
+  return report;
 }
 
 export async function generateReportDiff(packetId: string): Promise<ReportDiff> {
@@ -849,6 +966,32 @@ export async function getHealthDetailed(): Promise<Record<string, unknown>> {
   if (!apiBaseUrl) throw new ApiUnavailableError();
   const response = await fetchWithTimeout(`${apiBaseUrl}/health/detailed`);
   return readJsonResponse<Record<string, unknown>>(response);
+}
+
+export type DeploymentCapabilities = {
+  schemaVersion: "deployment-capabilities.v1";
+  buildSha: string;
+  dbSchemaVersion: string;
+  apiBasePath: string;
+  reportExport: { enabled: boolean; writable: boolean; reasonCode: string; lastProbeAt?: string | null };
+  marketData: Record<string, unknown>;
+  ollamaWorker: OllamaWorkerReadiness;
+};
+
+export async function getDeploymentCapabilities(requestedModelDigest?: string): Promise<DeploymentCapabilities> {
+  const apiBaseUrl = getApiBaseUrl();
+  if (!apiBaseUrl) throw new ApiUnavailableError();
+  const query = requestedModelDigest ? `?requested_model_digest=${encodeURIComponent(requestedModelDigest)}` : "";
+  const value = await readJsonResponse<DeploymentCapabilities>(
+    await fetchWithTimeout(`${apiBaseUrl}/capabilities${query}`),
+  );
+  if (WEB_BUILD_SHA !== "development" && value.buildSha !== WEB_BUILD_SHA) {
+    throw new ApiRequestError(409, "Web and API builds do not match.", "API_VERSION_MISMATCH", false);
+  }
+  if (GOVERNED_REPORT_EXPORT_ENABLED !== value.reportExport.enabled) {
+    throw new ApiRequestError(409, "Web and API report-export policies do not match.", "API_VERSION_MISMATCH", false);
+  }
+  return value;
 }
 
 // ---------------------------------------------------------------------------

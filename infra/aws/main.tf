@@ -658,7 +658,7 @@ resource "aws_lb_target_group" "api" {
   target_type = "ip"
   vpc_id      = aws_vpc.main.id
   health_check {
-    path     = "/ready"
+    path     = "/live"
     matcher  = "200"
     interval = 30
     timeout  = 5
@@ -794,7 +794,7 @@ resource "aws_ecs_task_definition" "web" {
       { name = "NEXT_PUBLIC_ENABLE_MARKET_INTELLIGENCE", value = "true" },
       { name = "NEXT_PUBLIC_ENABLE_MARKET_SCANNER_PROMOTION", value = "false" },
       { name = "NEXT_PUBLIC_ENABLE_CALIBRATION_DEMO", value = "false" },
-      { name = "NEXT_PUBLIC_ENABLE_REVIEW_EXPORT", value = "false" },
+      { name = "NEXT_PUBLIC_ENABLE_REVIEW_EXPORT", value = "true" },
       { name = "NEXT_PUBLIC_ENABLE_ALPHA_LAB", value = "false" },
       { name = "NEXT_PUBLIC_ENABLE_SIGNALS_LAB", value = "false" },
     ]
@@ -1238,6 +1238,75 @@ resource "aws_cloudwatch_metric_alarm" "api_5xx" {
     TargetGroup  = aws_lb_target_group.api.arn_suffix
   }
   alarm_actions = [aws_sns_topic.alarms.arn]
+}
+
+resource "aws_cloudwatch_metric_alarm" "api_unhealthy_targets" {
+  alarm_name          = "${local.name}-api-unhealthy-targets"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 2
+  metric_name         = "UnHealthyHostCount"
+  namespace           = "AWS/ApplicationELB"
+  period              = 60
+  statistic           = "Maximum"
+  threshold           = 0
+  treat_missing_data  = "breaching"
+  dimensions = {
+    LoadBalancer = aws_lb.main.arn_suffix
+    TargetGroup  = aws_lb_target_group.api.arn_suffix
+  }
+  alarm_actions = [aws_sns_topic.alarms.arn]
+  ok_actions    = [aws_sns_topic.alarms.arn]
+}
+
+resource "aws_cloudwatch_log_metric_filter" "report_artifact_failure" {
+  name           = "${local.name}-report-artifact-failure"
+  pattern        = "\"api_problem code=ARTIFACT_STORAGE_UNAVAILABLE\""
+  log_group_name = aws_cloudwatch_log_group.api.name
+  metric_transformation {
+    name      = "ReportArtifactFailure"
+    namespace = "Ambrosia/${local.name}"
+    value     = "1"
+  }
+}
+
+resource "aws_cloudwatch_log_metric_filter" "kms_denial" {
+  name           = "${local.name}-kms-denial"
+  pattern        = "\"api_problem code=KMS_ACCESS_DENIED\""
+  log_group_name = aws_cloudwatch_log_group.api.name
+  metric_transformation {
+    name      = "KmsAccessDenied"
+    namespace = "Ambrosia/${local.name}"
+    value     = "1"
+  }
+}
+
+resource "aws_cloudwatch_log_metric_filter" "persistence_failure" {
+  name           = "${local.name}-persistence-failure"
+  pattern        = "\"api_problem code=PERSISTENCE_UNAVAILABLE\""
+  log_group_name = aws_cloudwatch_log_group.api.name
+  metric_transformation {
+    name      = "PersistenceUnavailable"
+    namespace = "Ambrosia/${local.name}"
+    value     = "1"
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "governed_path_failures" {
+  for_each = {
+    report_artifact = "ReportArtifactFailure"
+    kms_denial      = "KmsAccessDenied"
+    persistence     = "PersistenceUnavailable"
+  }
+  alarm_name          = "${local.name}-${each.key}"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 1
+  metric_name         = each.value
+  namespace           = "Ambrosia/${local.name}"
+  period              = 60
+  statistic           = "Sum"
+  threshold           = 0
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = [aws_sns_topic.alarms.arn]
 }
 
 resource "aws_cloudwatch_metric_alarm" "database_cpu" {

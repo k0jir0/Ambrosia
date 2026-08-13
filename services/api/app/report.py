@@ -411,6 +411,13 @@ def generate_report(packet: DecisionPacket, llm_runs: list[dict] | None = None) 
         providerRequested=provider.get("requestedProvider"),
         providerUsed=provider.get("actualProvider") or provider.get("type"),
         verificationStatus=provider.get("verificationStatus"),
+        proposalId=provider.get("proposalId"),
+        admissionState=provider.get("admissionState"),
+        reviewerDecisionHash=provider.get("reviewerDecisionHash"),
+        packetVersion=packet.packetVersion,
+        degradedCapabilities=(
+            ["marketData"] if data_mode in {"fallback", "demo"} else []
+        ),
         traceparent=provider.get("traceparent")
         or next((run.get("trace_id") for run in (llm_runs or []) if run.get("trace_id")), None),
     )

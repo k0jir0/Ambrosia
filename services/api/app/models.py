@@ -946,6 +946,14 @@ class ReportArtifact(BaseModel):
     providerUsed: str | None = None
     verificationStatus: str | None = None
     traceparent: str | None = None
+    packetVersion: int | None = None
+    apiBuildSha: str | None = None
+    dbSchemaVersion: str | None = None
+    proposalId: str | None = None
+    admissionState: str | None = None
+    reviewerDecisionHash: str | None = None
+    degradedCapabilities: list[str] = Field(default_factory=list)
+    requestId: str | None = None
 
 
 class ReportDiff(BaseModel):

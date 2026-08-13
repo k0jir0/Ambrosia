@@ -479,6 +479,41 @@ def merge(base, external):
 
 def run_ollama(url, model, job, progress=lambda stage, value: None):
     schema = job["input"]["outputSchema"]
+    correction_candidate = job["input"].get("verificationCandidate")
+    if correction_candidate is not None:
+        # A human correction is immutable input, not a fresh generation prompt.
+        # Re-run deterministic checks and the independent verifier over the exact
+        # corrected prose so authorship and verifier provenance remain separate.
+        started = datetime.now(UTC)
+        candidate = json.loads(json.dumps(correction_candidate))
+        progress("deterministic_checks", 40)
+        deterministic_findings = deterministic(job, candidate)
+        progress("verifier", 65)
+        verifier, vmeta = run_stage(
+            url, model, verify_prompt(job, candidate), VERIFIER_SCHEMA
+        )
+        findings = merge(deterministic_findings, verifier)
+        candidate["verificationFindings"] = findings
+        candidate["evidenceReferences"] = sorted(
+            {
+                evidence_id
+                for claim in candidate.get("materialClaims", [])
+                for evidence_id in claim.get("supportingEvidenceIds", [])
+            }
+        )
+        return candidate, {
+            **vmeta,
+            "startedAt": started.isoformat(),
+            "parameters": {
+                **vmeta.get("parameters", {}),
+                "workflow": "correction_verification_v1",
+            },
+            "stageHashes": {
+                "correctionCandidate": canonical_hash(correction_candidate),
+                "deterministicVerifier": canonical_hash(deterministic_findings),
+                "independentVerifier": canonical_hash(verifier),
+            },
+        }
     progress("analyst", 20)
     draft, meta = run_stage(url, model, prompt(job), schema)
     progress("deterministic_checks", 40)

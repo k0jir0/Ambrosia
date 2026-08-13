@@ -21,6 +21,7 @@ import {
   getApiBaseUrl,
   getAgentOperation,
   getAgentOperationProposal,
+  getDeploymentCapabilities,
   getProviderStatus,
   getMarketSnapshot,
   getMarketTechnicals,
@@ -40,6 +41,7 @@ import {
   writebackSignalDecision,
   writebackSignalOutcome,
   type AgentOperation,
+  ApiRequestError,
   type AdmissionRequest,
   type OllamaModelPolicy,
   type OllamaWorkerReadiness,
@@ -167,6 +169,15 @@ const signalDecisionActionOptions: Array<{ action: SignalDecisionAction; label: 
   { action: "RETIRE", label: "Retire", summary: "Remove a decayed or failed signal from active use." }
 ];
 
+function actionableApiError(error: unknown): string {
+  if (error instanceof ApiRequestError) {
+    const request = error.requestId ? ` Request ${error.requestId}.` : "";
+    const retry = error.retryable ? " Retry is safe." : " Retry requires resolving this condition.";
+    return `${error.code}: ${error.message}.${request}${retry}`;
+  }
+  return error instanceof Error ? error.message : "Unknown request failure";
+}
+
 export function Workbench({ initialReviewId }: { initialReviewId?: string } = {}) {
   const governedReportExportEnabled = isFeatureEnabled("review-export");
   const [reviews, setReviews] = useState<TradeReview[]>(() => mergeReviews(getLocalReviews(), sampleReviews));
@@ -199,8 +210,8 @@ export function Workbench({ initialReviewId }: { initialReviewId?: string } = {}
 
   useEffect(() => {
     let cancelled = false;
-    getProviderStatus()
-      .then((status) => {
+    Promise.all([getProviderStatus(), getDeploymentCapabilities()])
+      .then(([status]) => {
         if (cancelled) return;
         setOllamaModelPolicies(status.ollamaModelPolicies);
         setOllamaWorkerReadiness(status.ollamaWorkerReadiness);
@@ -210,11 +221,12 @@ export function Workbench({ initialReviewId }: { initialReviewId?: string } = {}
             : (status.ollamaModelPolicies.find((policy) => policy.default)?.digest ?? status.ollamaModelPolicies[0]?.digest ?? "")
         );
       })
-      .catch(() => {
+      .catch((error) => {
         if (!cancelled) {
           setOllamaModelPolicies([]);
           setSelectedOllamaDigest("");
           setOllamaWorkerReadiness(null);
+          setActionFeedback({ tone: "warn", message: actionableApiError(error) });
         }
       });
     return () => { cancelled = true; };
@@ -886,7 +898,7 @@ export function Workbench({ initialReviewId }: { initialReviewId?: string } = {}
       appendAuditEvent("agents.run", `Agent swarm completed for ${activeReview.ticker} using ${packet.providerInfo?.name ?? "unknown provider"}.`);
       return "ok";
     } catch (error) {
-      const detail = error instanceof Error ? error.message : "Agent swarm endpoint unavailable";
+      const detail = actionableApiError(error);
       appendAuditEvent("agents.run.unavailable", `${detail}; keeping local workflow state without silent fallback.`);
       return "fallback";
     }
@@ -1222,11 +1234,11 @@ export function Workbench({ initialReviewId }: { initialReviewId?: string } = {}
         currentStepId: nextStep.id,
         message: `${nextStep.label} failed.`,
         completedAt: new Date().toISOString(),
-        error: error instanceof Error ? error.message : "unknown error"
+        error: actionableApiError(error)
       });
       setActionFeedback({
         tone: "warn",
-        message: `${nextStep.label} failed: ${error instanceof Error ? error.message : "unknown error"}`
+        message: `${nextStep.label} failed: ${actionableApiError(error)}`
       });
     } finally {
       setActiveAction(null);
@@ -1274,11 +1286,11 @@ export function Workbench({ initialReviewId }: { initialReviewId?: string } = {}
         currentStepId: null,
         message: "Guided demo failed.",
         completedAt: new Date().toISOString(),
-        error: error instanceof Error ? error.message : "unknown error"
+        error: actionableApiError(error)
       });
       setActionFeedback({
         tone: "warn",
-        message: `Guided demo failed: ${error instanceof Error ? error.message : "unknown error"}`
+        message: `Guided demo failed: ${actionableApiError(error)}`
       });
     } finally {
       setActiveAction(null);
@@ -1334,9 +1346,9 @@ export function Workbench({ initialReviewId }: { initialReviewId?: string } = {}
         currentStepId: "report",
         message: "Report export failed.",
         completedAt: new Date().toISOString(),
-        error: error instanceof Error ? error.message : "unknown error"
+        error: actionableApiError(error)
       });
-      setActionFeedback({ tone: "warn", message: `Report export failed: ${error instanceof Error ? error.message : "unknown error"}` });
+      setActionFeedback({ tone: "warn", message: `Report export failed: ${actionableApiError(error)}` });
     } finally {
       setActiveAction(null);
     }
@@ -2886,7 +2898,7 @@ function buildLocalReportArtifact(review: TradeReview, packet: DecisionPacket | 
       },
       {
         title: "Unverified Local Continuity Report",
-        content: "The validated report API was unavailable. This browser artifact is not a verified ticker-intelligence report and its agent prose has not passed claim-level verification.", evidenceMode:"unavailable", verificationStatus:"unverified"
+        content: "Explicit development continuity mode produced this browser-only artifact. It is not a governed ticker-intelligence report and its agent prose has not passed server claim-level verification.", evidenceMode:"unavailable", verificationStatus:"unverified"
       },
       {
         title: "Investment Trading Decision Evidence",
@@ -2907,10 +2919,10 @@ function buildLocalReportArtifact(review: TradeReview, packet: DecisionPacket | 
       }
     ],
     dataMode: "demo",
-    provenanceLabel: "Client-side fallback export generated from current Ambrosia review state because the report API was unavailable.",
+    provenanceLabel: "Client-side development continuity artifact generated without governed server report evidence.",
     marketDataSource: packet?.marketSnapshot?.dataSource ?? null,
     marketDataFreshnessSeconds: null
-    ,schemaVersion:"ticker-intelligence-report.v1",verifiedClaimCoverage:0,unresolvedMaterialClaimCount:0,reportValidationStatus:"legacy"
+    ,schemaVersion:"continuity-report.v1",verifiedClaimCoverage:0,unresolvedMaterialClaimCount:0,reportValidationStatus:"legacy"
   };
 }
 

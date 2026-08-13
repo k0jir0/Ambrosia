@@ -20,6 +20,7 @@ from .operations import current_principal, record_domain_event, record_domain_me
 from .providers import resolve_provider
 from .selective_integration import invalidate_integration
 from .store import store
+from .tenant_context import reset_organization_id, set_organization_id
 
 router = APIRouter(tags=["ollama-review-bridge"])
 TERMINAL = {"completed", "failed", "dead_letter", "expired", "canceled", "superseded"}
@@ -116,6 +117,7 @@ class AdmissionRequest(BaseModel):
     unsupportedClaimCount: int = Field(default=0, ge=0)
     citationIssueCount: int = Field(default=0, ge=0)
     usefulnessScore: int | None = Field(default=None, ge=1, le=5)
+    correctionVerificationRunId: str | None = None
 
     @model_validator(mode="after")
     def disposition_matches_claim_decisions(self):
@@ -160,6 +162,9 @@ class ProposalView(BaseModel):
     resultPacketVersion: int | None = None
     rollbackPacketVersion: int | None = None
     reviewerDecisionHash: str | None = None
+    originalOutputArtifactId: str | None = None
+    retentionUntil: str | None = None
+    deletionState: str = "active"
     evidenceSnapshot: list[dict] = Field(default_factory=list)
     reviewImpact: list[dict] = Field(default_factory=list)
     claimDecisions: list[dict] = Field(default_factory=list)
@@ -613,6 +618,28 @@ class Bridge:
     ) -> dict:
         output = body.output.model_dump(mode="json", exclude_unset=True)
         patch = self._proposal_patch(output)
+        encoded_output = json.dumps(output, sort_keys=True, separators=(",", ":")).encode()
+        artifact_id = None
+        artifact_hash = None
+        inline_limit = max(
+            65_536, min(int(os.getenv("LLM_PROPOSAL_INLINE_MAX_BYTES", "262144")), 900_000)
+        )
+        retention_days = max(
+            7, min(int(os.getenv("LLM_PROPOSAL_RETENTION_DAYS", "90")), 2555)
+        )
+        retention_until = (datetime.now(UTC) + timedelta(days=retention_days)).isoformat()
+        if connection is not None and len(encoded_output) > inline_limit:
+            tenant_token = set_organization_id(str(row["tenant"]))
+            try:
+                artifact = artifact_store.persist_json(
+                    "llm", packet.id, f"proposal-output-{row['id']}-{run_id}.json", output
+                )
+            finally:
+                reset_organization_id(tenant_token)
+            artifact_id = artifact.get("artifactId")
+            artifact_hash = artifact.get("contentHash")
+            if not artifact_id or artifact_hash != canonical_hash(output):
+                raise RuntimeError("Oversized proposal output was not durably content-addressed")
         proposal_id = str(uuid4())
         state = "proposed" if verification == "passed" else "awaiting_human_review"
         proposal = {
@@ -638,20 +665,25 @@ class Bridge:
             "resultPacketVersion": None,
             "rollbackPacketVersion": None,
             "reviewerDecisionHash": None,
+            "originalOutputArtifactId": artifact_id,
+            "retentionUntil": retention_until,
+            "deletionState": "active",
             "createdAt": now(),
             "tenant": str(row["tenant"]),
         }
         if connection is not None:
-            connection.execute(
-                """INSERT INTO llm_packet_proposals
+            try:
+                connection.execute(
+                    """INSERT INTO llm_packet_proposals
                 (id,organization_id,operation_id,run_id,packet_id,base_packet_version,
                  base_packet_hash,evidence_pack_hash,model_name,model_digest,worker_id,
                  pipeline_version,prompt_template_id,output_schema_version,original_output_hash,
                  proposed_patch_hash,original_output,proposed_patch,deterministic_findings,
-                 admission_state,created_at,updated_at)
+                 admission_state,original_output_artifact_id,retention_until,
+                 created_at,updated_at)
                 VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s::jsonb,
-                        %s::jsonb,%s,%s,%s)""",
-                (
+                        %s::jsonb,%s,%s,%s,%s,%s)""",
+                    (
                     proposal_id,
                     row["tenant"],
                     row["id"],
@@ -668,14 +700,24 @@ class Bridge:
                     proposal["outputSchemaVersion"],
                     proposal["originalOutputHash"],
                     proposal["proposedPatchHash"],
-                    json.dumps(output),
+                    json.dumps(
+                        output
+                        if not artifact_id
+                        else {"artifactId": artifact_id, "contentHash": artifact_hash}
+                    ),
                     json.dumps(patch),
                     json.dumps(proposal["deterministicFindings"]),
                     state,
+                    artifact_id,
+                    retention_until,
                     proposal["createdAt"],
                     proposal["createdAt"],
-                ),
-            )
+                    ),
+                )
+            except Exception:
+                if artifact_id:
+                    artifact_store.discard(artifact_id)
+                raise
             self._proposal_event(
                 proposal,
                 "proposal.created",
@@ -707,6 +749,12 @@ class Bridge:
                 ).fetchone()
             if not value:
                 return None
+            original_output = value["original_output"]
+            artifact_id = value.get("original_output_artifact_id")
+            if artifact_id and value.get("deletion_state") != "content_deleted":
+                original_output = artifact_store.load_json(str(artifact_id))
+                if canonical_hash(original_output) != value["original_output_hash"]:
+                    raise HTTPException(409, {"code": "proposal_artifact_hash_mismatch"})
             proposal = {
                 "id": str(value["id"]),
                 "operationId": str(value["operation_id"]),
@@ -723,13 +771,18 @@ class Bridge:
                 "outputSchemaVersion": value["output_schema_version"],
                 "originalOutputHash": value["original_output_hash"],
                 "proposedPatchHash": value["proposed_patch_hash"],
-                "originalOutput": value["original_output"],
+                "originalOutput": original_output,
                 "proposedPatch": value["proposed_patch"],
                 "deterministicFindings": value["deterministic_findings"],
                 "admissionState": value["admission_state"],
                 "resultPacketVersion": value["result_packet_version"],
                 "rollbackPacketVersion": value.get("rollback_packet_version"),
                 "reviewerDecisionHash": value.get("reviewer_decision_hash"),
+                "originalOutputArtifactId": str(artifact_id) if artifact_id else None,
+                "retentionUntil": value.get("retention_until").isoformat()
+                if value.get("retention_until")
+                else None,
+                "deletionState": value.get("deletion_state") or "active",
                 "createdAt": value["created_at"].isoformat(),
                 "tenant": str(tenant),
             }
@@ -741,6 +794,60 @@ class Bridge:
             return None
         proposal = self.proposals.get(operation["proposalId"])
         return proposal if proposal and proposal["tenant"] == tenant else None
+
+    def expire_retained_proposals(self, limit: int = 100, *, dry_run: bool = True) -> dict:
+        principal = current_principal()
+        if not principal or not principal.organization_id:
+            raise HTTPException(401, "Tenant-bound account required")
+        if principal.role not in {"admin", "owner"}:
+            raise HTTPException(403, "Owner or admin role required")
+        if not catalog.durable:
+            return {"dryRun": dry_run, "eligible": 0, "expired": 0, "proposalIds": []}
+        with catalog._connect(tenant=False) as connection:
+            catalog._set_worker_tenant(
+                connection, {"organization_id": principal.organization_id}
+            )
+            rows = connection.execute(
+                """SELECT id,original_output_artifact_id,original_output_hash,
+                proposed_patch_hash FROM llm_packet_proposals
+                WHERE retention_until <= now() AND deletion_state='active' AND legal_hold=false
+                ORDER BY retention_until LIMIT %s""",
+                (limit,),
+            ).fetchall()
+        ids = [str(row["id"]) for row in rows]
+        if dry_run:
+            return {"dryRun": True, "eligible": len(rows), "expired": 0, "proposalIds": ids}
+        expired = 0
+        for row in rows:
+            artifact_id = row.get("original_output_artifact_id")
+            if artifact_id:
+                artifact_store.discard(str(artifact_id))
+            with catalog._connect(tenant=False) as connection:
+                with connection.transaction():
+                    catalog._set_worker_tenant(
+                        connection, {"organization_id": principal.organization_id}
+                    )
+                    changed = connection.execute(
+                        """UPDATE llm_packet_proposals SET
+                        original_output=jsonb_build_object('retained',false,'contentHash',original_output_hash),
+                        proposed_patch=jsonb_build_object('retained',false,'contentHash',proposed_patch_hash),
+                        deterministic_findings='[]'::jsonb,deletion_state='content_deleted',
+                        updated_at=now()
+                        WHERE id=%s AND deletion_state='active' AND legal_hold=false
+                        RETURNING id""",
+                        (row["id"],),
+                    ).fetchone()
+                    if not changed:
+                        continue
+                    self._proposal_event(
+                        {"id": str(row["id"]), "tenant": str(principal.organization_id)},
+                        "proposal.content_deleted",
+                        f"user:{principal.subject}",
+                        {"retentionPolicy": "llm-proposal-retention.v1"},
+                        connection,
+                    )
+                    expired += 1
+        return {"dryRun": False, "eligible": len(rows), "expired": expired, "proposalIds": ids}
 
     def _proposal_event(
         self,
@@ -933,14 +1040,13 @@ class Bridge:
                 item["admissionStatus"] = "human_review"
                 findings[claim_id] = {
                     "claimId": claim_id,
-                    "status": "entailed",
+                    "status": "pending_independent_verification",
                     "evidenceIds": item.get("supportingEvidenceIds", []),
                     "reasons": [
-                        "Human correction passed closed-world deterministic revalidation; "
-                        "authorship remains human."
+                        "Human correction requires a separately leased independent-verifier run."
                     ],
                     "deterministicChecksPassed": True,
-                    "verifier": "ambrosia-human-correction-gate.v1",
+                    "verifier": "ambrosia-correction-admission-gate.v2",
                 }
                 human_corrected.append(
                     {
@@ -1081,6 +1187,10 @@ class Bridge:
         proposal = self.get_proposal(operation_id)
         if not proposal or proposal["id"] != body.proposalId:
             raise HTTPException(404, "LLM packet proposal not found")
+        if proposal.get("deletionState") == "content_deleted":
+            raise HTTPException(
+                410, {"code": "PROPOSAL_CONTENT_RETAINED_DATA_DELETED"}
+            )
         if body.expectedProposalHash != proposal["proposedPatchHash"]:
             raise HTTPException(409, {"code": "proposal_hash_changed"})
         if not key:
@@ -1096,6 +1206,61 @@ class Bridge:
         if body.disposition == "rejected":
             return self._reject_proposal(proposal, body, key, request_hash, principal)
         reviewed_output = self._reviewed_output(proposal, body, str(principal.subject))
+        corrected_ids = {
+            decision.claimId for decision in body.claimDecisions
+            if decision.decision == "accept_with_human_correction"
+        }
+        if corrected_ids:
+            if not body.correctionVerificationRunId:
+                raise HTTPException(
+                    409, {"code": "CORRECTION_REVERIFICATION_REQUIRED"}
+                )
+            verification = catalog.correction_verification(
+                str(principal.organization_id), body.correctionVerificationRunId,
+                self._correction_binding(body),
+            )
+            if not verification:
+                raise HTTPException(
+                    409, {"code": "CORRECTION_REVERIFICATION_FAILED"}
+                )
+            verified_output = verification["structured_output"]
+            expected_claims = {
+                str(claim.get("claimId")): claim
+                for claim in reviewed_output.get("materialClaims", [])
+                if str(claim.get("claimId")) in corrected_ids
+            }
+            actual_claims = {
+                str(claim.get("claimId")): claim
+                for claim in verified_output.get("materialClaims", [])
+                if str(claim.get("claimId")) in corrected_ids
+            }
+            if canonical_hash(expected_claims) != canonical_hash(actual_claims):
+                raise HTTPException(409, {"code": "CORRECTION_REVERIFICATION_FAILED"})
+            verified_findings = {
+                str(item.get("claimId")): item
+                for item in verified_output.get("verificationFindings", [])
+            }
+            for claim_id, claim in expected_claims.items():
+                finding = verified_findings.get(claim_id)
+                if (
+                    not finding or finding.get("status") != "entailed"
+                    or not finding.get("deterministicChecksPassed")
+                    or not set(claim.get("supportingEvidenceIds", [])).issubset(
+                        set(finding.get("evidenceIds", []))
+                    )
+                ):
+                    raise HTTPException(409, {"code": "CORRECTION_REVERIFICATION_FAILED"})
+            reviewed_output["verificationFindings"] = [
+                verified_findings.get(str(item.get("claimId")), item)
+                for item in reviewed_output.get("verificationFindings", [])
+            ]
+            for item in reviewed_output.get("humanCorrectedClaims", []):
+                item.update(
+                    verificationRunId=body.correctionVerificationRunId,
+                    verifierModelName=verification.get("verifier_model_name"),
+                    verifierModelDigest=verification.get("verifier_model_digest"),
+                    verifierPolicyVersion="ollama-independent-verifier.v2",
+                )
         if catalog.durable:
             result = self._admit_durable(
                 proposal, reviewed_output, body, key, request_hash, principal
@@ -1135,6 +1300,14 @@ class Bridge:
                 )
             worker = {"id": proposal["workerId"] or "human-review"}
             worker_result = self._worker_result_from_proposal(proposal, reviewed_output)
+            state = (
+                "corrected_and_admitted"
+                if body.disposition == "corrected"
+                else "human_admitted"
+            )
+            decision_hash = canonical_hash(
+                [proposal["proposedPatchHash"], principal.subject, body.model_dump(mode="json")]
+            )
             updated = self.result_packet(
                 packet,
                 worker,
@@ -1146,20 +1319,14 @@ class Bridge:
                 proposal_id=proposal["id"],
                 admission_actor=str(principal.subject),
                 admission_decisions=reviewed_output.get("humanReviewLineage", []),
+                admission_state=state,
+                reviewer_decision_hash=decision_hash,
             )
             saved = store.commit_packet_transition(
                 updated,
                 event_type="agents.human_admission.completed",
                 detail=f"Human-reviewed Ollama proposal {proposal['id']} admitted exactly once.",
                 actor=f"user:{principal.subject}",
-            )
-            state = (
-                "corrected_and_admitted"
-                if body.disposition == "corrected"
-                else "human_admitted"
-            )
-            decision_hash = canonical_hash(
-                [proposal["proposedPatchHash"], principal.subject, body.model_dump(mode="json")]
             )
             proposal.update(
                 admissionState=state,
@@ -1185,6 +1352,82 @@ class Bridge:
                 "result": result,
             }
         return result
+
+    @staticmethod
+    def _correction_binding(body: AdmissionRequest) -> str:
+        return canonical_hash(
+            {
+                "proposalId": body.proposalId,
+                "expectedPacketVersion": body.expectedPacketVersion,
+                "expectedProposalHash": body.expectedProposalHash,
+                "claimDecisions": [
+                    item.model_dump(mode="json") for item in body.claimDecisions
+                ],
+            }
+        )
+
+    def queue_correction_verification(
+        self, operation_id: str, body: AdmissionRequest
+    ) -> dict:
+        principal = current_principal()
+        if not principal or not principal.organization_id:
+            raise HTTPException(401, "Tenant-bound account required")
+        if principal.role not in {"analyst", "admin", "owner"}:
+            raise HTTPException(403, "Analyst, admin, or owner role required")
+        if body.disposition != "corrected":
+            raise HTTPException(422, "A corrected disposition is required")
+        proposal = self.get_proposal(operation_id)
+        if not proposal or proposal["id"] != body.proposalId:
+            raise HTTPException(404, "LLM packet proposal not found")
+        if proposal.get("deletionState") == "content_deleted":
+            raise HTTPException(410, {"code": "PROPOSAL_CONTENT_RETAINED_DATA_DELETED"})
+        if body.expectedProposalHash != proposal["proposedPatchHash"]:
+            raise HTTPException(409, {"code": "proposal_hash_changed"})
+        packet = store.get_packet(proposal["packetId"])
+        if not packet or packet.packetVersion != body.expectedPacketVersion:
+            raise HTTPException(409, {"code": "proposal_stale"})
+        candidate = self._reviewed_output(proposal, body, str(principal.subject))
+        evidence, _, _ = self._proposal_review_data(proposal)
+        first_evidence = evidence[0] if evidence else {}
+        identity = {
+            "instrumentId": first_evidence.get("subjectInstrumentId") or packet.ticker,
+            "canonicalTicker": first_evidence.get("canonicalTicker") or packet.ticker,
+            "resolutionStatus": "verified",
+        }
+        job = catalog.enqueue(
+            str(principal.organization_id),
+            LlmJobCreate(
+                packetId=packet.id,
+                thesis="Independently verify the exact human-corrected claims without rewriting.",
+                claims=[
+                    str(item.correctedText) for item in body.claimDecisions
+                    if item.decision == "accept_with_human_correction"
+                ],
+                evidence=evidence,
+                role="correctionVerifier",
+                tickerIdentity=identity,
+                expectedPacketVersion=packet.packetVersion,
+                requestedModel=proposal["modelName"],
+                requestedModelDigest=proposal["modelDigest"],
+                verificationCandidate=candidate,
+                verificationBindingHash=self._correction_binding(body),
+            ),
+        )
+        if catalog.durable:
+            with catalog._connect(tenant=False) as connection:
+                catalog._set_worker_tenant(
+                    connection, {"organization_id": principal.organization_id}
+                )
+                self._proposal_event(
+                    proposal, "proposal.correction_verification_queued",
+                    f"reviewer:{principal.subject}", {"jobId": job["id"]}, connection,
+                )
+        else:
+            self._proposal_event(
+                proposal, "proposal.correction_verification_queued",
+                f"reviewer:{principal.subject}", {"jobId": job["id"]},
+            )
+        return job
 
     def _reject_proposal(self, proposal, body, key, request_hash, principal):
         state = proposal["admissionState"]
@@ -1374,6 +1617,18 @@ class Bridge:
                 ).fetchone()
                 worker = {"id": proposal["workerId"] or "human-review"}
                 worker_result = self._worker_result_from_proposal(proposal, reviewed_output)
+                state = (
+                    "corrected_and_admitted"
+                    if body.disposition == "corrected"
+                    else "human_admitted"
+                )
+                decision_hash = canonical_hash(
+                    [
+                        proposal["proposedPatchHash"],
+                        principal.subject,
+                        body.model_dump(mode="json"),
+                    ]
+                )
                 updated = self.result_packet(
                     packet,
                     worker,
@@ -1385,6 +1640,8 @@ class Bridge:
                     proposal_id=proposal["id"],
                     admission_actor=str(principal.subject),
                     admission_decisions=reviewed_output.get("humanReviewLineage", []),
+                    admission_state=state,
+                    reviewer_decision_hash=decision_hash,
                 )
                 packet_store = store._packet_db
                 if packet_store is None:
@@ -1398,18 +1655,6 @@ class Bridge:
                         detail=f"Human-reviewed Ollama proposal {proposal['id']} admitted exactly once.",
                         actor=f"user:{principal.subject}",
                     )
-                state = (
-                    "corrected_and_admitted"
-                    if body.disposition == "corrected"
-                    else "human_admitted"
-                )
-                decision_hash = canonical_hash(
-                    [
-                        proposal["proposedPatchHash"],
-                        principal.subject,
-                        body.model_dump(mode="json"),
-                    ]
-                )
                 connection.execute(
                     """UPDATE llm_packet_proposals SET admission_state=%s,
                     result_packet_version=%s,admitted_at=now(),admitted_by=%s,
@@ -1869,6 +2114,8 @@ class Bridge:
         proposal_id=None,
         admission_actor=None,
         admission_decisions=None,
+        admission_state=None,
+        reviewer_decision_hash=None,
     ):
         output = body.output.model_dump(mode="json", exclude_unset=True)
         role = output.get("role") or "pmSynthesis"
@@ -1933,6 +2180,8 @@ class Bridge:
                     "runId": run_id,
                     "proposalId": proposal_id,
                     "admissionActor": admission_actor,
+                    "admissionState": admission_state,
+                    "reviewerDecisionHash": reviewer_decision_hash,
                     "humanReviewLineage": admission_decisions or [],
                     "traceparent": trace_id,
                 },
@@ -2253,6 +2502,16 @@ class Bridge:
 bridge = Bridge()
 
 
+@router.post("/llm/proposals/retention/expire")
+def expire_proposal_content(
+    dry_run: bool = True,
+    limit: int = 100,
+):
+    return bridge.expire_retained_proposals(
+        max(1, min(limit, 500)), dry_run=dry_run
+    )
+
+
 @router.post("/packets/{packet_id}/agent-operations", response_model=OperationView, status_code=202)
 def create_operation(
     packet_id: str,
@@ -2300,6 +2559,13 @@ def admit_operation_proposal(
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
 ):
     return bridge.admit(operation_id, body, idempotency_key)
+
+
+@router.post(
+    "/operations/{operation_id}/correction-verification", status_code=202
+)
+def verify_operation_corrections(operation_id: str, body: AdmissionRequest) -> dict:
+    return bridge.queue_correction_verification(operation_id, body)
 
 
 @router.post("/agent-operations/{operation_id}/rollback", response_model=OperationView)

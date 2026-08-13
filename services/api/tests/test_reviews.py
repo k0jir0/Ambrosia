@@ -10,7 +10,7 @@ import time as time_module
 
 from app import coordinator
 from app.main import app
-from app.llm_catalog import catalog as llm_catalog
+from app.llm_catalog import DisconfirmationOutput, catalog as llm_catalog
 from app.ollama_bridge import enabled as ollama_bridge_enabled
 from app.store import ReviewStore
 
@@ -717,6 +717,53 @@ def test_human_correction_is_revalidated_and_admitted_exactly_once(monkeypatch) 
         ],
         "rationale": "Corrected the citation against the immutable evidence snapshot.",
     }
+    unverified = client.post(
+        f"/operations/{operation['id']}/admission",
+        headers={"Idempotency-Key": "human-correction-unverified"},
+        json=admission,
+    )
+    assert unverified.status_code == 409
+    assert unverified.json()["code"] == "CORRECTION_REVERIFICATION_REQUIRED"
+    queued = client.post(
+        f"/operations/{operation['id']}/correction-verification", json=admission
+    )
+    assert queued.status_code == 202, queued.text
+    verification_job = client.post(
+        "/local-worker/claim",
+        headers=headers,
+        json={"leaseSeconds": 120, "models": [_qualified_model("test", digest)]},
+    ).json()["job"]
+    assert verification_job["taskType"] == "correction_verification_v1"
+    verification_result = _ollama_result(verification_job)
+    verification_result["modelDigest"] = digest
+    verification_result["verifierModelName"] = "test"
+    verification_result["verifierModelDigest"] = digest
+    verification_result["output"] = verification_job["input"]["verificationCandidate"]
+    verification_result["output"]["verificationFindings"][0].update(
+        status="entailed",
+        evidenceIds=["src-1"],
+        deterministicChecksPassed=True,
+        verifier="ollama-independent-verifier.v2",
+        reasons=[],
+    )
+    canonical_verification_output = DisconfirmationOutput.model_validate(
+        verification_result["output"]
+    ).model_dump(mode="json", exclude_unset=True)
+    verification_result["resultHash"] = hashlib.sha256(
+        json.dumps(
+            canonical_verification_output, sort_keys=True, separators=(",", ":")
+        ).encode()
+    ).hexdigest()
+    completed = client.post(
+        f"/local-worker/jobs/{verification_job['id']}/result",
+        headers=headers,
+        json=verification_result,
+    )
+    assert completed.status_code == 200, completed.text
+    verification_status = client.get(f"/llm/jobs/{verification_job['id']}")
+    assert verification_status.status_code == 200
+    assert verification_status.json()["verificationStatus"] == "passed"
+    admission["correctionVerificationRunId"] = verification_status.json()["runId"]
     first = client.post(
         f"/operations/{operation['id']}/admission",
         headers={"Idempotency-Key": "human-correction-once"},
@@ -1308,6 +1355,54 @@ def test_report_generation_produces_artifact_with_provenance() -> None:
 def test_report_generation_404_for_missing_packet() -> None:
     response = client.post("/packets/does-not-exist/report")
     assert response.status_code == 404
+    assert response.headers["content-type"].startswith("application/problem+json")
+    assert response.json()["code"] == "NOT_FOUND"
+    assert response.json()["requestId"] == response.headers["x-request-id"]
+
+
+def test_report_generation_idempotency_replays_one_artifact() -> None:
+    packet_id = "packet-report-idempotent"
+    assert client.post("/packets", json=_build_packet_payload(packet_id)).status_code == 200
+    headers = {"Idempotency-Key": "report-idempotency-replay-1"}
+
+    first = client.post(f"/packets/{packet_id}/report", headers=headers)
+    second = client.post(f"/packets/{packet_id}/report", headers=headers)
+
+    assert first.status_code == second.status_code == 200
+    assert second.json() == first.json()
+    packet = client.get(f"/packets/{packet_id}").json()
+    assert sum(event["eventType"] == "report.generated" for event in packet["audit"]) == 1
+
+
+def test_report_idempotency_key_cannot_be_reused_for_another_packet() -> None:
+    headers = {"Idempotency-Key": "report-idempotency-conflict-1"}
+    for packet_id in ("packet-report-key-a", "packet-report-key-b"):
+        assert client.post("/packets", json=_build_packet_payload(packet_id)).status_code == 200
+    assert client.post("/packets/packet-report-key-a/report", headers=headers).status_code == 200
+    conflict = client.post("/packets/packet-report-key-b/report", headers=headers)
+    assert conflict.status_code == 409
+    assert conflict.json()["code"] == "IDEMPOTENCY_KEY_REUSED"
+
+
+def test_protected_report_generation_requires_authentication_before_contract(monkeypatch) -> None:
+    monkeypatch.setenv("ENVIRONMENT", "staging")
+    response = client.post("/packets/any/report")
+    assert response.status_code == 401
+    assert response.json()["code"] == "AUTHENTICATION_REQUIRED"
+
+
+def test_deployment_version_and_capabilities_attest_report_policy(monkeypatch) -> None:
+    monkeypatch.setenv("AMBROSIA_BUILD_SHA", "a" * 40)
+    monkeypatch.setenv("REPORT_EXPORT_ENABLED", "true")
+    version = client.get("/version")
+    assert version.status_code == 200
+    assert version.json()["buildSha"] == "a" * 40
+    assert version.json()["dbSchemaVersion"] == "v0015"
+    capabilities = client.get("/capabilities")
+    assert capabilities.status_code == 200
+    assert capabilities.json()["schemaVersion"] == "deployment-capabilities.v1"
+    assert capabilities.json()["reportExport"]["enabled"] is True
+    assert capabilities.json()["apiBasePath"] == "/api"
 
 
 def test_market_provider_status_endpoint() -> None:
@@ -1337,7 +1432,7 @@ def test_health_detailed_endpoint() -> None:
     assert "store" in health["checks"]
     assert health["checks"]["persistence"]["mode"] in {"memory", "postgres"}
     assert health["checks"]["persistence"]["databaseRequired"] is False
-    assert health["checks"]["persistence"]["dbSchemaVersion"] == "v0014"
+    assert health["checks"]["persistence"]["dbSchemaVersion"] == "v0015"
     assert "marketData" in health["checks"]
     assert "llmProviders" in health["checks"]
     assert "slo" in health

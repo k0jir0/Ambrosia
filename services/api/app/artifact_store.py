@@ -34,6 +34,7 @@ class ArtifactStore:
             "reasonCode": "not_probed",
         }
         self._report_probe_monotonic = 0.0
+        self._report_requests: dict[tuple[str, str, str], dict] = {}
 
     def _bucket(self) -> str:
         return os.getenv("ARTIFACT_BUCKET", "").strip()
@@ -176,6 +177,114 @@ class ArtifactStore:
             "storageStatus": "durable",
             "contentHash": content_hash,
         }
+
+    def begin_report_request(
+        self,
+        idempotency_key: str | None,
+        request_hash: str,
+        packet_id: str,
+        packet_version: int,
+    ) -> tuple[str, dict | None]:
+        """Claim one report generation or replay its completed artifact."""
+        if not idempotency_key:
+            return "new", None
+        organization_id = current_organization_id()
+        principal = current_principal()
+        if not organization_id or not principal:
+            raise PermissionError("tenant identity is required for report idempotency")
+        key_hash = hashlib.sha256(idempotency_key.encode()).hexdigest()
+        memory_key = (str(organization_id), str(principal.subject), key_hash)
+        database_url = os.getenv("DATABASE_URL", "").strip()
+        if not database_url:
+            previous = self._report_requests.get(memory_key)
+            if previous:
+                if previous["requestHash"] != request_hash:
+                    return "conflict", None
+                if previous["state"] == "completed":
+                    return "replay", previous["report"]
+                if previous["state"] == "pending":
+                    return "pending", None
+            self._report_requests[memory_key] = {
+                "requestHash": request_hash, "state": "pending", "report": None
+            }
+            return "new", None
+        with psycopg.connect(database_url, row_factory=dict_row) as connection:
+            apply_tenant_context(connection)
+            inserted = connection.execute(
+                """INSERT INTO report_generation_requests
+                (organization_id,reviewer_user_id,idempotency_key_hash,request_hash,
+                 packet_id,packet_version,state)
+                VALUES (%s,%s,%s,%s,%s,%s,'pending')
+                ON CONFLICT (organization_id,reviewer_user_id,idempotency_key_hash)
+                DO NOTHING RETURNING id""",
+                (organization_id, principal.subject, key_hash, request_hash,
+                 packet_id, packet_version),
+            ).fetchone()
+            if inserted:
+                return "new", None
+            row = connection.execute(
+                """SELECT request_hash,state,report_artifact,updated_at
+                FROM report_generation_requests
+                WHERE organization_id=%s AND reviewer_user_id=%s AND idempotency_key_hash=%s
+                FOR UPDATE""",
+                (organization_id, principal.subject, key_hash),
+            ).fetchone()
+            if row["request_hash"] != request_hash:
+                return "conflict", None
+            if row["state"] == "completed":
+                return "replay", row["report_artifact"]
+            # A worker can die after claiming the key. Permit a bounded retry instead
+            # of leaving the packet permanently wedged, while still excluding live
+            # concurrent generators.
+            if row["state"] == "pending" and (
+                datetime.now(UTC) - row["updated_at"]
+            ).total_seconds() < 300:
+                return "pending", None
+            connection.execute(
+                """UPDATE report_generation_requests SET state='pending',updated_at=now()
+                WHERE organization_id=%s AND reviewer_user_id=%s AND idempotency_key_hash=%s""",
+                (organization_id, principal.subject, key_hash),
+            )
+            return "new", None
+
+    def finish_report_request(
+        self,
+        idempotency_key: str | None,
+        request_hash: str,
+        report: dict | None,
+        *,
+        failed: bool = False,
+    ) -> None:
+        if not idempotency_key:
+            return
+        organization_id = current_organization_id()
+        principal = current_principal()
+        if not organization_id or not principal:
+            return
+        key_hash = hashlib.sha256(idempotency_key.encode()).hexdigest()
+        memory_key = (str(organization_id), str(principal.subject), key_hash)
+        database_url = os.getenv("DATABASE_URL", "").strip()
+        if not database_url:
+            self._report_requests[memory_key] = {
+                "requestHash": request_hash,
+                "state": "failed" if failed else "completed",
+                "report": report,
+            }
+            return
+        with psycopg.connect(database_url) as connection:
+            apply_tenant_context(connection)
+            connection.execute(
+                """UPDATE report_generation_requests SET state=%s,report_artifact=%s::jsonb,
+                artifact_id=%s,updated_at=now()
+                WHERE organization_id=%s AND reviewer_user_id=%s
+                  AND idempotency_key_hash=%s AND request_hash=%s""",
+                (
+                    "failed" if failed else "completed",
+                    json.dumps(report) if report is not None else None,
+                    report.get("artifactId") if report else None,
+                    organization_id, principal.subject, key_hash, request_hash,
+                ),
+            )
 
     @staticmethod
     def _set_status(database_url: str, artifact_id: str, status: str) -> None:

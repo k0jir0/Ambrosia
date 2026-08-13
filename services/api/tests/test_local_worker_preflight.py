@@ -123,6 +123,55 @@ def test_hardware_preflight_exercises_all_four_model_stages(monkeypatch) -> None
     assert capabilities["models"][0]["contextLength"] == 8192
 
 
+def test_correction_verification_preserves_exact_human_text(monkeypatch) -> None:
+    candidate = _specialist_output()
+    candidate.update(
+        abstained=False,
+        abstentionReason=None,
+        materialClaims=[
+            {
+                "claimId": "corrected-1",
+                "text": "Exact reviewer-authored correction.",
+                "claimType": "inference",
+                "materiality": "high",
+                "supportingEvidenceIds": ["source-1"],
+                "contradictingEvidenceIds": [],
+                "falsifier": "A later filing contradicts the cited observation.",
+            }
+        ],
+    )
+    job = {
+        "input": {
+            "outputSchema": {"type": "object"},
+            "verificationCandidate": candidate,
+            "evidence": [{"evidenceId": "source-1", "dataMode": "live"}],
+        }
+    }
+
+    def fake_stage(_url, _model, _text, schema):
+        assert schema is worker.VERIFIER_SCHEMA
+        return {
+            "findings": [
+                {
+                    "claimId": "corrected-1", "status": "entailed",
+                    "evidenceIds": ["source-1"], "reasons": [],
+                }
+            ]
+        }, {"parameters": {"temperature": 0}, "completedAt": "2026-08-13T00:00:00Z"}
+
+    monkeypatch.setattr(worker, "run_stage", fake_stage)
+    output, metadata = worker.run_ollama(
+        "http://127.0.0.1:11434", "qwen3:8b-q4_K_M", job
+    )
+
+    assert output["materialClaims"] == candidate["materialClaims"]
+    assert output["verificationFindings"][0]["status"] == "entailed"
+    assert output["verificationFindings"][0]["verifier"] == (
+        "ollama-independent-verifier.v2"
+    )
+    assert metadata["parameters"]["workflow"] == "correction_verification_v1"
+
+
 @pytest.mark.parametrize(
     ("message", "expected"),
     [

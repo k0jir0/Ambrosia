@@ -301,22 +301,18 @@ class Catalog:
         token = secrets.token_urlsafe(40)
         token_digest = hash_token(token)
         if self.durable:
-            try:
-                database_user_id = str(UUID(user_id))
-            except ValueError:
-                database_user_id = None
+            database_user_id = str(UUID(user_id))
             with self._connect() as connection:
                 connection.execute(
                     """
                     INSERT INTO local_worker_credentials
-                      (id, organization_id, user_id, created_by_subject, name, token_hash)
-                    VALUES (%s, %s, %s, %s, %s, %s)
+                      (id, organization_id, user_id, name, token_hash)
+                    VALUES (%s, %s, %s, %s, %s)
                     """,
                     (
                         worker_id,
                         organization_id,
                         database_user_id,
-                        user_id,
                         name,
                         token_digest,
                     ),

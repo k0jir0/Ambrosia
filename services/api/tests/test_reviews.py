@@ -807,7 +807,7 @@ def test_report_diff_fails_when_admitted_baseline_provenance_is_missing(monkeypa
     packet_id = "packet-missing-baseline-provenance"
     assert client.post("/packets", json=_build_packet_payload(packet_id)).status_code == 200
     headers = _enroll_ollama_worker(digest)
-    operation = client.post(
+    client.post(
         f"/packets/{packet_id}/agent-operations",
         json={"providerMode": "ollama", "requestedModelDigest": digest},
     ).json()

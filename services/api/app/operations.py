@@ -382,6 +382,7 @@ class Telemetry:
         self.started = time.monotonic()
         self.counters: Counter[tuple[str, ...]] = Counter()
         self.latency_ms: Counter[str] = Counter()
+        self.measurements: Counter[tuple[str, str]] = Counter()
         self._lock = threading.Lock()
 
     def record(self, method: str, route: str, status: int, elapsed_ms: float) -> None:
@@ -394,6 +395,11 @@ class Telemetry:
     def increment(self, name: str, label: str = "total") -> None:
         with self._lock:
             self.counters[("domain", name, label)] += 1
+
+    def observe(self, name: str, value: int) -> None:
+        with self._lock:
+            self.measurements[(name, "sum")] += value
+            self.measurements[(name, "count")] += 1
 
     def snapshot(self) -> dict:
         with self._lock:
@@ -408,6 +414,14 @@ class Telemetry:
                     {"name": k[1], "label": k[2], "count": v}
                     for k, v in self.counters.items()
                     if len(k) == 3 and k[0] == "domain"
+                ],
+                "domainMeasurements": [
+                    {
+                        "name": name,
+                        "sum": self.measurements[(name, "sum")],
+                        "count": self.measurements[(name, "count")],
+                    }
+                    for name in sorted({key[0] for key in self.measurements})
                 ],
             }
 
@@ -432,6 +446,8 @@ class Telemetry:
                     lines.append(
                         f'ambrosia_domain_events_total{{name="{name}",label="{label}"}} {value}'
                     )
+            for (name, statistic), value in sorted(self.measurements.items()):
+                lines.append(f"ambrosia_domain_{name}_{statistic} {value}")
         return "\n".join(lines) + "\n"
 
 
@@ -812,6 +828,10 @@ def operational_audit(limit: int = 100) -> dict:
 
 def record_domain_event(name: str, label: str = "total") -> None:
     telemetry.increment(name, label)
+
+
+def record_domain_measurement(name: str, value: int) -> None:
+    telemetry.observe(name, value)
 
 
 @router.get("/operational/email-readiness")

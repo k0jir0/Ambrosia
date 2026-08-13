@@ -6,6 +6,10 @@ import { Activity, ArrowRight, Beaker, CheckCircle2, Circle, Clock3, Download, R
 import {
   attachResearchObjectReference,
   createAlphaHypothesis,
+  createAgentOperation,
+  cancelAgentOperation,
+  continueAgentOperation,
+  fallbackAgentOperation,
   createPacket,
   createSignal,
   derivePacketConfidence,
@@ -13,6 +17,8 @@ import {
   selectiveIntegratePacket,
   generateReport as generatePacketReport,
   getApiBaseUrl,
+  getAgentOperation,
+  getProviderStatus,
   getMarketSnapshot,
   getMarketTechnicals,
   getPacket,
@@ -29,7 +35,10 @@ import {
   runPacketAgents,
   writebackSignalDecision,
   writebackSignalOutcome,
-  type ResearchObjectReference
+  type AgentOperation,
+  type OllamaModelPolicy,
+  type ResearchObjectReference,
+  TERMINAL_AGENT_OPERATION_STATES
 } from "@/lib/api";
 import {
   getLocalReviews,
@@ -167,12 +176,36 @@ export function Workbench({ initialReviewId }: { initialReviewId?: string } = {}
   const [activePacketData, setActivePacketData] = useState<DecisionPacket | null>(null);
   const [reportArtifact, setReportArtifact] = useState<ReportArtifact | null>(null);
   const [providerMode, setProviderMode] = useState<ProviderMode>("hybrid");
+  const [ollamaModelPolicies, setOllamaModelPolicies] = useState<OllamaModelPolicy[]>([]);
+  const [selectedOllamaDigest, setSelectedOllamaDigest] = useState("");
+  const [agentOperation, setAgentOperation] = useState<AgentOperation | null>(null);
   const [runbookState, setRunbookState] = useState<RunbookRunState>({
     status: "idle",
     currentStepId: null,
     message: "Ready to run the next checkpoint."
   });
   const activeReview = reviews.find((review) => review.id === activeId) ?? reviews[0];
+
+  useEffect(() => {
+    let cancelled = false;
+    getProviderStatus()
+      .then((status) => {
+        if (cancelled) return;
+        setOllamaModelPolicies(status.ollamaModelPolicies);
+        setSelectedOllamaDigest((current) =>
+          status.ollamaModelPolicies.some((policy) => policy.digest === current)
+            ? current
+            : (status.ollamaModelPolicies[0]?.digest ?? "")
+        );
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setOllamaModelPolicies([]);
+          setSelectedOllamaDigest("");
+        }
+      });
+    return () => { cancelled = true; };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -203,6 +236,7 @@ export function Workbench({ initialReviewId }: { initialReviewId?: string } = {}
     let cancelled = false;
     setLiveMarketData(null);
     setActivePacketData(null);
+    setAgentOperation(null);
     setReportArtifact(null);
     const localLink = activeId ? getReviewAlphaLink(activeId) : null;
     setActiveAlphaLink(localLink);
@@ -230,6 +264,45 @@ export function Workbench({ initialReviewId }: { initialReviewId?: string } = {}
       cancelled = true;
     };
   }, [activeId]);
+
+  useEffect(() => {
+    const packetId = packetIdsByReviewId[activeId] ?? (activeId ? `pkt-${activeId}` : "");
+    if (!packetId) return;
+    const savedId = window.localStorage.getItem(`ambrosia:ollama-operation:${packetId}`);
+    if (!savedId) return;
+    getAgentOperation(savedId).then(setAgentOperation).catch(() => {
+      window.localStorage.removeItem(`ambrosia:ollama-operation:${packetId}`);
+    });
+  }, [activeId, packetIdsByReviewId]);
+
+  useEffect(() => {
+    if (!agentOperation || TERMINAL_AGENT_OPERATION_STATES.has(agentOperation.state)) return;
+    let cancelled = false;
+    let delay = 1000;
+    let timer: number;
+    const poll = async () => {
+      try {
+        const current = await getAgentOperation(agentOperation.id);
+        if (cancelled) return;
+        setAgentOperation(current);
+        if (current.state === "completed") {
+          const packet = await getPacket(current.packetId);
+          if (!cancelled) syncReviewFromPacket(activeId, packet);
+          return;
+        }
+        if (!TERMINAL_AGENT_OPERATION_STATES.has(current.state)) {
+          delay = Math.min(10000, Math.round(delay * 1.5));
+          timer = window.setTimeout(poll, delay);
+        }
+      } catch {
+        if (!cancelled) timer = window.setTimeout(poll, Math.min(10000, delay * 2));
+      }
+    };
+    timer = window.setTimeout(poll, delay);
+    return () => { cancelled = true; window.clearTimeout(timer); };
+  // Poll identity/state are the intentional restart boundaries; syncReviewFromPacket is render-local.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [agentOperation?.id, agentOperation?.state, activeId]);
 
   useEffect(() => {
     if (!initialReviewId) return;
@@ -733,14 +806,51 @@ export function Workbench({ initialReviewId }: { initialReviewId?: string } = {}
 
     try {
       const { reviewId, packetId } = await ensurePacketForReview(activeReview);
+      if (providerMode === "ollama") {
+        if (agentOperation && !TERMINAL_AGENT_OPERATION_STATES.has(agentOperation.state)) return "ok";
+        if (!selectedOllamaDigest) throw new Error("No approved active Ollama model policy is available");
+        const operation = await createAgentOperation(
+          packetId,
+          `${reviewId}:${packetId}:ollama:${selectedOllamaDigest}`,
+          selectedOllamaDigest
+        );
+        setAgentOperation(operation);
+        window.localStorage.setItem(`ambrosia:ollama-operation:${packetId}`, operation.id);
+        appendAuditEvent("agents.run.queued", `Ollama review queued as ${operation.id}.`);
+        return "ok";
+      }
       const packet = await runPacketAgents(packetId, providerMode);
       syncReviewFromPacket(reviewId, packet);
       appendAuditEvent("agents.run", `Agent swarm completed for ${activeReview.ticker} using ${packet.providerInfo?.name ?? "unknown provider"}.`);
       return "ok";
-    } catch {
-      appendAuditEvent("agents.run.fallback", "Agent swarm endpoint unavailable; keeping local workflow state.");
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : "Agent swarm endpoint unavailable";
+      appendAuditEvent("agents.run.unavailable", `${detail}; keeping local workflow state without silent fallback.`);
       return "fallback";
     }
+  }
+
+  async function cancelOllamaOperation() {
+    if (agentOperation) setAgentOperation(await cancelAgentOperation(agentOperation.id));
+  }
+
+  async function fallbackOllamaOperation() {
+    if (!agentOperation) return;
+    const fallback = await fallbackAgentOperation(agentOperation.id);
+    setAgentOperation(fallback);
+    const packet = await getPacket(fallback.packetId);
+    syncReviewFromPacket(activeId, packet);
+  }
+
+  async function continueOllamaOperation() {
+    if (agentOperation) setAgentOperation(await continueAgentOperation(agentOperation.id));
+  }
+
+  async function retryOllamaOperation() {
+    if (!agentOperation) return;
+    const operation = await createAgentOperation(agentOperation.packetId);
+    setAgentOperation(operation);
+    window.localStorage.setItem(`ambrosia:ollama-operation:${operation.packetId}`, operation.id);
   }
 
   async function deriveConfidenceFromMarket(): Promise<ActionResult> {
@@ -875,6 +985,10 @@ export function Workbench({ initialReviewId }: { initialReviewId?: string } = {}
   async function createRunbookReportArtifact(): Promise<ReportGenerationResult> {
     if (!activeReview) {
       appendAuditEvent("report.generate.skipped", "Report generation skipped because no active review is selected.");
+      return { result: "skipped", report: null };
+    }
+    if (providerMode === "ollama" && agentOperation?.state !== "completed") {
+      appendAuditEvent("report.generate.blocked", "Verified report blocked until the Ollama operation commits.");
       return { result: "skipped", report: null };
     }
 
@@ -1185,7 +1299,10 @@ export function Workbench({ initialReviewId }: { initialReviewId?: string } = {}
           activeAction={activeAction}
           governedReportExportEnabled={governedReportExportEnabled}
           providerMode={providerMode}
+          ollamaModelPolicies={ollamaModelPolicies}
+          selectedOllamaDigest={selectedOllamaDigest}
           onProviderModeChange={setProviderMode}
+          onOllamaDigestChange={setSelectedOllamaDigest}
           onRunNext={runNextRunbookStep}
           onRunGuided={runGuidedDemo}
           onExportReport={exportCurrentReport}
@@ -1197,6 +1314,11 @@ export function Workbench({ initialReviewId }: { initialReviewId?: string } = {}
             review={activeReview}
             packet={activePacketData}
             activeAction={activeAction}
+            agentOperation={agentOperation}
+            onCancelOperation={cancelOllamaOperation}
+            onFallbackOperation={fallbackOllamaOperation}
+            onContinueOperation={continueOllamaOperation}
+            onRetryOperation={retryOllamaOperation}
             onRunAgents={() => runAction("Run analysis", runAgentSwarm)}
             onPrepareBacktest={() => runAction("Prepare backtest", prepareBacktest)}
             onDeriveConfidence={() => runAction("Derive confidence", deriveConfidenceFromMarket)}
@@ -1555,7 +1677,10 @@ function RunbookStrip({
   activeAction,
   governedReportExportEnabled,
   providerMode,
+  ollamaModelPolicies,
+  selectedOllamaDigest,
   onProviderModeChange,
+  onOllamaDigestChange,
   onRunNext,
   onRunGuided,
   onExportReport
@@ -1568,7 +1693,10 @@ function RunbookStrip({
   activeAction: string | null;
   governedReportExportEnabled: boolean;
   providerMode: ProviderMode;
+  ollamaModelPolicies: OllamaModelPolicy[];
+  selectedOllamaDigest: string;
   onProviderModeChange: (mode: ProviderMode) => void;
+  onOllamaDigestChange: (digest: string) => void;
   onRunNext: () => void;
   onRunGuided: () => void;
   onExportReport: () => void;
@@ -1611,10 +1739,29 @@ function RunbookStrip({
               ))}
             </select>
           </label>
+          {providerMode === "ollama" ? (
+            <label className="flex items-center gap-2 text-xs font-semibold text-slate-400">
+              Model policy
+              <select
+                aria-label="Ollama model policy"
+                value={selectedOllamaDigest}
+                disabled={Boolean(activeAction) || ollamaModelPolicies.length === 0}
+                onChange={(event) => onOllamaDigestChange(event.target.value)}
+                className="focus-ring max-w-64 rounded-md border border-line bg-fog px-2 py-1 text-xs font-semibold text-slate-200 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {ollamaModelPolicies.length === 0 ? <option value="">No active approved worker model</option> : null}
+                {ollamaModelPolicies.map((policy) => (
+                  <option key={policy.digest} value={policy.digest}>
+                    {policy.name ?? "Ollama"} · {policy.digest.slice(0, 18)}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
           <button
             type="button"
             onClick={onRunNext}
-            disabled={Boolean(activeAction) || !nextStep}
+            disabled={Boolean(activeAction) || !nextStep || (providerMode === "ollama" && nextStep.id === "agents" && !selectedOllamaDigest)}
             className="focus-ring rounded-md bg-teal px-3 py-2 text-xs font-semibold text-fog transition hover:bg-teal/90 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {activeAction === "Run next checkpoint" ? "Running..." : nextStep ? "Run next checkpoint" : "Runbook complete"}
@@ -1920,6 +2067,11 @@ function AnalysisFeed({
   review,
   packet,
   activeAction,
+  agentOperation,
+  onCancelOperation,
+  onFallbackOperation,
+  onContinueOperation,
+  onRetryOperation,
   onRunAgents,
   onPrepareBacktest,
   onDeriveConfidence,
@@ -1928,6 +2080,11 @@ function AnalysisFeed({
   review: TradeReview;
   packet: DecisionPacket | null;
   activeAction: string | null;
+  agentOperation: AgentOperation | null;
+  onCancelOperation: () => void;
+  onFallbackOperation: () => void;
+  onContinueOperation: () => void;
+  onRetryOperation: () => void;
   onRunAgents: () => void;
   onPrepareBacktest: () => void;
   onDeriveConfidence: () => void;
@@ -1947,7 +2104,9 @@ function AnalysisFeed({
             <ActionButton label="Integrate" icon={<ShieldCheck className="h-4 w-4" />} activeAction={activeAction} onClick={onRunSelectiveIntegration} />
           </div>
         </div>
-        <ProviderProvenancePanel packet={packet} />
+        <ProviderProvenancePanel packet={packet} operation={agentOperation}
+          onCancel={onCancelOperation} onFallback={onFallbackOperation}
+          onContinue={onContinueOperation} onRetry={onRetryOperation} />
 
         <div className="mt-4 space-y-3">
           {stages.map((stage) => (
@@ -2209,7 +2368,14 @@ function WorkflowStageCard({ stage, currentStatus, review, packet }: { stage: Wo
   );
 }
 
-function ProviderProvenancePanel({ packet }: { packet: DecisionPacket | null }) {
+function ProviderProvenancePanel({ packet, operation, onCancel, onFallback, onContinue, onRetry }: {
+  packet: DecisionPacket | null;
+  operation: AgentOperation | null;
+  onCancel: () => void;
+  onFallback: () => void;
+  onContinue: () => void;
+  onRetry: () => void;
+}) {
   const provider = packet?.providerInfo;
   const agentOutputs = packet?.agentOutputs ? Object.values(packet.agentOutputs).filter(Boolean) : [];
   const roleCount = agentOutputs.length;
@@ -2243,6 +2409,35 @@ function ProviderProvenancePanel({ packet }: { packet: DecisionPacket | null }) 
           <ProofMetric label="Fallback chain" value={provider.fallbackChain.join(" -> ")} />
           <ProofMetric label="Reason" value={provider.reason} />
           <ProofMetric label="Coordinator" value={packet?.coordinatorVersion ?? "coordinator.v1"} />
+          <ProofMetric label="Requested / actual" value={`${provider.requestedProvider ?? provider.type} / ${provider.actualProvider ?? provider.type}`} />
+          <ProofMetric label="Model digest" value={provider.modelDigest ?? "Not reported"} />
+          <ProofMetric label="Worker" value={provider.workerId ?? "Hosted coordinator"} />
+        </div>
+      ) : null}
+      {operation ? (
+        <div className="mt-3 rounded border border-line bg-white p-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="font-semibold">Ollama execution: {operation.state}</p>
+            <Badge tone={operation.state === "completed" ? "good" : operation.state === "failed" ? "warn" : "info"}>
+              {operation.progress}% · {operation.stage}
+            </Badge>
+          </div>
+          <div className="mt-2 h-2 overflow-hidden rounded bg-fog"><div className="h-full bg-sky-500" style={{ width: `${operation.progress}%` }} /></div>
+          <div className="mt-2 grid gap-2 md:grid-cols-3">
+            <ProofMetric label="Provider requested" value="Ollama" />
+            <ProofMetric label="Worker" value={operation.workerName ?? operation.workerId ?? "Waiting for compatible worker"} />
+            <ProofMetric label="Elapsed" value={`${Math.max(0, Math.floor((Date.now() - Date.parse(operation.createdAt)) / 1000))}s`} />
+            <ProofMetric label="Deadline" value={new Date(operation.deadlineAt).toLocaleString()} />
+            <ProofMetric label="Verification" value={operation.verificationStatus ?? "Pending server admission"} />
+            <ProofMetric label="Model" value={operation.modelName ? `${operation.modelName} · ${(operation.modelDigest ?? "").slice(0, 16)}` : "Pending claim"} />
+          </div>
+          {operation.error ? <p className="mt-2 text-amber-800">{operation.error.code}: {operation.error.message}</p> : null}
+          <div className="mt-3 flex gap-2">
+            {!TERMINAL_AGENT_OPERATION_STATES.has(operation.state) ? <button className="rounded border border-line px-3 py-1" onClick={onCancel}>Cancel</button> : null}
+            {operation.state === "expired" ? <button className="rounded border border-line px-3 py-1" onClick={onContinue}>Continue waiting</button> : null}
+            {["failed", "dead_letter", "expired", "superseded"].includes(operation.state) ? <button className="rounded border border-line px-3 py-1" onClick={onRetry}>Retry Ollama</button> : null}
+            {["failed", "dead_letter", "expired", "superseded"].includes(operation.state) ? <button className="rounded border border-line px-3 py-1" onClick={onFallback}>Run explicit deterministic fallback</button> : null}
+          </div>
         </div>
       ) : null}
       <div className="mt-3 grid gap-2 md:grid-cols-2">

@@ -103,6 +103,9 @@ jobs:
       COST_CENTER: ${{ vars.COST_CENTER }}
       DATA_CLASSIFICATION: ${{ vars.DATA_CLASSIFICATION || 'synthetic' }}
       BUDGET_NAME: ${{ vars.BUDGET_NAME || 'ambrosia-staging-monthly' }}
+      TF_VAR_ollama_review_bridge_organization_ids: ${{ vars.OLLAMA_REVIEW_BRIDGE_ORGANIZATIONS || '[]' }}
+      TF_VAR_ollama_default_model_digest: ${{ vars.OLLAMA_DEFAULT_MODEL_DIGEST }}
+      TF_VAR_ollama_approved_model_digests: ${{ vars.OLLAMA_APPROVED_MODEL_DIGESTS || '[]' }}
       ALB_CERTIFICATE_ARN: ${{ secrets.ALB_CERTIFICATE_ARN }}
       CLOUDFRONT_CERTIFICATE_ARN: ${{ secrets.CLOUDFRONT_CERTIFICATE_ARN }}
     steps:
@@ -135,6 +138,12 @@ jobs:
           test "$API_DESIRED_COUNT" -ge 1
           test "$WEB_DESIRED_COUNT" -ge 1
           test "$CUSTOM_DOMAIN_ENABLED" = "true" -o "$CUSTOM_DOMAIN_ENABLED" = "false"
+          jq -e 'type == "array" and all(.[]; type == "string")' <<< "$TF_VAR_ollama_review_bridge_organization_ids" >/dev/null
+          jq -e 'type == "array" and all(.[]; type == "string")' <<< "$TF_VAR_ollama_approved_model_digests" >/dev/null
+          if [ "$(jq length <<< "$TF_VAR_ollama_review_bridge_organization_ids")" -gt 0 ]; then
+            test -n "$TF_VAR_ollama_default_model_digest"
+            test "$(jq --arg digest "$TF_VAR_ollama_default_model_digest" 'index($digest) != null' <<< "$TF_VAR_ollama_approved_model_digests")" = "true"
+          fi
           test -z "$AUTH_EMAIL_FROM" -a -z "$AUTH_SES_IDENTITY_ARN" -o -n "$AUTH_EMAIL_FROM" -a -n "$AUTH_SES_IDENTITY_ARN"
           if [ -n "$AUTH_EMAIL_FROM" ]; then
             case "$AUTH_SES_IDENTITY_ARN" in
@@ -407,6 +416,9 @@ jobs:
       OWNER: ${{ vars.OWNER }}
       COST_CENTER: ${{ vars.COST_CENTER }}
       DATA_CLASSIFICATION: ${{ vars.DATA_CLASSIFICATION || 'synthetic' }}
+      TF_VAR_ollama_review_bridge_organization_ids: ${{ vars.OLLAMA_REVIEW_BRIDGE_ORGANIZATIONS || '[]' }}
+      TF_VAR_ollama_default_model_digest: ${{ vars.OLLAMA_DEFAULT_MODEL_DIGEST }}
+      TF_VAR_ollama_approved_model_digests: ${{ vars.OLLAMA_APPROVED_MODEL_DIGESTS || '[]' }}
       ALB_CERTIFICATE_ARN: ${{ secrets.ALB_CERTIFICATE_ARN }}
       CLOUDFRONT_CERTIFICATE_ARN: ${{ secrets.CLOUDFRONT_CERTIFICATE_ARN }}
       API_IMAGE: ${{ needs.plan.outputs.api_image }}

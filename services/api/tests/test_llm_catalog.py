@@ -2,11 +2,18 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
+import pytest
+from pydantic import ValidationError
+
 from app.llm_catalog import (
     Catalog,
     HumanReviewCreate,
     LlmJobCreate,
     WorkerResult,
+    WorkerClaim,
+    LeaseUpdate,
+    WorkerFailure,
+    canonical_hash,
 )
 
 
@@ -39,6 +46,41 @@ def _result(*, reference: str = "source-1", abstained: bool = False) -> WorkerRe
             "abstained": abstained,
         },
     )
+
+
+def test_governed_input_artifact_is_loaded_and_hash_verified(monkeypatch) -> None:
+    pack = {
+        "evidence": [{"id": "source-artifact", "title": "Governed filing"}],
+        "tickerIdentity": {"canonical": "AAPL"},
+        "observationCutoff": "2026-08-07T00:00:00+00:00",
+    }
+    monkeypatch.setattr("app.llm_catalog.artifact_store.load_json", lambda _: pack)
+    payload = {
+        "inputArtifactId": "artifact-1",
+        "inputArtifactHash": canonical_hash(pack),
+        "evidence": [],
+    }
+
+    resolved = Catalog.resolved_input(payload)
+    assert resolved["evidence"] == pack["evidence"]
+    assert resolved["tickerIdentity"] == pack["tickerIdentity"]
+
+    payload["inputArtifactHash"] = "0" * 64
+    with pytest.raises(ValueError, match="hash mismatch"):
+        Catalog.resolved_input(payload)
+
+
+def test_worker_result_rejects_excessive_json_depth() -> None:
+    result = _result().model_dump(mode="json")
+    nested: dict = {}
+    cursor = nested
+    for _ in range(40):
+        cursor["child"] = {}
+        cursor = cursor["child"]
+    result["output"]["confidence"] = nested
+
+    with pytest.raises(ValidationError, match="maximum JSON depth"):
+        WorkerResult.model_validate(result)
 
 
 def test_worker_queue_is_tenant_scoped_and_credentials_can_be_revoked(monkeypatch) -> None:
@@ -113,6 +155,71 @@ def test_abstention_and_human_review_are_first_class_catalogue_records(monkeypat
         ),
     )
     assert review and review["disposition"] == "corrected"
-    assert catalog.review_run(
-        "org-b", "reviewer-b", completed["runId"], HumanReviewCreate(disposition="accepted")
-    ) is None
+    assert (
+        catalog.review_run(
+            "org-b", "reviewer-b", completed["runId"], HumanReviewCreate(disposition="accepted")
+        )
+        is None
+    )
+
+
+def test_operation_jobs_require_compatible_model_and_fenced_lease(monkeypatch) -> None:
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    local = Catalog()
+    credential = local.create_worker("org-a", "user-a", "Pinned worker")
+    worker = local.authenticate_worker(credential["token"])
+    queued = local.enqueue(
+        "org-a",
+        _job().model_copy(
+            update={
+                "operationId": "00000000-0000-0000-0000-000000000010",
+                "requestedModelDigest": "sha256:approved",
+            }
+        ),
+    )
+    assert (
+        local.claim(worker, 120, WorkerClaim(models=[{"name": "wrong", "digest": "sha256:wrong"}]))
+        is None
+    )
+    lease = local.claim(
+        worker, 120, WorkerClaim(models=[{"name": "approved", "digest": "sha256:approved"}])
+    )
+    assert lease and lease["generation"] == 1 and lease["leaseId"]
+    stale = _result().model_copy(update={"leaseId": "stale", "generation": lease["generation"]})
+    assert local.complete(worker, queued["id"], stale) is None
+
+
+def test_heartbeats_are_fenced_and_retry_attempts_are_bounded(monkeypatch) -> None:
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    local = Catalog()
+    credential = local.create_worker("org-a", "user-a", "Recovery worker")
+    worker = local.authenticate_worker(credential["token"])
+    queued = local.enqueue("org-a", _job())
+    lease = local.claim(worker, 30, WorkerClaim(models=[]))
+    assert lease
+    assert not local.heartbeat(
+        worker,
+        queued["id"],
+        LeaseUpdate(leaseId=lease["leaseId"], generation=lease["generation"] + 1),
+    )
+    assert local.heartbeat(
+        worker,
+        queued["id"],
+        LeaseUpdate(
+            leaseId=lease["leaseId"], generation=lease["generation"], stage="verifier", progress=60
+        ),
+    )
+    assert local.fail_job(
+        worker,
+        queued["id"],
+        WorkerFailure(
+            leaseId=lease["leaseId"],
+            generation=lease["generation"],
+            code="ollama_unreachable",
+            message="connection refused",
+            retryable=True,
+        ),
+    )
+    assert local.jobs[queued["id"]]["state"] == "retry_wait"
+    second = local.claim(worker, 30, WorkerClaim(models=[]))
+    assert second and second["generation"] == lease["generation"] + 1

@@ -25,7 +25,7 @@ identity, and identity checks. The environment uses synthetic data, generated
 CloudFront addressing, one API task, and one web task in `ca-central-1`; no
 website custom domain is enabled.
 
-Transactional email is qualified but not activated. The SES domain identity
+Transactional email is qualified for activation. The SES domain identity
 `agentresearchcompany.com` is verified in AWS account `111204669733` and
 `ca-central-1`; Easy DKIM RSA 2048 and signing report `SUCCESS`, DMARC monitoring
 is published with `p=none`, and a mailbox-simulator send succeeded through the
@@ -34,14 +34,14 @@ FROM domain so the existing Namecheap email-forwarding MX and SPF records
 remain intact. Account-level suppression covers bounces and complaints, and
 the enabled event destination publishes bounce, complaint, and reject events.
 
-AWS production access remains disabled while Support reviews case
-`178621567500544`. The SES API review status remains `DENIED`, while the console
-shows `More information needed` and contains the verified-domain response sent
-on August 8, 2026. `AUTH_EMAIL_FROM` and `AUTH_SES_IDENTITY_ARN` remain unset in
-the staging environment, so verification and password recovery continue to
-fail closed rather than claim deliverability. Do not set those variables until
-`ProductionAccessEnabled=true`; keep `CUSTOM_DOMAIN_ENABLED=false` because DNS
-remains authoritative in Namecheap rather than Route53.
+AWS Support granted production access in case `178621567500544` on August 13,
+2026. SES reports sending enabled, healthy enforcement, a 50,000-message daily
+quota, and a 14-message-per-second rate. The protected staging deployment
+inputs now select `no-reply@agentresearchcompany.com` with the verified domain
+identity; the currently running task remains in console mode until the next
+protected staging release. The separate `ryanvwatkins@gmail.com` identity
+remains failed and is not a sender. Keep `CUSTOM_DOMAIN_ENABLED=false` because
+DNS remains authoritative in Namecheap rather than Route53.
 
 This proves that the current staging web and API are deployed and reachable. It
 also proves SES domain ownership, DKIM qualification, and sandbox submission.

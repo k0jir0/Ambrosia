@@ -7,6 +7,7 @@ import {
   attachResearchObjectReference,
   createAlphaHypothesis,
   createAgentOperation,
+  admitAgentOperationProposal,
   cancelAgentOperation,
   continueAgentOperation,
   fallbackAgentOperation,
@@ -16,8 +17,11 @@ import {
   evaluatePacketRisk,
   selectiveIntegratePacket,
   generateReport as generatePacketReport,
+  generateReportDiff,
   getApiBaseUrl,
   getAgentOperation,
+  getAgentOperationProposal,
+  getDeploymentCapabilities,
   getProviderStatus,
   getMarketSnapshot,
   getMarketTechnicals,
@@ -32,11 +36,16 @@ import {
   recordPacketOutcome,
   recordProductEvent,
   refreshPacketMetrics,
+  rollbackAgentOperationProposal,
   runPacketAgents,
   writebackSignalDecision,
   writebackSignalOutcome,
   type AgentOperation,
+  ApiRequestError,
+  type AdmissionRequest,
   type OllamaModelPolicy,
+  type OllamaWorkerReadiness,
+  type PacketMutationProposal,
   type ResearchObjectReference,
   TERMINAL_AGENT_OPERATION_STATES
 } from "@/lib/api";
@@ -62,6 +71,7 @@ import type {
   MarketSnapshot,
   ProviderMode,
   ReportArtifact,
+  ReportDiff,
   ReviewStatus,
   SentimentData,
   SourcePointer,
@@ -70,7 +80,7 @@ import type {
 } from "@/lib/types";
 import { Badge, Panel, cn } from "./ui";
 
-type ActionResult = "ok" | "fallback" | "skipped";
+type ActionResult = "ok" | "queued" | "blocked" | "fallback" | "skipped";
 type ReportGenerationResult = { result: ActionResult; report: ReportArtifact | null };
 type RunbookStepId = "intake" | "market" | "agents" | "risk" | "confidence" | "decision" | "outcome" | "report";
 type RunbookStatus = "idle" | "running" | "manual_required" | "complete" | "failed";
@@ -159,6 +169,15 @@ const signalDecisionActionOptions: Array<{ action: SignalDecisionAction; label: 
   { action: "RETIRE", label: "Retire", summary: "Remove a decayed or failed signal from active use." }
 ];
 
+function actionableApiError(error: unknown): string {
+  if (error instanceof ApiRequestError) {
+    const request = error.requestId ? ` Request ${error.requestId}.` : "";
+    const retry = error.retryable ? " Retry is safe." : " Retry requires resolving this condition.";
+    return `${error.code}: ${error.message}.${request}${retry}`;
+  }
+  return error instanceof Error ? error.message : "Unknown request failure";
+}
+
 export function Workbench({ initialReviewId }: { initialReviewId?: string } = {}) {
   const governedReportExportEnabled = isFeatureEnabled("review-export");
   const [reviews, setReviews] = useState<TradeReview[]>(() => mergeReviews(getLocalReviews(), sampleReviews));
@@ -175,10 +194,13 @@ export function Workbench({ initialReviewId }: { initialReviewId?: string } = {}
   const [liveMarketData, setLiveMarketData] = useState<LiveMarketData | null>(null);
   const [activePacketData, setActivePacketData] = useState<DecisionPacket | null>(null);
   const [reportArtifact, setReportArtifact] = useState<ReportArtifact | null>(null);
+  const [reportDiff, setReportDiff] = useState<ReportDiff | null>(null);
   const [providerMode, setProviderMode] = useState<ProviderMode>("hybrid");
   const [ollamaModelPolicies, setOllamaModelPolicies] = useState<OllamaModelPolicy[]>([]);
   const [selectedOllamaDigest, setSelectedOllamaDigest] = useState("");
+  const [ollamaWorkerReadiness, setOllamaWorkerReadiness] = useState<OllamaWorkerReadiness | null>(null);
   const [agentOperation, setAgentOperation] = useState<AgentOperation | null>(null);
+  const [agentProposal, setAgentProposal] = useState<PacketMutationProposal | null>(null);
   const [runbookState, setRunbookState] = useState<RunbookRunState>({
     status: "idle",
     currentStepId: null,
@@ -188,24 +210,40 @@ export function Workbench({ initialReviewId }: { initialReviewId?: string } = {}
 
   useEffect(() => {
     let cancelled = false;
-    getProviderStatus()
-      .then((status) => {
+    Promise.all([getProviderStatus(), getDeploymentCapabilities()])
+      .then(([status]) => {
         if (cancelled) return;
         setOllamaModelPolicies(status.ollamaModelPolicies);
+        setOllamaWorkerReadiness(status.ollamaWorkerReadiness);
         setSelectedOllamaDigest((current) =>
           status.ollamaModelPolicies.some((policy) => policy.digest === current)
             ? current
-            : (status.ollamaModelPolicies[0]?.digest ?? "")
+            : (status.ollamaModelPolicies.find((policy) => policy.default)?.digest ?? status.ollamaModelPolicies[0]?.digest ?? "")
         );
       })
-      .catch(() => {
+      .catch((error) => {
         if (!cancelled) {
           setOllamaModelPolicies([]);
           setSelectedOllamaDigest("");
+          setOllamaWorkerReadiness(null);
+          setActionFeedback({ tone: "warn", message: actionableApiError(error) });
         }
       });
     return () => { cancelled = true; };
   }, []);
+
+  useEffect(() => {
+    if (!selectedOllamaDigest) return;
+    let cancelled = false;
+    getProviderStatus(selectedOllamaDigest)
+      .then((status) => {
+        if (!cancelled) setOllamaWorkerReadiness(status.ollamaWorkerReadiness);
+      })
+      .catch(() => {
+        if (!cancelled) setOllamaWorkerReadiness(null);
+      });
+    return () => { cancelled = true; };
+  }, [selectedOllamaDigest]);
 
   useEffect(() => {
     let cancelled = false;
@@ -237,7 +275,9 @@ export function Workbench({ initialReviewId }: { initialReviewId?: string } = {}
     setLiveMarketData(null);
     setActivePacketData(null);
     setAgentOperation(null);
+    setAgentProposal(null);
     setReportArtifact(null);
+    setReportDiff(null);
     const localLink = activeId ? getReviewAlphaLink(activeId) : null;
     setActiveAlphaLink(localLink);
     setResearchReferences([]);
@@ -286,8 +326,27 @@ export function Workbench({ initialReviewId }: { initialReviewId?: string } = {}
         if (cancelled) return;
         setAgentOperation(current);
         if (current.state === "completed") {
+          if (current.proposalId) {
+            const proposal = await getAgentOperationProposal(current.id);
+            if (!cancelled) setAgentProposal(proposal);
+          }
           const packet = await getPacket(current.packetId);
           if (!cancelled) syncReviewFromPacket(activeId, packet);
+          if (!cancelled && current.admissionState === "awaiting_human_review") {
+            setRunbookState({
+              status: "manual_required",
+              currentStepId: "agents",
+              message: "Ollama inference completed; inspect and admit or reject the governed proposal.",
+              completedAt: new Date().toISOString()
+            });
+          } else if (!cancelled && current.resultPacketVersion) {
+            setRunbookState({
+              status: "complete",
+              currentStepId: "agents",
+              message: `Ollama proposal admitted to packet v${current.resultPacketVersion}.`,
+              completedAt: new Date().toISOString()
+            });
+          }
           return;
         }
         if (!TERMINAL_AGENT_OPERATION_STATES.has(current.state)) {
@@ -303,6 +362,15 @@ export function Workbench({ initialReviewId }: { initialReviewId?: string } = {}
   // Poll identity/state are the intentional restart boundaries; syncReviewFromPacket is render-local.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agentOperation?.id, agentOperation?.state, activeId]);
+
+  useEffect(() => {
+    if (!agentOperation?.proposalId) return;
+    let cancelled = false;
+    getAgentOperationProposal(agentOperation.id)
+      .then((proposal) => { if (!cancelled) setAgentProposal(proposal); })
+      .catch(() => { if (!cancelled) setAgentProposal(null); });
+    return () => { cancelled = true; };
+  }, [agentOperation?.id, agentOperation?.proposalId, agentOperation?.admissionState]);
 
   useEffect(() => {
     if (!initialReviewId) return;
@@ -807,8 +875,14 @@ export function Workbench({ initialReviewId }: { initialReviewId?: string } = {}
     try {
       const { reviewId, packetId } = await ensurePacketForReview(activeReview);
       if (providerMode === "ollama") {
-        if (agentOperation && !TERMINAL_AGENT_OPERATION_STATES.has(agentOperation.state)) return "ok";
+        if (agentOperation && !TERMINAL_AGENT_OPERATION_STATES.has(agentOperation.state)) return "queued";
         if (!selectedOllamaDigest) throw new Error("No approved active Ollama model policy is available");
+        if (!ollamaWorkerReadiness?.ready) {
+          const reason = ollamaWorkerReadiness?.reasonCode ?? "worker_offline";
+          appendAuditEvent("agents.run.blocked", `Ollama review blocked: ${reason}.`);
+          setActionFeedback({ tone: "warn", message: `Ollama review blocked: ${reason.replaceAll("_", " ")}. Start a compatible preflighted worker and retry.` });
+          return "blocked";
+        }
         const operation = await createAgentOperation(
           packetId,
           `${reviewId}:${packetId}:ollama:${selectedOllamaDigest}`,
@@ -817,14 +891,14 @@ export function Workbench({ initialReviewId }: { initialReviewId?: string } = {}
         setAgentOperation(operation);
         window.localStorage.setItem(`ambrosia:ollama-operation:${packetId}`, operation.id);
         appendAuditEvent("agents.run.queued", `Ollama review queued as ${operation.id}.`);
-        return "ok";
+        return "queued";
       }
       const packet = await runPacketAgents(packetId, providerMode);
       syncReviewFromPacket(reviewId, packet);
       appendAuditEvent("agents.run", `Agent swarm completed for ${activeReview.ticker} using ${packet.providerInfo?.name ?? "unknown provider"}.`);
       return "ok";
     } catch (error) {
-      const detail = error instanceof Error ? error.message : "Agent swarm endpoint unavailable";
+      const detail = actionableApiError(error);
       appendAuditEvent("agents.run.unavailable", `${detail}; keeping local workflow state without silent fallback.`);
       return "fallback";
     }
@@ -851,6 +925,38 @@ export function Workbench({ initialReviewId }: { initialReviewId?: string } = {}
     const operation = await createAgentOperation(agentOperation.packetId);
     setAgentOperation(operation);
     window.localStorage.setItem(`ambrosia:ollama-operation:${operation.packetId}`, operation.id);
+  }
+
+  async function reviewOllamaProposal(body: AdmissionRequest) {
+    if (!agentOperation) return;
+    const operation = await admitAgentOperationProposal(agentOperation.id, body);
+    setAgentOperation(operation);
+    setAgentProposal(await getAgentOperationProposal(operation.id));
+    if (operation.resultPacketVersion) {
+      const packet = await getPacket(operation.packetId);
+      syncReviewFromPacket(activeId, packet);
+      setRunbookState({
+        status: "complete",
+        currentStepId: "agents",
+        message: `Reviewed proposal committed to packet v${operation.resultPacketVersion}.`,
+        completedAt: new Date().toISOString()
+      });
+    }
+  }
+
+  async function rollbackOllamaProposal(rationale: string) {
+    if (!agentOperation?.resultPacketVersion) return;
+    const operation = await rollbackAgentOperationProposal(
+      agentOperation.id,
+      agentOperation.resultPacketVersion,
+      rationale
+    );
+    setAgentOperation(operation);
+    setAgentProposal(await getAgentOperationProposal(operation.id));
+    const packet = await getPacket(operation.packetId);
+    syncReviewFromPacket(activeId, packet);
+    setReportArtifact(null);
+    setReportDiff(null);
   }
 
   async function deriveConfidenceFromMarket(): Promise<ActionResult> {
@@ -998,6 +1104,13 @@ export function Workbench({ initialReviewId }: { initialReviewId?: string } = {}
       packetForFallback = packet;
       const report = await generatePacketReport(packetId);
       setReportArtifact(report);
+      if (agentOperation?.resultPacketVersion) {
+        try {
+          setReportDiff(await generateReportDiff(packetId));
+        } catch {
+          setReportDiff(null);
+        }
+      }
       try {
         const refreshedPacket = await getPacket(packetId);
         syncReviewFromPacket(reviewId, refreshedPacket);
@@ -1066,13 +1179,24 @@ export function Workbench({ initialReviewId }: { initialReviewId?: string } = {}
         message: `${step.label} completed with evidence available.`,
         completedAt
       });
+    } else if (result === "queued") {
+      setRunbookState({
+        status: "running",
+        currentStepId: step.id,
+        message: `${step.label} queued; waiting for inference and admission evidence.`,
+        startedAt: new Date().toISOString()
+      });
     } else {
       setRunbookState({
         status: "failed",
         currentStepId: step.id,
         message: `${step.label} did not produce completion evidence.`,
         completedAt,
-        error: result === "fallback" ? "API path or provider fell back before checkpoint evidence was created." : "Required context was missing."
+        error: result === "blocked"
+          ? "No active preflighted Ollama worker is compatible with the selected model policy."
+          : result === "fallback"
+            ? "API path or provider fell back before checkpoint evidence was created."
+            : "Required context was missing."
       });
     }
     return result;
@@ -1097,6 +1221,8 @@ export function Workbench({ initialReviewId }: { initialReviewId?: string } = {}
       const result = await executeRunbookStep(nextStep);
       if (result === "ok") {
         setActionFeedback({ tone: "good", message: `${nextStep.label} completed. Open its evidence drawer for endpoint, artifact, and audit proof.` });
+      } else if (result === "queued") {
+        setActionFeedback({ tone: "neutral", message: `${nextStep.label} is queued. This checkpoint will complete only after proposal admission.` });
       } else if (result === "manual_required") {
         setActionFeedback({ tone: "warn", message: nextStep.manualGate ?? `${nextStep.label} requires human action.` });
       } else {
@@ -1108,11 +1234,11 @@ export function Workbench({ initialReviewId }: { initialReviewId?: string } = {}
         currentStepId: nextStep.id,
         message: `${nextStep.label} failed.`,
         completedAt: new Date().toISOString(),
-        error: error instanceof Error ? error.message : "unknown error"
+        error: actionableApiError(error)
       });
       setActionFeedback({
         tone: "warn",
-        message: `${nextStep.label} failed: ${error instanceof Error ? error.message : "unknown error"}`
+        message: `${nextStep.label} failed: ${actionableApiError(error)}`
       });
     } finally {
       setActiveAction(null);
@@ -1160,11 +1286,11 @@ export function Workbench({ initialReviewId }: { initialReviewId?: string } = {}
         currentStepId: null,
         message: "Guided demo failed.",
         completedAt: new Date().toISOString(),
-        error: error instanceof Error ? error.message : "unknown error"
+        error: actionableApiError(error)
       });
       setActionFeedback({
         tone: "warn",
-        message: `Guided demo failed: ${error instanceof Error ? error.message : "unknown error"}`
+        message: `Guided demo failed: ${actionableApiError(error)}`
       });
     } finally {
       setActiveAction(null);
@@ -1220,9 +1346,9 @@ export function Workbench({ initialReviewId }: { initialReviewId?: string } = {}
         currentStepId: "report",
         message: "Report export failed.",
         completedAt: new Date().toISOString(),
-        error: error instanceof Error ? error.message : "unknown error"
+        error: actionableApiError(error)
       });
-      setActionFeedback({ tone: "warn", message: `Report export failed: ${error instanceof Error ? error.message : "unknown error"}` });
+      setActionFeedback({ tone: "warn", message: `Report export failed: ${actionableApiError(error)}` });
     } finally {
       setActiveAction(null);
     }
@@ -1295,11 +1421,13 @@ export function Workbench({ initialReviewId }: { initialReviewId?: string } = {}
           packet={activePacketData}
           steps={runbookSteps}
           reportArtifact={reportArtifact}
+          reportDiff={reportDiff}
           runbookState={runbookState}
           activeAction={activeAction}
           governedReportExportEnabled={governedReportExportEnabled}
           providerMode={providerMode}
           ollamaModelPolicies={ollamaModelPolicies}
+          ollamaWorkerReadiness={ollamaWorkerReadiness}
           selectedOllamaDigest={selectedOllamaDigest}
           onProviderModeChange={setProviderMode}
           onOllamaDigestChange={setSelectedOllamaDigest}
@@ -1315,6 +1443,9 @@ export function Workbench({ initialReviewId }: { initialReviewId?: string } = {}
             packet={activePacketData}
             activeAction={activeAction}
             agentOperation={agentOperation}
+            agentProposal={agentProposal}
+            onReviewProposal={reviewOllamaProposal}
+            onRollbackProposal={rollbackOllamaProposal}
             onCancelOperation={cancelOllamaOperation}
             onFallbackOperation={fallbackOllamaOperation}
             onContinueOperation={continueOllamaOperation}
@@ -1673,11 +1804,13 @@ function RunbookStrip({
   packet,
   steps,
   reportArtifact,
+  reportDiff,
   runbookState,
   activeAction,
   governedReportExportEnabled,
   providerMode,
   ollamaModelPolicies,
+  ollamaWorkerReadiness,
   selectedOllamaDigest,
   onProviderModeChange,
   onOllamaDigestChange,
@@ -1689,11 +1822,13 @@ function RunbookStrip({
   packet: DecisionPacket | null;
   steps: RunbookStep[];
   reportArtifact: ReportArtifact | null;
+  reportDiff: ReportDiff | null;
   runbookState: RunbookRunState;
   activeAction: string | null;
   governedReportExportEnabled: boolean;
   providerMode: ProviderMode;
   ollamaModelPolicies: OllamaModelPolicy[];
+  ollamaWorkerReadiness: OllamaWorkerReadiness | null;
   selectedOllamaDigest: string;
   onProviderModeChange: (mode: ProviderMode) => void;
   onOllamaDigestChange: (digest: string) => void;
@@ -1749,10 +1884,10 @@ function RunbookStrip({
                 onChange={(event) => onOllamaDigestChange(event.target.value)}
                 className="focus-ring max-w-64 rounded-md border border-line bg-fog px-2 py-1 text-xs font-semibold text-slate-200 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                {ollamaModelPolicies.length === 0 ? <option value="">No active approved worker model</option> : null}
+                {ollamaModelPolicies.length === 0 ? <option value="">No configured approved model policy</option> : null}
                 {ollamaModelPolicies.map((policy) => (
                   <option key={policy.digest} value={policy.digest}>
-                    {policy.name ?? "Ollama"} · {policy.digest.slice(0, 18)}
+                    {policy.name ?? "Ollama"} · {policy.workerCompatibility?.ready ? "worker ready" : (policy.workerCompatibility?.reasonCode ?? "worker unavailable").replaceAll("_", " ")} · {policy.digest.slice(0, 18)}
                   </option>
                 ))}
               </select>
@@ -1761,11 +1896,14 @@ function RunbookStrip({
           <button
             type="button"
             onClick={onRunNext}
-            disabled={Boolean(activeAction) || !nextStep || (providerMode === "ollama" && nextStep.id === "agents" && !selectedOllamaDigest)}
+            disabled={Boolean(activeAction) || !nextStep || (providerMode === "ollama" && nextStep.id === "agents" && (!selectedOllamaDigest || !ollamaWorkerReadiness?.ready))}
             className="focus-ring rounded-md bg-teal px-3 py-2 text-xs font-semibold text-fog transition hover:bg-teal/90 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {activeAction === "Run next checkpoint" ? "Running..." : nextStep ? "Run next checkpoint" : "Runbook complete"}
           </button>
+          {providerMode === "ollama" && nextStep?.id === "agents" && !ollamaWorkerReadiness?.ready ? (
+            <span className="text-xs text-amber">Blocked: {(ollamaWorkerReadiness?.reasonCode ?? "worker_offline").replaceAll("_", " ")}{ollamaWorkerReadiness?.lastHeartbeatAgeSeconds != null ? ` · last heartbeat ${ollamaWorkerReadiness.lastHeartbeatAgeSeconds}s ago` : ""}</span>
+          ) : null}
           <button
             type="button"
             onClick={onRunGuided}
@@ -1819,6 +1957,14 @@ function RunbookStrip({
           />
         ))}
       </ol>
+      {reportDiff ? (
+        <div className="mt-3 rounded-md border border-teal/30 bg-teal/5 p-3 text-xs">
+          <p className="font-semibold">Governed report diff · packet v{reportDiff.beforePacketVersion} → v{reportDiff.afterPacketVersion}</p>
+          <p className="mt-1">Changed sections: {reportDiff.changedSections.join(", ") || "none"}</p>
+          <p className="mt-1">Added claims: {reportDiff.addedClaimIds.join(", ") || "none"} · Corrected: {reportDiff.correctedClaimIds.join(", ") || "none"} · Rejected: {reportDiff.rejectedClaimIds.join(", ") || "none"}</p>
+          <p className="mt-1 text-slate-500">Citations Δ {reportDiff.citationDelta} · confidence Δ {reportDiff.confidenceDelta} · {reportDiff.storageStatus ?? "unknown storage"}</p>
+        </div>
+      ) : null}
     </Panel>
   );
 }
@@ -2068,6 +2214,9 @@ function AnalysisFeed({
   packet,
   activeAction,
   agentOperation,
+  agentProposal,
+  onReviewProposal,
+  onRollbackProposal,
   onCancelOperation,
   onFallbackOperation,
   onContinueOperation,
@@ -2081,6 +2230,9 @@ function AnalysisFeed({
   packet: DecisionPacket | null;
   activeAction: string | null;
   agentOperation: AgentOperation | null;
+  agentProposal: PacketMutationProposal | null;
+  onReviewProposal: (body: AdmissionRequest) => Promise<void>;
+  onRollbackProposal: (rationale: string) => Promise<void>;
   onCancelOperation: () => void;
   onFallbackOperation: () => void;
   onContinueOperation: () => void;
@@ -2104,7 +2256,9 @@ function AnalysisFeed({
             <ActionButton label="Integrate" icon={<ShieldCheck className="h-4 w-4" />} activeAction={activeAction} onClick={onRunSelectiveIntegration} />
           </div>
         </div>
-        <ProviderProvenancePanel packet={packet} operation={agentOperation}
+        <ProviderProvenancePanel packet={packet} operation={agentOperation} proposal={agentProposal}
+          onReviewProposal={onReviewProposal}
+          onRollbackProposal={onRollbackProposal}
           onCancel={onCancelOperation} onFallback={onFallbackOperation}
           onContinue={onContinueOperation} onRetry={onRetryOperation} />
 
@@ -2368,9 +2522,124 @@ function WorkflowStageCard({ stage, currentStatus, review, packet }: { stage: Wo
   );
 }
 
-function ProviderProvenancePanel({ packet, operation, onCancel, onFallback, onContinue, onRetry }: {
+function ProposalReview({ proposal, onSubmit, onRollback }: {
+  proposal: PacketMutationProposal;
+  onSubmit: (body: AdmissionRequest) => Promise<void>;
+  onRollback: (rationale: string) => Promise<void>;
+}) {
+  const claims = proposal.originalOutput.materialClaims ?? [];
+  const evidenceById = new Map(
+    proposal.evidenceSnapshot.map((item) => [String(item.evidenceId ?? item.id ?? ""), item])
+  );
+  const [decisions, setDecisions] = useState<Record<string, "accept_as_proposed" | "accept_with_human_correction" | "reject">>(
+    () => Object.fromEntries(claims.map((claim) => [claim.claimId, "reject"]))
+  );
+  const [corrections, setCorrections] = useState<Record<string, string>>({});
+  const [rationale, setRationale] = useState("Reviewed against the immutable evidence snapshot.");
+  const [submitting, setSubmitting] = useState(false);
+
+  async function submit(disposition: "accepted" | "corrected" | "rejected") {
+    setSubmitting(true);
+    try {
+      await onSubmit({
+        proposalId: proposal.id,
+        expectedPacketVersion: proposal.basePacketVersion,
+        expectedProposalHash: proposal.proposedPatchHash,
+        disposition,
+        claimDecisions: claims.map((claim) => ({
+          claimId: claim.claimId,
+          decision: disposition === "rejected" ? "reject" : decisions[claim.claimId],
+          correctedText: decisions[claim.claimId] === "accept_with_human_correction" ? (corrections[claim.claimId] ?? claim.text) : undefined,
+          supportingEvidenceIds: claim.supportingEvidenceIds,
+          falsifier: claim.falsifier
+        })),
+        rationale
+      });
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <details className="mt-3 rounded border border-amber/30 bg-amber/5 p-3" open={proposal.admissionState === "awaiting_human_review"}>
+      <summary className="cursor-pointer font-semibold">Inspect immutable proposal · {proposal.admissionState}</summary>
+      <div className="mt-3 space-y-3">
+        <div className="grid gap-2 md:grid-cols-3">
+          <ProofMetric label="Proposal hash" value={proposal.proposedPatchHash.slice(0, 20)} />
+          <ProofMetric label="Evidence hash" value={proposal.evidencePackHash.slice(0, 20)} />
+          <ProofMetric label="Model" value={`${proposal.modelName} · ${proposal.modelDigest.slice(0, 16)}`} />
+        </div>
+        {claims.map((claim) => (
+          <div key={claim.claimId} className="rounded border border-line bg-white p-3">
+            <p className="font-semibold">{claim.claimId}</p>
+            <p className="mt-1 text-slate-700">{claim.text}</p>
+            <p className="mt-1 text-slate-500">Evidence: {claim.supportingEvidenceIds?.join(", ") || "none"}</p>
+            <div className="mt-2 space-y-2">
+              {(claim.supportingEvidenceIds ?? []).map((evidenceId) => {
+                const evidence = evidenceById.get(evidenceId);
+                return (
+                  <div key={evidenceId} className="rounded border border-line bg-fog/50 p-2">
+                    <p className="font-semibold">{evidenceId} · {String(evidence?.dataMode ?? "unknown mode")}</p>
+                    <p>Instrument: {String(evidence?.canonicalTicker ?? evidence?.subjectInstrumentId ?? "unknown")} · observed {String(evidence?.observedAt ?? "unknown")}</p>
+                    <p>Trust: {String(evidence?.trustBoundary ?? "unknown")} · permission {String(evidence?.permission ?? "unknown")}</p>
+                    <pre className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap text-[10px]">{JSON.stringify(evidence?.content ?? {}, null, 2)}</pre>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="mt-2 text-slate-600">
+              Findings: {proposal.deterministicFindings.filter((finding) => String(finding.claimId) === claim.claimId).map((finding) => `${String(finding.status)} (${String(finding.verifier ?? "deterministic")})`).join(", ") || "none"}
+            </div>
+            <p className="mt-1 text-slate-500">Report impact: {proposal.reviewImpact.filter((impact) => impact.claimId === claim.claimId).map((impact) => impact.reportSection).join(", ") || "none"}</p>
+            <select
+              className="mt-2 rounded border border-line px-2 py-1"
+              value={decisions[claim.claimId]}
+              onChange={(event) => setDecisions((current) => ({ ...current, [claim.claimId]: event.target.value as "accept_as_proposed" | "accept_with_human_correction" | "reject" }))}
+            >
+              <option value="accept_as_proposed">Accept as proposed</option>
+              <option value="accept_with_human_correction">Correct with cited evidence and accept</option>
+              <option value="reject">Reject</option>
+            </select>
+            {decisions[claim.claimId] === "accept_with_human_correction" ? (
+              <textarea
+                className="mt-2 w-full rounded border border-line p-2"
+                value={corrections[claim.claimId] ?? claim.text}
+                onChange={(event) => setCorrections((current) => ({ ...current, [claim.claimId]: event.target.value }))}
+                aria-label={`Correction for ${claim.claimId}`}
+              />
+            ) : null}
+          </div>
+        ))}
+        <textarea className="w-full rounded border border-line p-2" value={rationale} onChange={(event) => setRationale(event.target.value)} aria-label="Review rationale" />
+        {proposal.admissionState === "awaiting_human_review" || proposal.admissionState === "proposed" ? (
+          <div className="flex flex-wrap gap-2">
+            <button disabled={submitting} className="rounded border border-teal px-3 py-1" onClick={() => submit(Object.values(decisions).includes("accept_with_human_correction") ? "corrected" : "accepted")}>Validate and admit selected claims</button>
+            <button disabled={submitting} className="rounded border border-line px-3 py-1" onClick={() => submit("rejected")}>Reject proposal</button>
+          </div>
+        ) : null}
+        {["auto_admitted", "human_admitted", "corrected_and_admitted"].includes(proposal.admissionState) ? (
+          <button disabled={submitting} className="rounded border border-amber px-3 py-1" onClick={() => onRollback(rationale)}>Create compensating rollback version</button>
+        ) : null}
+        <p className="text-slate-500">Human admission is analytical approval, not trading authorization.</p>
+        {proposal.proposalEvents.length ? (
+          <details className="rounded border border-line p-2">
+            <summary className="cursor-pointer font-semibold">Proposal event lineage</summary>
+            {proposal.proposalEvents.map((event) => (
+              <p key={String(event.eventHash)} className="mt-1 text-slate-500">{String(event.createdAt)} · {String(event.eventType)} · {String(event.actor)}</p>
+            ))}
+          </details>
+        ) : null}
+      </div>
+    </details>
+  );
+}
+
+function ProviderProvenancePanel({ packet, operation, proposal, onReviewProposal, onRollbackProposal, onCancel, onFallback, onContinue, onRetry }: {
   packet: DecisionPacket | null;
   operation: AgentOperation | null;
+  proposal: PacketMutationProposal | null;
+  onReviewProposal: (body: AdmissionRequest) => Promise<void>;
+  onRollbackProposal: (rationale: string) => Promise<void>;
   onCancel: () => void;
   onFallback: () => void;
   onContinue: () => void;
@@ -2429,6 +2698,8 @@ function ProviderProvenancePanel({ packet, operation, onCancel, onFallback, onCo
             <ProofMetric label="Elapsed" value={`${Math.max(0, Math.floor((Date.now() - Date.parse(operation.createdAt)) / 1000))}s`} />
             <ProofMetric label="Deadline" value={new Date(operation.deadlineAt).toLocaleString()} />
             <ProofMetric label="Verification" value={operation.verificationStatus ?? "Pending server admission"} />
+            <ProofMetric label="Admission" value={operation.admissionState ?? "Not available"} />
+            <ProofMetric label="Result packet" value={operation.resultPacketVersion ? `v${operation.resultPacketVersion}` : "No packet mutation"} />
             <ProofMetric label="Model" value={operation.modelName ? `${operation.modelName} · ${(operation.modelDigest ?? "").slice(0, 16)}` : "Pending claim"} />
           </div>
           {operation.error ? <p className="mt-2 text-amber-800">{operation.error.code}: {operation.error.message}</p> : null}
@@ -2438,6 +2709,7 @@ function ProviderProvenancePanel({ packet, operation, onCancel, onFallback, onCo
             {["failed", "dead_letter", "expired", "superseded"].includes(operation.state) ? <button className="rounded border border-line px-3 py-1" onClick={onRetry}>Retry Ollama</button> : null}
             {["failed", "dead_letter", "expired", "superseded"].includes(operation.state) ? <button className="rounded border border-line px-3 py-1" onClick={onFallback}>Run explicit deterministic fallback</button> : null}
           </div>
+          {proposal ? <ProposalReview proposal={proposal} onSubmit={onReviewProposal} onRollback={onRollbackProposal} /> : null}
         </div>
       ) : null}
       <div className="mt-3 grid gap-2 md:grid-cols-2">
@@ -2626,7 +2898,7 @@ function buildLocalReportArtifact(review: TradeReview, packet: DecisionPacket | 
       },
       {
         title: "Unverified Local Continuity Report",
-        content: "The validated report API was unavailable. This browser artifact is not a verified ticker-intelligence report and its agent prose has not passed claim-level verification.", evidenceMode:"unavailable", verificationStatus:"unverified"
+        content: "Explicit development continuity mode produced this browser-only artifact. It is not a governed ticker-intelligence report and its agent prose has not passed server claim-level verification.", evidenceMode:"unavailable", verificationStatus:"unverified"
       },
       {
         title: "Investment Trading Decision Evidence",
@@ -2647,10 +2919,10 @@ function buildLocalReportArtifact(review: TradeReview, packet: DecisionPacket | 
       }
     ],
     dataMode: "demo",
-    provenanceLabel: "Client-side fallback export generated from current Ambrosia review state because the report API was unavailable.",
+    provenanceLabel: "Client-side development continuity artifact generated without governed server report evidence.",
     marketDataSource: packet?.marketSnapshot?.dataSource ?? null,
     marketDataFreshnessSeconds: null
-    ,schemaVersion:"ticker-intelligence-report.v1",verifiedClaimCoverage:0,unresolvedMaterialClaimCount:0,reportValidationStatus:"legacy"
+    ,schemaVersion:"continuity-report.v1",verifiedClaimCoverage:0,unresolvedMaterialClaimCount:0,reportValidationStatus:"legacy"
   };
 }
 

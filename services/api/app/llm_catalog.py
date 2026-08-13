@@ -91,6 +91,8 @@ class LlmJobCreate(BaseModel):
     requiredContextLength: int = Field(default=8192, ge=1024, le=1_000_000)
     inputArtifactId: str | None = None
     inputArtifactHash: str | None = Field(default=None, pattern="^[a-f0-9]{64}$")
+    verificationCandidate: dict | None = None
+    verificationBindingHash: str | None = Field(default=None, pattern="^[a-f0-9]{64}$")
     traceparent: str | None = Field(
         default=None, pattern="^00-[a-f0-9]{32}-[a-f0-9]{16}-[0-9a-f]{2}$"
     )
@@ -192,6 +194,9 @@ class DisconfirmationOutput(BaseModel):
     roleConclusion: str | None = None
     confidence: dict = Field(default_factory=dict)
     abstentionReason: str | None = None
+    humanReviewLineage: list[dict] = Field(default_factory=list)
+    humanCorrectedClaims: list[dict] = Field(default_factory=list)
+    humanRejectedClaims: list[dict] = Field(default_factory=list)
 
 
 class WorkerResult(BaseModel):
@@ -393,13 +398,79 @@ class Catalog:
                     return True
         return False
 
-    def active_model_policies(self, organization_id: str) -> list[dict]:
+    def worker_readiness(self, organization_id: str, model_digest: str | None = None) -> dict:
+        """Explain worker compatibility instead of collapsing it to a boolean."""
+        configured = self.configured_model_policies(organization_id)
+        default_digest = os.getenv("OLLAMA_DEFAULT_MODEL_DIGEST", "").strip()
+        if model_digest is None and len(configured) > 1 and not default_digest:
+            return {
+                "ready": False,
+                "reasonCode": "model_policy_ambiguous",
+                "compatibleCount": 0,
+            }
+        if model_digest is None and default_digest:
+            model_digest = default_digest
+        workers = self.list_workers(organization_id)
+        if not workers:
+            return {"ready": False, "reasonCode": "no_enrolled_worker", "compatibleCount": 0}
+        active = [worker for worker in workers if worker.get("status") == "active"]
+        if not active:
+            reason = "worker_revoked" if any(w.get("status") == "revoked" for w in workers) else "worker_offline"
+            return {"ready": False, "reasonCode": reason, "compatibleCount": 0}
+        cutoff = now() - timedelta(minutes=2)
+        fresh = []
+        newest_seen = None
+        for worker in active:
+            seen = worker.get("last_seen_at") or worker.get("lastSeenAt")
+            if isinstance(seen, str):
+                seen = datetime.fromisoformat(seen.replace("Z", "+00:00"))
+            if seen and (newest_seen is None or seen > newest_seen):
+                newest_seen = seen
+            if not self.durable or (seen and seen > cutoff):
+                fresh.append(worker)
+        if not fresh:
+            return {
+                "ready": False,
+                "reasonCode": "worker_offline",
+                "compatibleCount": 0,
+                "lastSeenAt": newest_seen.isoformat() if newest_seen else None,
+                "lastHeartbeatAgeSeconds": int((now() - newest_seen).total_seconds())
+                if newest_seen
+                else None,
+            }
+        qualified = []
+        digest_seen = False
+        for worker in fresh:
+            models = (worker.get("capabilities") or {}).get("models", [])
+            for model in models:
+                if model_digest and model.get("digest") != model_digest:
+                    continue
+                digest_seen = True
+                if model.get("readiness") == "preflighted" and model.get("preflightCompletedAt"):
+                    qualified.append((worker, model))
+        if not digest_seen:
+            return {"ready": False, "reasonCode": "digest_mismatch", "compatibleCount": 0}
+        if not qualified:
+            return {"ready": False, "reasonCode": "preflight_incomplete", "compatibleCount": 0}
+        return {
+            "ready": True,
+            "reasonCode": "ready",
+            "compatibleCount": len({str(worker.get("id")) for worker, _ in qualified}),
+            "freshnessSeconds": 120,
+            "lastSeenAt": newest_seen.isoformat() if newest_seen else None,
+            "lastHeartbeatAgeSeconds": int((now() - newest_seen).total_seconds())
+            if newest_seen
+            else 0,
+        }
+
+    def _advertised_models(self, organization_id: str, *, fresh_only: bool) -> list[dict]:
         if self.durable:
             with self._connect() as connection:
+                freshness = "AND last_seen_at>now()-interval '2 minutes'" if fresh_only else ""
                 rows = connection.execute(
-                    """SELECT capabilities->'models' AS models FROM local_worker_credentials
+                    f"""SELECT capabilities->'models' AS models FROM local_worker_credentials
                     WHERE organization_id=%s AND status='active'
-                    AND last_seen_at>now()-interval '2 minutes'""",
+                    {freshness}""",
                     (organization_id,),
                 ).fetchall()
             models = [model for row in rows for model in (row["models"] or [])]
@@ -408,19 +479,41 @@ class Catalog:
                 model
                 for worker in self.devices.values()
                 if worker["organization_id"] == organization_id and worker["status"] == "active"
+                and (not fresh_only or worker.get("last_seen_at"))
                 for model in worker.get("capabilities", {}).get("models", [])
             ]
-        by_digest = {str(model.get("digest")): model for model in models if model.get("digest")}
+        return models
+
+    def configured_model_policies(self, organization_id: str) -> list[dict]:
+        """Return durable policy eligibility independently of worker freshness."""
+        advertised = self._advertised_models(organization_id, fresh_only=False)
+        metadata = {
+            str(model.get("digest")): model for model in advertised if model.get("digest")
+        }
         approved = {
             item.strip()
             for item in os.getenv("OLLAMA_APPROVED_MODEL_DIGESTS", "").split(",")
             if item.strip()
         }
+        default_digest = os.getenv("OLLAMA_DEFAULT_MODEL_DIGEST", "").strip()
+        if default_digest:
+            approved.add(default_digest)
+        if not approved:
+            approved = set(metadata)
         return [
-            {**model, "approved": True}
-            for digest, model in sorted(by_digest.items())
-            if not approved or digest in approved
+            {
+                **metadata.get(digest, {}),
+                "name": metadata.get(digest, {}).get("name") or "Approved Ollama model",
+                "digest": digest,
+                "approved": True,
+                "default": digest == default_digest,
+            }
+            for digest in sorted(approved)
         ]
+
+    def active_model_policies(self, organization_id: str) -> list[dict]:
+        """Backward-compatible name: configured policies, not liveness-derived policies."""
+        return self.configured_model_policies(organization_id)
 
     def revoke_worker(self, organization_id: str, worker_id: str) -> bool:
         if self.durable:
@@ -545,13 +638,20 @@ class Catalog:
             "traceparent": body.traceparent,
             "inputArtifactId": body.inputArtifactId,
             "inputArtifactHash": body.inputArtifactHash,
+            "verificationCandidate": body.verificationCandidate,
+            "verificationBindingHash": body.verificationBindingHash,
         }
+        task_type = (
+            "correction_verification_v1"
+            if body.verificationCandidate is not None
+            else "adversarial_specialist_v2"
+        )
         row = {
             "id": job_id,
             "organization_id": organization_id,
             "workspace_id": body.workspaceId,
             "packet_id": body.packetId,
-            "task_type": "adversarial_specialist_v2",
+            "task_type": task_type,
             "state": "queued",
             "input_payload": payload,
             "observation_cutoff": cutoff,
@@ -575,13 +675,14 @@ class Catalog:
                       id, organization_id, workspace_id, packet_id, task_type,
                       input_payload, observation_cutoff, operation_id, requested_model,
                       requested_model_digest, required_context_length
-                    ) VALUES (%s, %s, %s, %s, 'adversarial_specialist_v2', %s::jsonb, %s, %s, %s, %s, %s)
+                    ) VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s)
                     """,
                     (
                         job_id,
                         organization_id,
                         body.workspaceId,
                         body.packetId,
+                        task_type,
                         json.dumps(payload),
                         cutoff,
                         body.operationId,
@@ -598,7 +699,7 @@ class Catalog:
         else:
             with self.lock:
                 self.jobs[job_id] = row
-        return {"id": job_id, "state": "queued", "taskType": "adversarial_specialist_v2"}
+        return {"id": job_id, "state": "queued", "taskType": task_type}
 
     @staticmethod
     def _set_worker_tenant(connection, worker: dict) -> None:
@@ -1049,6 +1150,11 @@ class Catalog:
                 for item in input_payload.get("evidence", [])
                 if isinstance(item, dict)
             }
+            findings = {
+                str(item.get("claimId")): item
+                for item in output.get("verificationFindings", [])
+                if isinstance(item, dict)
+            }
             for claim in output.get("materialClaims", []):
                 support = [str(item) for item in claim.get("supportingEvidenceIds", [])]
                 if claim.get("claimType") == "observation" and (
@@ -1066,6 +1172,21 @@ class Catalog:
                 ):
                     passed = False
                 if claim.get("calculationId") and claim["calculationId"] not in computed:
+                    passed = False
+                finding = findings.get(str(claim.get("claimId")))
+                expected_status = (
+                    "nonfactual_opinion"
+                    if claim.get("claimType") == "opinion"
+                    else "entailed"
+                )
+                if (
+                    not finding
+                    or finding.get("status") != expected_status
+                    or not finding.get("deterministicChecksPassed")
+                    or not set(claim.get("supportingEvidenceIds", [])).issubset(
+                        set(finding.get("evidenceIds", []))
+                    )
+                ):
                     passed = False
         return ("passed" if passed else "needs_human_review", ratio)
 
@@ -1108,12 +1229,12 @@ class Catalog:
                         raise CompletionConflict("conflicting duplicate completion")
                     if job["state"] != "claimed" or job["lease_expires_at"] <= now():
                         return None
-                    if job.get("operation_id") and (
+                    if (job.get("operation_id") or job.get("task_type") == "correction_verification_v1") and (
                         body.leaseId != str(job.get("lease_id"))
                         or body.generation != int(job.get("lease_generation") or 0)
                     ):
                         return None
-                    if job.get("operation_id") and body.modelDigest != job.get(
+                    if job.get("requested_model_digest") and body.modelDigest != job.get(
                         "requested_model_digest"
                     ):
                         raise ValueError("executed model digest does not match the approved digest")
@@ -1204,8 +1325,12 @@ class Catalog:
                     )
                     from .ollama_bridge import bridge
 
-                    completion = bridge.complete_durable(
-                        connection, worker, dict(job), body, verification, run_id
+                    completion = (
+                        bridge.complete_durable(
+                            connection, worker, dict(job), body, verification, run_id
+                        )
+                        if job.get("operation_id")
+                        else {"superseded": False}
                     )
                     connection.execute(
                         """UPDATE llm_jobs SET state = %s, completed_at = now()
@@ -1233,13 +1358,13 @@ class Catalog:
                     raise CompletionConflict("conflicting duplicate completion")
                 if job["state"] != "claimed":
                     return None
-                if job.get("operation_id") and (
+                if (job.get("operation_id") or job.get("task_type") == "correction_verification_v1") and (
                     body.leaseId != job.get("lease_id")
                     or body.generation != job.get("lease_generation")
                     or job.get("lease_expires_at") <= now()
                 ):
                     return None
-                if job.get("operation_id") and body.modelDigest != job.get(
+                if job.get("requested_model_digest") and body.modelDigest != job.get(
                     "requested_model_digest"
                 ):
                     raise ValueError("executed model digest does not match the approved digest")
@@ -1312,6 +1437,74 @@ class Catalog:
                 and row.get("packet_id") == packet_id
                 and row.get("structured_output", {}).get("schemaVersion") == "specialist-output.v2"
             ]
+
+    def job_status(self, organization_id: str, job_id: str) -> dict | None:
+        """Expose bounded completion evidence for one tenant-owned LLM job."""
+        if self.durable:
+            with self._connect(tenant=False) as connection:
+                self._set_worker_tenant(connection, {"organization_id": organization_id})
+                row = connection.execute(
+                    """SELECT j.id,j.state,j.task_type,r.id AS run_id,
+                    r.verification_status FROM llm_jobs j LEFT JOIN llm_runs r ON r.job_id=j.id
+                    WHERE j.id=%s AND j.organization_id=%s""",
+                    (job_id, organization_id),
+                ).fetchone()
+            if not row:
+                return None
+            return {
+                "id": str(row["id"]), "state": row["state"],
+                "taskType": row["task_type"],
+                "runId": str(row["run_id"]) if row.get("run_id") else None,
+                "verificationStatus": row.get("verification_status"),
+            }
+        job = self.jobs.get(job_id)
+        if not job or job["organization_id"] != organization_id:
+            return None
+        run = next((value for value in self.runs.values() if value["job_id"] == job_id), None)
+        return {
+            "id": job_id, "state": job["state"], "taskType": job["task_type"],
+            "runId": run["id"] if run else None,
+            "verificationStatus": run["verification_status"] if run else None,
+        }
+
+    def correction_verification(
+        self, organization_id: str, run_id: str, binding_hash: str
+    ) -> dict | None:
+        """Return a worker result only when its immutable input binds this correction."""
+        if self.durable:
+            with self._connect(tenant=False) as connection:
+                self._set_worker_tenant(connection, {"organization_id": organization_id})
+                row = connection.execute(
+                    """SELECT r.structured_output,r.verification_status,
+                    r.verifier_model_name,r.verifier_model_digest,j.input_payload
+                    FROM llm_runs r JOIN llm_jobs j ON j.id=r.job_id
+                    WHERE r.id=%s AND r.organization_id=%s
+                      AND j.task_type='correction_verification_v1'""",
+                    (run_id, organization_id),
+                ).fetchone()
+            if (
+                not row or row["verification_status"] != "passed"
+                or row["input_payload"].get("verificationBindingHash") != binding_hash
+            ):
+                return None
+            return dict(row)
+        run = self.runs.get(run_id)
+        if not run or run["organization_id"] != organization_id:
+            return None
+        job = self.jobs.get(run["job_id"])
+        if (
+            not job or job["task_type"] != "correction_verification_v1"
+            or job["input_payload"].get("verificationBindingHash") != binding_hash
+            or run["verification_status"] != "passed"
+        ):
+            return None
+        return {
+            "structured_output": run["structured_output"],
+            "verification_status": run["verification_status"],
+            "verifier_model_name": run.get("model_name"),
+            "verifier_model_digest": run.get("model_digest"),
+            "input_payload": job["input_payload"],
+        }
 
     def review_run(
         self, organization_id: str, user_id: str, run_id: str, body: HumanReviewCreate
@@ -1426,6 +1619,15 @@ def rotate_worker(worker_id: str) -> dict:
 def enqueue_job(body: LlmJobCreate) -> dict:
     principal = _principal()
     return catalog.enqueue(principal.organization_id, body)
+
+
+@router.get("/llm/jobs/{job_id}")
+def get_llm_job(job_id: str) -> dict:
+    principal = _principal()
+    result = catalog.job_status(principal.organization_id, job_id)
+    if not result:
+        raise HTTPException(status_code=404, detail="LLM job not found")
+    return result
 
 
 @router.get("/llm/runs")

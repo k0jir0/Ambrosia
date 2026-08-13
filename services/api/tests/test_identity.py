@@ -113,7 +113,11 @@ def test_staging_password_recovery_fails_before_account_lookup_without_ses(
         )
 
     assert response.status_code == 503
-    assert response.json() == {"detail": "Password recovery is temporarily unavailable"}
+    problem = response.json()
+    assert problem["detail"] == "Password recovery is temporarily unavailable"
+    assert problem["status"] == 503
+    assert problem["code"] == "INTERNAL_ERROR"
+    assert problem["requestId"] == response.headers["x-request-id"]
     reset_identity_service()
 
 
@@ -241,7 +245,11 @@ def test_assisted_password_reset_returns_503_when_disabled(monkeypatch) -> None:
         )
 
         assert response.status_code == 503
-        assert response.json() == {"detail": "Assisted password recovery is unavailable"}
+        problem = response.json()
+        assert problem["detail"] == "Assisted password recovery is unavailable"
+        assert problem["status"] == 503
+        assert problem["code"] == "INTERNAL_ERROR"
+        assert problem["requestId"] == response.headers["x-request-id"]
 
     reset_identity_service()
 

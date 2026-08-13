@@ -10,7 +10,7 @@ import time as time_module
 
 from app import coordinator
 from app.main import app
-from app.llm_catalog import catalog as llm_catalog
+from app.llm_catalog import DisconfirmationOutput, catalog as llm_catalog
 from app.ollama_bridge import enabled as ollama_bridge_enabled
 from app.store import ReviewStore
 
@@ -634,11 +634,194 @@ def test_rejected_ollama_output_completes_as_human_review_without_packet_mutatio
     status = client.get(f"/operations/{operation['id']}").json()
     assert status["state"] == "completed"
     assert status["verificationStatus"] == "human_review"
+    assert status["admissionState"] == "awaiting_human_review"
+    proposal_response = client.get(f"/operations/{operation['id']}/proposal")
+    assert proposal_response.status_code == 200
+    proposal = proposal_response.json()
+    assert proposal["admissionState"] == "awaiting_human_review"
+    assert proposal["originalOutput"]["materialClaims"][0]["supportingEvidenceIds"] == [
+        "invented-source"
+    ]
+    assert any(item["evidenceId"] == "src-1" for item in proposal["evidenceSnapshot"])
+    assert proposal["proposalEvents"][0]["eventType"] == "proposal.created"
+    assert proposal["reviewImpact"][0]["reportSection"] == "pmSynthesis"
     assert client.get(f"/packets/{packet_id}").json()["packetVersion"] == 1
     report = client.post(f"/packets/{packet_id}/report")
     assert report.status_code == 200
     assert report.json()["schemaVersion"] == "ticker-intelligence-report.v2"
     assert report.json()["reportValidationStatus"] == "partial"
+    rejected = client.post(
+        f"/operations/{operation['id']}/admission",
+        headers={"Idempotency-Key": "reject-human-review-proposal"},
+        json={
+            "proposalId": proposal["id"],
+            "expectedPacketVersion": 1,
+            "expectedProposalHash": proposal["proposedPatchHash"],
+            "disposition": "rejected",
+            "claimDecisions": [
+                {"claimId": "verified-1", "decision": "reject"}
+            ],
+            "rationale": "The cited evidence is outside the immutable snapshot.",
+            "unsupportedClaimCount": 1,
+            "citationIssueCount": 1,
+            "usefulnessScore": 2,
+        },
+    )
+    assert rejected.status_code == 200, rejected.text
+    assert rejected.json()["admissionState"] == "rejected"
+    rejected_proposal = client.get(f"/operations/{operation['id']}/proposal").json()
+    assert rejected_proposal["claimDecisions"][0]["decision"] == "reject"
+    assert rejected_proposal["proposalEvents"][-1]["eventType"] == "proposal.rejected"
+    assert client.get(f"/packets/{packet_id}").json()["packetVersion"] == 1
+
+
+def test_human_correction_is_revalidated_and_admitted_exactly_once(monkeypatch) -> None:
+    monkeypatch.setenv("OLLAMA_REVIEW_BRIDGE_ENABLED", "true")
+    digest = "sha256:human-correction"
+    packet_id = "packet-human-correction"
+    assert client.post("/packets", json=_build_packet_payload(packet_id)).status_code == 200
+    headers = _enroll_ollama_worker(digest)
+    operation = client.post(
+        f"/packets/{packet_id}/agent-operations",
+        json={"providerMode": "ollama", "requestedModelDigest": digest},
+    ).json()
+    claim = client.post(
+        "/local-worker/claim",
+        headers=headers,
+        json={"leaseSeconds": 120, "models": [_qualified_model("test", digest)]},
+    ).json()["job"]
+    result = _ollama_result(claim)
+    result["modelDigest"] = digest
+    result["output"]["materialClaims"][0]["supportingEvidenceIds"] = ["invented-source"]
+    result["output"]["evidenceReferences"] = ["invented-source"]
+    result["resultHash"] = hashlib.sha256(
+        json.dumps(result["output"], sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    assert client.post(
+        f"/local-worker/jobs/{claim['id']}/result", headers=headers, json=result
+    ).status_code == 200
+    proposal = client.get(f"/operations/{operation['id']}/proposal").json()
+    admission = {
+        "proposalId": proposal["id"],
+        "expectedPacketVersion": 1,
+        "expectedProposalHash": proposal["proposedPatchHash"],
+        "disposition": "corrected",
+        "claimDecisions": [
+            {
+                "claimId": "verified-1",
+                "decision": "accept_with_human_correction",
+                "correctedText": "The supplied evidence supports a bounded relative-strength inference.",
+                "supportingEvidenceIds": ["src-1"],
+                "falsifier": "Subsequent benchmark-relative evidence reverses.",
+            }
+        ],
+        "rationale": "Corrected the citation against the immutable evidence snapshot.",
+    }
+    unverified = client.post(
+        f"/operations/{operation['id']}/admission",
+        headers={"Idempotency-Key": "human-correction-unverified"},
+        json=admission,
+    )
+    assert unverified.status_code == 409
+    assert unverified.json()["code"] == "CORRECTION_REVERIFICATION_REQUIRED"
+    queued = client.post(
+        f"/operations/{operation['id']}/correction-verification", json=admission
+    )
+    assert queued.status_code == 202, queued.text
+    verification_job = client.post(
+        "/local-worker/claim",
+        headers=headers,
+        json={"leaseSeconds": 120, "models": [_qualified_model("test", digest)]},
+    ).json()["job"]
+    assert verification_job["taskType"] == "correction_verification_v1"
+    verification_result = _ollama_result(verification_job)
+    verification_result["modelDigest"] = digest
+    verification_result["verifierModelName"] = "test"
+    verification_result["verifierModelDigest"] = digest
+    verification_result["output"] = verification_job["input"]["verificationCandidate"]
+    verification_result["output"]["verificationFindings"][0].update(
+        status="entailed",
+        evidenceIds=["src-1"],
+        deterministicChecksPassed=True,
+        verifier="ollama-independent-verifier.v2",
+        reasons=[],
+    )
+    canonical_verification_output = DisconfirmationOutput.model_validate(
+        verification_result["output"]
+    ).model_dump(mode="json", exclude_unset=True)
+    verification_result["resultHash"] = hashlib.sha256(
+        json.dumps(
+            canonical_verification_output, sort_keys=True, separators=(",", ":")
+        ).encode()
+    ).hexdigest()
+    completed = client.post(
+        f"/local-worker/jobs/{verification_job['id']}/result",
+        headers=headers,
+        json=verification_result,
+    )
+    assert completed.status_code == 200, completed.text
+    verification_status = client.get(f"/llm/jobs/{verification_job['id']}")
+    assert verification_status.status_code == 200
+    assert verification_status.json()["verificationStatus"] == "passed"
+    admission["correctionVerificationRunId"] = verification_status.json()["runId"]
+    first = client.post(
+        f"/operations/{operation['id']}/admission",
+        headers={"Idempotency-Key": "human-correction-once"},
+        json=admission,
+    )
+    assert first.status_code == 200, first.text
+    assert first.json()["admissionState"] == "corrected_and_admitted"
+    assert first.json()["resultPacketVersion"] == 2
+    replay = client.post(
+        f"/operations/{operation['id']}/admission",
+        headers={"Idempotency-Key": "human-correction-once"},
+        json=admission,
+    )
+    assert replay.status_code == 200
+    assert client.get(f"/packets/{packet_id}").json()["packetVersion"] == 2
+    conflicting = client.post(
+        f"/operations/{operation['id']}/admission",
+        headers={"Idempotency-Key": "human-correction-once"},
+        json={**admission, "rationale": "A different request body must not replay."},
+    )
+    assert conflicting.status_code == 409
+    diff = client.post(f"/packets/{packet_id}/report/diff")
+    assert diff.status_code == 200, diff.text
+    assert diff.json()["beforePacketVersion"] == 1
+    assert diff.json()["afterPacketVersion"] == 2
+    assert diff.json()["provenance"]["admittedClaimsOnly"] is True
+    assert diff.json()["provenance"]["proposalId"] == proposal["id"]
+    reviewed = client.get(f"/operations/{operation['id']}/proposal").json()
+    assert reviewed["reviewerDecisionHash"]
+    assert reviewed["claimDecisions"][0]["decision"] == (
+        "accept_with_human_correction"
+    )
+    assert reviewed["proposalEvents"][-1]["eventType"] == "proposal.admitted"
+
+    rollback = client.post(
+        f"/operations/{operation['id']}/rollback",
+        headers={"Idempotency-Key": "rollback-human-correction"},
+        json={
+            "expectedPacketVersion": 2,
+            "rationale": "Compensate the accepted proposal while preserving history.",
+        },
+    )
+    assert rollback.status_code == 200, rollback.text
+    assert rollback.json()["admissionState"] == "rolled_back"
+    assert rollback.json()["resultPacketVersion"] == 3
+    rolled_back_packet = client.get(f"/packets/{packet_id}").json()
+    assert rolled_back_packet["packetVersion"] == 3
+    assert rolled_back_packet["agentOutputs"] is None
+    rolled_back_proposal = client.get(f"/operations/{operation['id']}/proposal").json()
+    assert rolled_back_proposal["rollbackPacketVersion"] == 3
+    assert rolled_back_proposal["proposalEvents"][-1]["eventType"] == (
+        "proposal.rolled_back"
+    )
+    compensation_diff = client.post(f"/packets/{packet_id}/report/diff")
+    assert compensation_diff.status_code == 200, compensation_diff.text
+    assert compensation_diff.json()["beforePacketVersion"] == 2
+    assert compensation_diff.json()["afterPacketVersion"] == 3
+    assert compensation_diff.json()["provenance"]["proposalId"] == proposal["id"]
 
 
 def test_revoked_worker_cannot_complete_inference(monkeypatch) -> None:
@@ -1172,6 +1355,54 @@ def test_report_generation_produces_artifact_with_provenance() -> None:
 def test_report_generation_404_for_missing_packet() -> None:
     response = client.post("/packets/does-not-exist/report")
     assert response.status_code == 404
+    assert response.headers["content-type"].startswith("application/problem+json")
+    assert response.json()["code"] == "NOT_FOUND"
+    assert response.json()["requestId"] == response.headers["x-request-id"]
+
+
+def test_report_generation_idempotency_replays_one_artifact() -> None:
+    packet_id = "packet-report-idempotent"
+    assert client.post("/packets", json=_build_packet_payload(packet_id)).status_code == 200
+    headers = {"Idempotency-Key": "report-idempotency-replay-1"}
+
+    first = client.post(f"/packets/{packet_id}/report", headers=headers)
+    second = client.post(f"/packets/{packet_id}/report", headers=headers)
+
+    assert first.status_code == second.status_code == 200
+    assert second.json() == first.json()
+    packet = client.get(f"/packets/{packet_id}").json()
+    assert sum(event["eventType"] == "report.generated" for event in packet["audit"]) == 1
+
+
+def test_report_idempotency_key_cannot_be_reused_for_another_packet() -> None:
+    headers = {"Idempotency-Key": "report-idempotency-conflict-1"}
+    for packet_id in ("packet-report-key-a", "packet-report-key-b"):
+        assert client.post("/packets", json=_build_packet_payload(packet_id)).status_code == 200
+    assert client.post("/packets/packet-report-key-a/report", headers=headers).status_code == 200
+    conflict = client.post("/packets/packet-report-key-b/report", headers=headers)
+    assert conflict.status_code == 409
+    assert conflict.json()["code"] == "IDEMPOTENCY_KEY_REUSED"
+
+
+def test_protected_report_generation_requires_authentication_before_contract(monkeypatch) -> None:
+    monkeypatch.setenv("ENVIRONMENT", "staging")
+    response = client.post("/packets/any/report")
+    assert response.status_code == 401
+    assert response.json()["code"] == "AUTHENTICATION_REQUIRED"
+
+
+def test_deployment_version_and_capabilities_attest_report_policy(monkeypatch) -> None:
+    monkeypatch.setenv("AMBROSIA_BUILD_SHA", "a" * 40)
+    monkeypatch.setenv("REPORT_EXPORT_ENABLED", "true")
+    version = client.get("/version")
+    assert version.status_code == 200
+    assert version.json()["buildSha"] == "a" * 40
+    assert version.json()["dbSchemaVersion"] == "v0015"
+    capabilities = client.get("/capabilities")
+    assert capabilities.status_code == 200
+    assert capabilities.json()["schemaVersion"] == "deployment-capabilities.v1"
+    assert capabilities.json()["reportExport"]["enabled"] is True
+    assert capabilities.json()["apiBasePath"] == "/api"
 
 
 def test_market_provider_status_endpoint() -> None:
@@ -1201,7 +1432,7 @@ def test_health_detailed_endpoint() -> None:
     assert "store" in health["checks"]
     assert health["checks"]["persistence"]["mode"] in {"memory", "postgres"}
     assert health["checks"]["persistence"]["databaseRequired"] is False
-    assert health["checks"]["persistence"]["dbSchemaVersion"] == "v0012"
+    assert health["checks"]["persistence"]["dbSchemaVersion"] == "v0015"
     assert "marketData" in health["checks"]
     assert "llmProviders" in health["checks"]
     assert "slo" in health

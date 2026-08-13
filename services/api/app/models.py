@@ -275,6 +275,8 @@ class SpecialistAgentOutput(BaseModel):
     materialClaims: list["MaterialClaim"] = Field(default_factory=list)
     verificationFindings: list["VerificationFinding"] = Field(default_factory=list)
     rejectedClaims: list["MaterialClaim"] = Field(default_factory=list)
+    humanCorrectedClaims: list["HumanCorrectedClaim"] = Field(default_factory=list)
+    humanRejectedClaims: list["HumanRejectedClaim"] = Field(default_factory=list)
     calculationArtifacts: list["CalculationArtifact"] = Field(default_factory=list)
     missingEvidence: list[str] = Field(default_factory=list)
     falsifiableConditions: list[str] = Field(default_factory=list)
@@ -345,6 +347,27 @@ class MaterialClaim(BaseModel):
     admissionStatus: Literal["proposed", "admitted", "repaired", "rejected", "human_review"] = (
         "proposed"
     )
+
+
+class HumanCorrectedClaim(BaseModel):
+    claimId: str
+    proposalId: str
+    reviewerId: str
+    originalClaimHash: str = Field(pattern="^[a-f0-9]{64}$")
+    correctedClaimHash: str = Field(pattern="^[a-f0-9]{64}$")
+    correctedText: str
+    supportingEvidenceIds: list[str] = Field(default_factory=list)
+    reason: str
+
+
+class HumanRejectedClaim(BaseModel):
+    claimId: str
+    proposalId: str
+    reviewerId: str
+    originalClaimHash: str = Field(pattern="^[a-f0-9]{64}$")
+    originalText: str
+    supportingEvidenceIds: list[str] = Field(default_factory=list)
+    reason: str
 
 
 class VerificationFinding(BaseModel):
@@ -904,6 +927,7 @@ class ReportArtifact(BaseModel):
     marketDataFreshnessSeconds: int | None = None
     artifactId: str | None = None
     storageStatus: str = "development_not_persisted"
+    contentHash: str | None = None
     schemaVersion: str = "ticker-intelligence-report.v1"
     tickerIdentity: TickerIdentity | None = None
     asOf: str | None = None
@@ -922,6 +946,35 @@ class ReportArtifact(BaseModel):
     providerUsed: str | None = None
     verificationStatus: str | None = None
     traceparent: str | None = None
+    packetVersion: int | None = None
+    apiBuildSha: str | None = None
+    dbSchemaVersion: str | None = None
+    proposalId: str | None = None
+    admissionState: str | None = None
+    reviewerDecisionHash: str | None = None
+    degradedCapabilities: list[str] = Field(default_factory=list)
+    requestId: str | None = None
+
+
+class ReportDiff(BaseModel):
+    packetId: str
+    beforePacketVersion: int = Field(ge=1)
+    afterPacketVersion: int = Field(ge=1)
+    beforeReportHash: str
+    afterReportHash: str
+    addedClaimIds: list[str] = Field(default_factory=list)
+    correctedClaimIds: list[str] = Field(default_factory=list)
+    rejectedClaimIds: list[str] = Field(default_factory=list)
+    changedSections: list[str] = Field(default_factory=list)
+    unchangedSections: list[str] = Field(default_factory=list)
+    citationDelta: int = 0
+    confidenceDelta: float = 0
+    sectionClaimAttribution: dict[str, list[str]] = Field(default_factory=dict)
+    numericalChanges: list[dict] = Field(default_factory=list)
+    provenance: dict = Field(default_factory=dict)
+    artifactId: str | None = None
+    storageStatus: str = "development_not_persisted"
+    contentHash: str | None = None
 
 
 class JobRecord(BaseModel):

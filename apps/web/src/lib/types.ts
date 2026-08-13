@@ -534,8 +534,32 @@ export interface ReportArtifact {
   marketDataFreshnessSeconds: number | null;
   artifactId?: string | null;
   storageStatus?: string;
+  contentHash?: string | null;
   schemaVersion?: string; asOf?: string|null; knowledgeCutoff?: string|null; modelDigest?: string|null; sourceSnapshotHash?: string|null;
   verifiedClaimCoverage?: number; unresolvedMaterialClaimCount?: number; rejectedClaimIds?: string[]; reportValidationStatus?: "passed"|"partial"|"legacy"|"failed";
+  packetVersion?: number|null; apiBuildSha?: string|null; dbSchemaVersion?: string|null;
+  proposalId?: string|null; admissionState?: string|null; reviewerDecisionHash?: string|null;
+  degradedCapabilities?: string[]; requestId?: string|null;
+}
+export interface ReportDiff {
+  packetId: string;
+  beforePacketVersion: number;
+  afterPacketVersion: number;
+  beforeReportHash: string;
+  afterReportHash: string;
+  addedClaimIds: string[];
+  correctedClaimIds: string[];
+  rejectedClaimIds: string[];
+  changedSections: string[];
+  unchangedSections: string[];
+  citationDelta: number;
+  confidenceDelta: number;
+  sectionClaimAttribution: Record<string, string[]>;
+  numericalChanges: Array<Record<string, unknown>>;
+  provenance: Record<string, unknown>;
+  artifactId?: string | null;
+  storageStatus?: string;
+  contentHash?: string | null;
 }
 export interface TickerIdentity { ticker:string; canonicalTicker:string; instrumentId:string; exchangeMic?:string|null; securityType:string; effectiveFrom?:string|null; resolutionProvider:string; resolutionStatus:"verified"|"provisional"|"ambiguous"; }
 

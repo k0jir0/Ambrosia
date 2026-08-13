@@ -11,10 +11,12 @@ COPY services/api/pyproject.toml services/api/uv.lock ./
 RUN uv sync --frozen --no-dev --no-install-project
 
 FROM python:3.12.10-slim-bookworm AS runtime
+ARG AMBROSIA_BUILD_SHA=development
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PORT=8000
+    PORT=8000 \
+    AMBROSIA_BUILD_SHA=${AMBROSIA_BUILD_SHA}
 RUN apt-get update \
     && apt-get dist-upgrade -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/* \

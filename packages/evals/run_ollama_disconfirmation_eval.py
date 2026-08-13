@@ -23,6 +23,11 @@ def arguments() -> argparse.Namespace:
     parser.add_argument("--outputs", type=Path)
     parser.add_argument("--output", type=Path, default=ROOT / "artifacts" / "ollama-evaluation.json")
     parser.add_argument("--require-release-thresholds", action="store_true")
+    parser.add_argument(
+        "--require-treatments",
+        action="store_true",
+        help="Require deterministic, auto_admit, and human_admit records for every case.",
+    )
     return parser.parse_args()
 
 
@@ -72,6 +77,7 @@ def validate_output(case: dict, record: dict) -> dict:
     human = record.get("humanReview") or {}
     return {
         "id": case["id"],
+        "treatment": record.get("treatment", "auto_admit"),
         "schemaValid": schema_valid,
         "referencePrecision": reference_precision,
         "abstentionRequired": bool(expect.get("requireAbstention")),
@@ -107,9 +113,25 @@ def main() -> int:
         return 1 if args.require_release_thresholds else 0
 
     records = json.loads(args.outputs.read_text(encoding="utf-8"))
-    by_id = {record["caseId"]: record for record in records}
-    missing = [case["id"] for case in cases if case["id"] not in by_id]
-    results = [validate_output(case, by_id[case["id"]]) for case in cases if case["id"] in by_id]
+    required_treatments = {"deterministic", "auto_admit", "human_admit"}
+    by_key = {
+        (record["caseId"], record.get("treatment", "auto_admit")): record
+        for record in records
+    }
+    missing = []
+    if args.require_treatments:
+        missing = [
+            f"{case['id']}:{treatment}"
+            for case in cases
+            for treatment in sorted(required_treatments)
+            if (case["id"], treatment) not in by_key
+        ]
+    results = [
+        validate_output(case, record)
+        for case in cases
+        for (case_id, _), record in by_key.items()
+        if case_id == case["id"]
+    ]
     total = len(results) or 1
     thresholds = suite["releaseThresholds"]
     material = sum(int(result["materialClaimCount"] or 0) for result in results)
@@ -127,6 +149,44 @@ def main() -> int:
         "unsupportedMaterialClaimRate": unsupported / material if material else None,
         "minimumMeanHumanUsefulness": sum(usefulness) / len(usefulness) if usefulness else None,
     }
+    treatment_metrics = {}
+    for treatment in sorted({result["treatment"] for result in results}):
+        treatment_results = [
+            result for result in results if result["treatment"] == treatment
+        ]
+        treatment_material = sum(
+            int(result["materialClaimCount"] or 0) for result in treatment_results
+        )
+        treatment_unsupported = sum(
+            int(result["unsupportedMaterialClaimCount"] or 0)
+            for result in treatment_results
+        )
+        treatment_usefulness = [
+            float(result["humanUsefulness"])
+            for result in treatment_results
+            if result["humanUsefulness"] is not None
+        ]
+        treatment_metrics[treatment] = {
+            "caseCount": len(treatment_results),
+            "schemaValidityRate": sum(
+                result["schemaValid"] for result in treatment_results
+            )
+            / len(treatment_results),
+            "evidenceReferencePrecision": sum(
+                result["referencePrecision"] for result in treatment_results
+            )
+            / len(treatment_results),
+            "unsupportedMaterialClaimRate": (
+                treatment_unsupported / treatment_material
+                if treatment_material
+                else None
+            ),
+            "meanHumanUsefulness": (
+                sum(treatment_usefulness) / len(treatment_usefulness)
+                if treatment_usefulness
+                else None
+            ),
+        }
     failures = list(missing)
     for metric, threshold in thresholds.items():
         value = metrics[metric]
@@ -143,6 +203,7 @@ def main() -> int:
         "suiteVersion": suite["suiteVersion"],
         "status": "passed" if not failures else "failed",
         "metrics": metrics,
+        "treatmentMetrics": treatment_metrics,
         "thresholds": thresholds,
         "failures": failures,
         "cases": results,

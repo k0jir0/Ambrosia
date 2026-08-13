@@ -67,7 +67,8 @@ jobs:
             --build-arg "NEXT_PUBLIC_ENABLE_OPERATIONS=false" \
             --build-arg "NEXT_PUBLIC_ENABLE_CALIBRATION=false" \
             --build-arg "NEXT_PUBLIC_ENABLE_CALIBRATION_DEMO=false" \
-            --build-arg "NEXT_PUBLIC_ENABLE_REVIEW_EXPORT=false" \
+            --build-arg "NEXT_PUBLIC_ENABLE_REVIEW_EXPORT=true" \
+            --build-arg "NEXT_PUBLIC_BUILD_SHA=validation" \
             --build-arg "NEXT_PUBLIC_ENABLE_ALPHA_LAB=false" \
             --build-arg "NEXT_PUBLIC_ENABLE_SIGNALS_LAB=false" \
             --build-arg "NEXT_PUBLIC_ENABLE_CLI_DESIGN=true" \
@@ -247,7 +248,9 @@ jobs:
             API_BASE_URL="/api"
             SITE_URL="https://staging.invalid"
           fi
-          docker build --pull -f services/api/Dockerfile -t "$API_REPOSITORY:$GITHUB_SHA" .
+          docker build --pull -f services/api/Dockerfile \
+            --build-arg "AMBROSIA_BUILD_SHA=$GITHUB_SHA" \
+            -t "$API_REPOSITORY:$GITHUB_SHA" .
           docker build --pull -f apps/web/Dockerfile \
             --build-arg "NEXT_PUBLIC_API_BASE_URL=$API_BASE_URL" \
             --build-arg "NEXT_PUBLIC_ENABLE_LABS=false" \
@@ -257,11 +260,12 @@ jobs:
             --build-arg "NEXT_PUBLIC_ENABLE_OPERATIONS=false" \
             --build-arg "NEXT_PUBLIC_ENABLE_CALIBRATION=false" \
             --build-arg "NEXT_PUBLIC_ENABLE_CALIBRATION_DEMO=false" \
-            --build-arg "NEXT_PUBLIC_ENABLE_REVIEW_EXPORT=false" \
+            --build-arg "NEXT_PUBLIC_ENABLE_REVIEW_EXPORT=true" \
             --build-arg "NEXT_PUBLIC_ENABLE_ALPHA_LAB=false" \
             --build-arg "NEXT_PUBLIC_ENABLE_SIGNALS_LAB=false" \
             --build-arg "NEXT_PUBLIC_ENABLE_CLI_DESIGN=true" \
             --build-arg "NEXT_PUBLIC_SITE_URL=$SITE_URL" \
+            --build-arg "NEXT_PUBLIC_BUILD_SHA=$GITHUB_SHA" \
             -t "$WEB_REPOSITORY:$GITHUB_SHA" .
 
       - name: Scan API image for fixed critical or high vulnerabilities
@@ -602,8 +606,19 @@ jobs:
           aws ecs wait services-stable --cluster "$CLUSTER" --services api web
           API_URL=$(terraform -chdir=infra/aws output -raw api_url)
           WEB_URL=$(terraform -chdir=infra/aws output -raw web_url)
+          curl --fail --retry 12 --retry-delay 10 "$API_URL/live"
           curl --fail --retry 12 --retry-delay 10 "$API_URL/ready"
           curl --fail --retry 12 --retry-delay 10 "$WEB_URL/"
+          curl --fail "$API_URL/version" -o "$RUNNER_TEMP/api-version.json"
+          curl --fail "$API_URL/capabilities" -o "$RUNNER_TEMP/capabilities.json"
+          curl --fail "$WEB_URL/build-metadata" -o "$RUNNER_TEMP/web-version.json"
+          test "$(jq -r .buildSha "$RUNNER_TEMP/api-version.json")" = "$GITHUB_SHA"
+          test "$(jq -r .buildSha "$RUNNER_TEMP/web-version.json")" = "$GITHUB_SHA"
+          test "$(jq -r .apiBasePath "$RUNNER_TEMP/web-version.json")" = "/api"
+          test "$(jq -r .governedReportExport "$RUNNER_TEMP/web-version.json")" = "true"
+          test "$(jq -r .reportExport.enabled "$RUNNER_TEMP/capabilities.json")" = "true"
+          test "$(jq -r .reportExport.writable "$RUNNER_TEMP/capabilities.json")" = "true"
+          test "$(jq -r .dbSchemaVersion "$RUNNER_TEMP/api-version.json")" = "v0015"
           echo "api=$API_URL" >> "$GITHUB_OUTPUT"
           echo "web=$WEB_URL" >> "$GITHUB_OUTPUT"
           {

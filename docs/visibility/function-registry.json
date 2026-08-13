@@ -409,6 +409,14 @@
   },
   {
     "method": "GET",
+    "path": "/capabilities",
+    "exposure": "user",
+    "frontendRoute": "/",
+    "requiredRole": "user",
+    "auditEvent": "capabilities.read"
+  },
+  {
+    "method": "GET",
     "path": "/health/phases",
     "exposure": "user",
     "frontendRoute": "/",
@@ -625,6 +633,14 @@
   },
   {
     "method": "POST",
+    "path": "/packets/{packet_id}/report/diff",
+    "exposure": "user",
+    "frontendRoute": "/review/:id",
+    "requiredRole": "user",
+    "auditEvent": "packets.report.diff.write"
+  },
+  {
+    "method": "POST",
     "path": "/packets/{packet_id}/retrieve",
     "exposure": "user",
     "frontendRoute": "/review/:id",
@@ -662,6 +678,14 @@
     "frontendRoute": "/review/:id",
     "requiredRole": "user",
     "auditEvent": "packets.versions.read"
+  },
+  {
+    "method": "GET",
+    "path": "/report/export/status",
+    "exposure": "user",
+    "frontendRoute": "/",
+    "requiredRole": "user",
+    "auditEvent": "report.export.status.read"
   },
   {
     "method": "GET",
@@ -766,5 +790,13 @@
     "frontendRoute": "/markets/:ticker",
     "requiredRole": "user",
     "auditEvent": "sentiment.read"
+  },
+  {
+    "method": "GET",
+    "path": "/version",
+    "exposure": "user",
+    "frontendRoute": "/",
+    "requiredRole": "user",
+    "auditEvent": "version.read"
   }
 ]

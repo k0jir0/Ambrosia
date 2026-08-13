@@ -103,6 +103,11 @@ def main() -> None:
         '{ name = "AUTH_SES_PRODUCTION_ACCESS_ENABLED", value = local.auth_email_enabled ? "true" : "false" }',
         "SES production-access runtime declaration",
     )
+    require(
+        compact_terraform,
+        "Resource = [ local.auth_ses_identity_arn, aws_sesv2_configuration_set.transactional.arn, ]",
+        "least-privilege SES identity and configuration-set authorization",
+    )
     require(workflow, 'NEXT_PUBLIC_ENABLE_REVIEW_EXPORT=true', "governed report web build")
     require(compact_terraform, "count = var.enable_services ? 1 : 0", "migration-safe autoscaling gate")
     require(compact_terraform, "desired_count = var.enable_services ?", "migration-safe service gate")

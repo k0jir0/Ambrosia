@@ -593,9 +593,12 @@ resource "aws_iam_role_policy" "ecs_task" {
     Version = "2012-10-17"
     Statement = concat(
       local.auth_email_enabled ? [{
-        Effect   = "Allow"
-        Action   = ["ses:SendEmail"]
-        Resource = [local.auth_ses_identity_arn]
+        Effect = "Allow"
+        Action = ["ses:SendEmail"]
+        Resource = [
+          local.auth_ses_identity_arn,
+          aws_sesv2_configuration_set.transactional.arn,
+        ]
       }] : [],
       [
         {

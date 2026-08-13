@@ -415,6 +415,105 @@ def test_ollama_agent_run_creates_pollable_operation(monkeypatch) -> None:
     assert status.json()["requestedProvider"] == "ollama"
 
 
+def _ollama_result(lease: dict, *, summary: str = "Evidence supports a bounded inference.") -> dict:
+    timestamp = "2026-08-12T20:00:00Z"
+    output = {
+        "schemaVersion": "specialist-output.v2",
+        "role": "pmSynthesis",
+        "instructionReferences": ["I1", "I2", "I3", "I4"],
+        "summary": summary,
+        "roleConclusion": summary,
+        "claimsTested": ["Relative strength improved."],
+        "materialClaims": [
+            {
+                "claimId": "verified-1",
+                "text": "The supplied source supports improved relative strength.",
+                "claimType": "inference",
+                "materiality": "high",
+                "supportingEvidenceIds": ["src-1"],
+                "contradictingEvidenceIds": [],
+                "uncertainty": 0.25,
+                "falsifier": "Subsequent benchmark-relative evidence reverses.",
+                "admissionStatus": "admitted",
+            }
+        ],
+        "verificationFindings": [
+            {
+                "claimId": "verified-1",
+                "status": "entailed",
+                "evidenceIds": ["src-1"],
+                "reasons": [],
+                "deterministicChecksPassed": True,
+                "verifier": "test-independent-verifier",
+            }
+        ],
+        "falsifiableConditions": ["Relative performance reverses."],
+        "alternativeExplanations": ["Temporary sector rotation."],
+        "contradictions": [],
+        "missingEvidence": [],
+        "evidenceReferences": ["src-1"],
+        "abstained": False,
+    }
+    import json
+
+    return {
+        "leaseId": lease["leaseId"],
+        "generation": lease["generation"],
+        "inputHash": lease["inputHash"],
+        "modelName": "llama3.1:8b",
+        "modelDigest": "sha256:index160-test",
+        "ollamaVersion": "test",
+        "startedAt": timestamp,
+        "completedAt": "2026-08-12T20:00:02Z",
+        "resultHash": hashlib.sha256(
+            json.dumps(output, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest(),
+        "output": output,
+    }
+
+
+def test_ollama_completion_is_effectively_once_and_packet_versioned(monkeypatch) -> None:
+    monkeypatch.setenv("OLLAMA_REVIEW_BRIDGE_ENABLED", "true")
+    packet_id = "packet-ollama-completion"
+    assert client.post("/packets", json=_build_packet_payload(packet_id)).status_code == 200
+    created = client.post(
+        f"/packets/{packet_id}/agent-operations",
+        json={"providerMode": "ollama", "requestedModelDigest": "sha256:index160-test"},
+        headers={"Idempotency-Key": "completion-once"},
+    ).json()
+    credential_response = client.post("/llm/workers", json={"name": "Index160 worker"})
+    assert credential_response.status_code == 201
+    credential = credential_response.json()
+    headers = {"Authorization": f"Bearer {credential['token']}"}
+    claim = client.post(
+        "/local-worker/claim",
+        headers=headers,
+        json={
+            "leaseSeconds": 120,
+            "workerVersion": "test",
+            "ollamaVersion": "test",
+            "models": [{"name": "llama3.1:8b", "digest": "sha256:index160-test"}],
+        },
+    ).json()["job"]
+    result = _ollama_result(claim)
+    first = client.post(f"/local-worker/jobs/{claim['id']}/result", headers=headers, json=result)
+    assert first.status_code == 200
+    assert client.get(f"/operations/{created['id']}").json()["state"] == "completed"
+    assert client.get(f"/packets/{packet_id}").json()["packetVersion"] == 2
+    duplicate = client.post(
+        f"/local-worker/jobs/{claim['id']}/result", headers=headers, json=result
+    )
+    assert duplicate.status_code == 200 and duplicate.json()["duplicate"] is True
+    assert client.get(f"/packets/{packet_id}").json()["packetVersion"] == 2
+    divergent = _ollama_result(claim, summary="A divergent duplicate.")
+    assert (
+        client.post(
+            f"/local-worker/jobs/{claim['id']}/result", headers=headers, json=divergent
+        ).status_code
+        == 409
+    )
+
+
 def test_backtest_prepare_and_run_flow_with_gates() -> None:
     packet_id = "packet-backtest-1"
     created = client.post("/packets", json=_build_packet_payload(packet_id))

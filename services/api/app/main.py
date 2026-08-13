@@ -1179,7 +1179,13 @@ def get_provider_status(
     x_ambrosia_role: str | None = Header(default=None, alias="X-Ambrosia-Role"),
 ) -> dict[str, bool]:
     _require_role(ADVANCED_ROLES, x_ambrosia_role, scope="advanced")
-    return provider_status()
+    status = provider_status()
+    principal = current_principal()
+    status["activeTenantWorkerCompatible"] = bool(
+        principal and principal.organization_id
+        and llm_catalog.has_compatible_worker(principal.organization_id)
+    )
+    return status
 
 
 @app.get("/tools/boundaries", response_model=list[ToolBoundary])

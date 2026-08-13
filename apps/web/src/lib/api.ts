@@ -604,20 +604,27 @@ export async function refreshPacketMetrics(packetId: string): Promise<DecisionPa
 }
 
 export async function runPacketAgents(packetId: string, providerMode: ProviderMode = "deterministic"): Promise<DecisionPacket> {
-  if(providerMode!=="ollama") return postPacketAction(packetId,"/agents/run",{providerMode});
-  const base=getApiBaseUrl(); if(!base) throw new ApiUnavailableError();
-  let op=await readJsonResponse<AgentOperation>(await fetchWithTimeout(`${base}/packets/${encodeURIComponent(packetId)}/agent-operations`,{method:"POST",headers:{"Content-Type":"application/json","Idempotency-Key":crypto.randomUUID()},body:JSON.stringify({providerMode:"ollama"})}));
-  const deadline=Date.now()+15*60*1000;
-  while(!TERMINAL.has(op.state)&&Date.now()<deadline){await new Promise(r=>window.setTimeout(r,2000));op=await readJsonResponse<AgentOperation>(await fetchWithTimeout(`${base}/agent-operations/${encodeURIComponent(op.id)}`,undefined,20000));}
-  if(op.state!=="completed") throw new ApiRequestError(409,op.error?.message??`Ollama review ${op.state}`);
+  if (providerMode !== "ollama") return postPacketAction(packetId, "/agents/run", { providerMode });
+  let operation = await createAgentOperation(packetId);
+  let delay = 1000;
+  const deadline = Date.now() + 15 * 60 * 1000;
+  while (!TERMINAL.has(operation.state) && Date.now() < deadline) {
+    await new Promise((resolve) => window.setTimeout(resolve, delay));
+    operation = await getAgentOperation(operation.id);
+    delay = Math.min(10000, Math.round(delay * 1.5));
+  }
+  if (operation.state !== "completed") throw new ApiRequestError(409, operation.error?.message ?? `Ollama review ${operation.state}`);
   return getPacket(packetId);
 }
 
-export type AgentOperation={id:string;packetId:string;state:"queued"|"leased"|"running"|"verifying"|"repairing"|"retry_wait"|"completed"|"failed"|"expired"|"canceled"|"superseded";stage:string;progress:number;requestedProvider:string;actualProvider?:string|null;workerId?:string|null;modelName?:string|null;modelDigest?:string|null;fallbackOperationId?:string|null;error?:{code:string;message:string}|null};
-const TERMINAL=new Set<AgentOperation["state"]>(["completed","failed","expired","canceled","superseded"]);
-export async function getAgentOperation(id:string):Promise<AgentOperation>{const base=getApiBaseUrl();if(!base)throw new ApiUnavailableError();return readJsonResponse(await fetchWithTimeout(`${base}/agent-operations/${encodeURIComponent(id)}`));}
-export async function cancelAgentOperation(id:string):Promise<AgentOperation>{const base=getApiBaseUrl();if(!base)throw new ApiUnavailableError();return readJsonResponse(await fetchWithTimeout(`${base}/agent-operations/${encodeURIComponent(id)}/cancel`,{method:"POST"}));}
-export async function fallbackAgentOperation(id:string):Promise<AgentOperation>{const base=getApiBaseUrl();if(!base)throw new ApiUnavailableError();return readJsonResponse(await fetchWithTimeout(`${base}/agent-operations/${encodeURIComponent(id)}/fallback`,{method:"POST"}));}
+export type AgentOperation = { id: string; packetId: string; expectedPacketVersion: number; state: "queued" | "leased" | "running" | "verifying" | "repairing" | "retry_wait" | "completed" | "failed" | "expired" | "canceled" | "superseded"; stage: string; progress: number; requestedProvider: string; actualProvider?: string | null; workerId?: string | null; modelName?: string | null; modelDigest?: string | null; fallbackOperationId?: string | null; deadlineAt: string; createdAt: string; updatedAt: string; error?: { code: string; message: string } | null };
+export const TERMINAL_AGENT_OPERATION_STATES = new Set<AgentOperation["state"]>(["completed", "failed", "expired", "canceled", "superseded"]);
+const TERMINAL = TERMINAL_AGENT_OPERATION_STATES;
+export async function createAgentOperation(packetId: string, idempotencyKey = crypto.randomUUID()): Promise<AgentOperation> { const base = getApiBaseUrl(); if (!base) throw new ApiUnavailableError(); return readJsonResponse(await fetchWithTimeout(`${base}/packets/${encodeURIComponent(packetId)}/agent-operations`, { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": idempotencyKey }, body: JSON.stringify({ providerMode: "ollama" }) })); }
+export async function getAgentOperation(id: string): Promise<AgentOperation> { const base = getApiBaseUrl(); if (!base) throw new ApiUnavailableError(); return readJsonResponse(await fetchWithTimeout(`${base}/operations/${encodeURIComponent(id)}`)); }
+export async function cancelAgentOperation(id: string): Promise<AgentOperation> { const base = getApiBaseUrl(); if (!base) throw new ApiUnavailableError(); return readJsonResponse(await fetchWithTimeout(`${base}/operations/${encodeURIComponent(id)}/cancel`, { method: "POST" })); }
+export async function fallbackAgentOperation(id: string): Promise<AgentOperation> { const base = getApiBaseUrl(); if (!base) throw new ApiUnavailableError(); return readJsonResponse(await fetchWithTimeout(`${base}/operations/${encodeURIComponent(id)}/fallback`, { method: "POST" })); }
+export async function continueAgentOperation(id: string): Promise<AgentOperation> { const base = getApiBaseUrl(); if (!base) throw new ApiUnavailableError(); return readJsonResponse(await fetchWithTimeout(`${base}/operations/${encodeURIComponent(id)}/continue`, { method: "POST" })); }
 
 export async function preparePacketBacktest(packetId: string, body: BacktestPrepareRequest): Promise<DecisionPacket> {
   return postPacketAction(packetId, "/backtest/prepare", body);

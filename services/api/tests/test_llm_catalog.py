@@ -8,6 +8,8 @@ from app.llm_catalog import (
     LlmJobCreate,
     WorkerResult,
     WorkerClaim,
+    LeaseUpdate,
+    WorkerFailure,
 )
 
 
@@ -146,3 +148,39 @@ def test_operation_jobs_require_compatible_model_and_fenced_lease(monkeypatch) -
     assert lease and lease["generation"] == 1 and lease["leaseId"]
     stale = _result().model_copy(update={"leaseId": "stale", "generation": lease["generation"]})
     assert local.complete(worker, queued["id"], stale) is None
+
+
+def test_heartbeats_are_fenced_and_retry_attempts_are_bounded(monkeypatch) -> None:
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    local = Catalog()
+    credential = local.create_worker("org-a", "user-a", "Recovery worker")
+    worker = local.authenticate_worker(credential["token"])
+    queued = local.enqueue("org-a", _job())
+    lease = local.claim(worker, 30, WorkerClaim(models=[]))
+    assert lease
+    assert not local.heartbeat(
+        worker,
+        queued["id"],
+        LeaseUpdate(leaseId=lease["leaseId"], generation=lease["generation"] + 1),
+    )
+    assert local.heartbeat(
+        worker,
+        queued["id"],
+        LeaseUpdate(
+            leaseId=lease["leaseId"], generation=lease["generation"], stage="verifier", progress=60
+        ),
+    )
+    assert local.fail_job(
+        worker,
+        queued["id"],
+        WorkerFailure(
+            leaseId=lease["leaseId"],
+            generation=lease["generation"],
+            code="ollama_unreachable",
+            message="connection refused",
+            retryable=True,
+        ),
+    )
+    assert local.jobs[queued["id"]]["state"] == "retry_wait"
+    second = local.claim(worker, 30, WorkerClaim(models=[]))
+    assert second and second["generation"] == lease["generation"] + 1

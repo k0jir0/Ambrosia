@@ -5,8 +5,10 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+from pathlib import Path
 import sys
 import signal
+import tempfile
 import threading
 import urllib.error
 import urllib.request
@@ -56,6 +58,56 @@ def canonical_hash(value):
     return hashlib.sha256(
         json.dumps(value, sort_keys=True, separators=(",", ":"), default=str).encode()
     ).hexdigest()
+
+
+def cache_directory() -> Path:
+    configured = os.getenv("AMBROSIA_WORKER_CACHE_DIR")
+    root = Path(configured) if configured else Path(
+        os.getenv("LOCALAPPDATA", tempfile.gettempdir())
+    ) / "Ambrosia" / "ollama-worker-cache"
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def cached_result(input_hash, model_digest):
+    path = cache_directory() / f"{input_hash}.json"
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+        if value.get("inputHash") == input_hash and value.get("modelDigest") == model_digest:
+            return value.get("output"), value.get("metadata", {})
+    except (OSError, ValueError, TypeError):
+        return None
+    return None
+
+
+def cache_result(input_hash, model_digest, output, metadata):
+    directory = cache_directory()
+    target = directory / f"{input_hash}.json"
+    temporary = directory / f".{input_hash}.{os.getpid()}.tmp"
+    temporary.write_text(
+        json.dumps(
+            {
+                "inputHash": input_hash,
+                "modelDigest": model_digest,
+                "output": output,
+                "metadata": metadata,
+            },
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
+    try:
+        temporary.chmod(0o600)
+    except OSError:
+        pass
+    temporary.replace(target)
+    limit = max(1, min(100, int(os.getenv("AMBROSIA_WORKER_CACHE_ITEMS", "20"))))
+    entries = sorted(directory.glob("*.json"), key=lambda item: item.stat().st_mtime, reverse=True)
+    for expired in entries[limit:]:
+        try:
+            expired.unlink()
+        except OSError:
+            pass
 
 
 def request_json(url, *, body=None, token=None, timeout=60, traceparent=None):
@@ -375,7 +427,12 @@ def work_once(api, token, ollama, model):
             stage.update(name=name, progress=value)
             report("progress")
 
-        output, metadata = run_ollama(ollama, model, job, progress)
+        cached = cached_result(job["inputHash"], digest)
+        if cached:
+            output, metadata = cached
+        else:
+            output, metadata = run_ollama(ollama, model, job, progress)
+            cache_result(job["inputHash"], digest, output, metadata)
         progress("uploading", 90)
         if lost.is_set():
             raise LeaseLost("lease lost before result upload")
@@ -397,6 +454,10 @@ def work_once(api, token, ollama, model):
             timeout=30,
             traceparent=trace,
         )
+        try:
+            (cache_directory() / f"{job['inputHash']}.json").unlink()
+        except OSError:
+            pass
     except LeaseLost:
         raise
     except Exception as exc:
@@ -447,6 +508,7 @@ def main():
                         "modelDigest": digest,
                         "ollamaVersion": version,
                         "tokenConfigured": True,
+                        "cacheDirectory": str(cache_directory()),
                         "ready": True,
                     },
                     sort_keys=True,

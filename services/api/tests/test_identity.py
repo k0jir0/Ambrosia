@@ -266,7 +266,12 @@ def test_ses_password_reset_uses_verified_sender_and_configuration_set(
 
     monkeypatch.setenv("AUTH_EMAIL_MODE", "ses")
     monkeypatch.setenv("AUTH_EMAIL_FROM", "no-reply@example.com")
+    monkeypatch.setenv(
+        "AUTH_SES_IDENTITY_ARN",
+        "arn:aws:ses:ca-central-1:111204669733:identity/example.com",
+    )
     monkeypatch.setenv("AUTH_SES_CONFIGURATION_SET", "ambrosia-staging-transactional")
+    monkeypatch.setenv("AUTH_SES_PRODUCTION_ACCESS_ENABLED", "true")
     monkeypatch.setenv("PUBLIC_WEB_URL", "https://staging.example.com")
     monkeypatch.setattr("app.identity.boto3.client", lambda *_args, **_kwargs: FakeSesClient())
 
@@ -274,6 +279,9 @@ def test_ses_password_reset_uses_verified_sender_and_configuration_set(
 
     assert sent == [{
         "FromEmailAddress": "no-reply@example.com",
+        "FromEmailAddressIdentityArn": (
+            "arn:aws:ses:ca-central-1:111204669733:identity/example.com"
+        ),
         "Destination": {"ToAddresses": ["owner@example.com"]},
         "Content": {"Simple": {
             "Subject": {"Data": "Reset your Ambrosia password"},
@@ -312,6 +320,12 @@ def test_ses_failure_does_not_disclose_account_existence(
     monkeypatch.setenv("AUTH_TOKEN_PEPPER", "x" * 32)
     monkeypatch.setenv("AUTH_EMAIL_MODE", "ses")
     monkeypatch.setenv("AUTH_EMAIL_FROM", "no-reply@example.com")
+    monkeypatch.setenv(
+        "AUTH_SES_IDENTITY_ARN",
+        "arn:aws:ses:ca-central-1:111204669733:identity/example.com",
+    )
+    monkeypatch.setenv("AUTH_SES_CONFIGURATION_SET", "ambrosia-staging-transactional")
+    monkeypatch.setenv("AUTH_SES_PRODUCTION_ACCESS_ENABLED", "true")
     monkeypatch.setattr(rate_limiter, "allow", lambda *_args, **_kwargs: (True, 299))
     monkeypatch.setattr(
         "app.identity.EmailSender.send_password_reset",

@@ -93,6 +93,16 @@ def main() -> None:
     require(terraform, "aws_cloudfront_function", "same-origin API prefix rewrite")
     require(terraform, "request.uri.substring(4)", "FastAPI root-path forwarding")
     require(terraform, 'path     = "/live"', "ALB process-liveness health check")
+    require(
+        terraform,
+        '{ name = "AUTH_SES_IDENTITY_ARN", value = local.auth_ses_identity_arn }',
+        "SES identity ARN runtime wiring",
+    )
+    require(
+        terraform,
+        '{ name = "AUTH_SES_PRODUCTION_ACCESS_ENABLED", value = local.auth_email_enabled ? "true" : "false" }',
+        "SES production-access runtime declaration",
+    )
     require(workflow, 'NEXT_PUBLIC_ENABLE_REVIEW_EXPORT=true', "governed report web build")
     require(compact_terraform, "count = var.enable_services ? 1 : 0", "migration-safe autoscaling gate")
     require(compact_terraform, "desired_count = var.enable_services ?", "migration-safe service gate")

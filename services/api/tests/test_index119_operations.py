@@ -243,3 +243,43 @@ def test_operational_email_readiness_reports_blockers(monkeypatch) -> None:
     assert payload["checks"]["senderConfigured"] is False
     assert payload["checks"]["sesIdentityArnConfigured"] is False
     assert "AUTH_EMAIL_MODE must be ses" in " ".join(payload["blockers"])
+
+
+def test_operational_email_readiness_accepts_complete_ses_contract(monkeypatch) -> None:
+    monkeypatch.setenv("ENVIRONMENT", "staging")
+    monkeypatch.setenv("AUTH_EMAIL_MODE", "ses")
+    monkeypatch.setenv("AUTH_EMAIL_FROM", "no-reply@example.com")
+    monkeypatch.setenv(
+        "AUTH_SES_IDENTITY_ARN",
+        "arn:aws:ses:ca-central-1:111204669733:identity/example.com",
+    )
+    monkeypatch.setenv("AUTH_SES_CONFIGURATION_SET", "ambrosia-staging-transactional")
+    monkeypatch.setenv("AUTH_SES_PRODUCTION_ACCESS_ENABLED", "true")
+    monkeypatch.setattr(rate_limiter, "allow", lambda *_args, **_kwargs: (True, 299))
+    monkeypatch.setenv(
+        "AMBROSIA_API_KEYS_JSON",
+        json.dumps({
+            "ops-token-at-least-16": {
+                "subject": "ops-1",
+                "role": "admin",
+                "organization_id": "00000000-0000-0000-0000-000000000002",
+            }
+        }),
+    )
+
+    response = client.get(
+        "/operational/email-readiness",
+        headers={"Authorization": "Bearer ops-token-at-least-16"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "ready"
+    assert payload["passwordRecoveryAvailable"] is True
+    assert payload["checks"] == {
+        "senderConfigured": True,
+        "sesIdentityArnConfigured": True,
+        "configurationSetConfigured": True,
+        "productionAccessDeclared": True,
+    }
+    assert payload["blockers"] == []

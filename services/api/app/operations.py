@@ -31,6 +31,7 @@ from .identity import (
     assisted_password_reset_available,
     get_identity_service,
     password_reset_delivery_available,
+    ses_delivery_configuration_errors,
     session_cookie_name,
 )
 from .api_problems import problem_document
@@ -855,15 +856,7 @@ def operational_email_readiness() -> dict:
     password_recovery_available = password_reset_delivery_available()
     assisted_recovery_available = assisted_password_reset_available()
 
-    blockers: list[str] = []
-    if env in {"staging", "production"} and email_mode != "ses":
-        blockers.append("AUTH_EMAIL_MODE must be ses in staging/production for standard password recovery")
-    if env in {"staging", "production"} and not sender_configured:
-        blockers.append("AUTH_EMAIL_FROM is not configured")
-    if env in {"staging", "production"} and not identity_arn_configured:
-        blockers.append("AUTH_SES_IDENTITY_ARN is not configured")
-    if env in {"staging", "production"} and email_mode == "ses" and not production_access_declared:
-        blockers.append("AUTH_SES_PRODUCTION_ACCESS_ENABLED is false")
+    blockers = list(ses_delivery_configuration_errors()) if env in {"staging", "production"} else []
 
     return {
         "status": "ready" if not blockers and password_recovery_available else "not_ready",

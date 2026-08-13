@@ -149,10 +149,23 @@ def verification_tokens_exposed() -> bool:
 def password_reset_delivery_available() -> bool:
     if _environment() == "development":
         return True
-    return (
-        os.getenv("AUTH_EMAIL_MODE", "").strip().lower() == "ses"
-        and bool(os.getenv("AUTH_EMAIL_FROM", "").strip())
-    )
+    return not ses_delivery_configuration_errors()
+
+
+def ses_delivery_configuration_errors() -> tuple[str, ...]:
+    """Return the fail-closed SES contract required outside development."""
+    required = {
+        "AUTH_EMAIL_FROM": os.getenv("AUTH_EMAIL_FROM", "").strip(),
+        "AUTH_SES_IDENTITY_ARN": os.getenv("AUTH_SES_IDENTITY_ARN", "").strip(),
+        "AUTH_SES_CONFIGURATION_SET": os.getenv("AUTH_SES_CONFIGURATION_SET", "").strip(),
+    }
+    errors: list[str] = []
+    if os.getenv("AUTH_EMAIL_MODE", "").strip().lower() != "ses":
+        errors.append("AUTH_EMAIL_MODE must be ses")
+    errors.extend(f"{name} is not configured" for name, value in required.items() if not value)
+    if not _flag_enabled("AUTH_SES_PRODUCTION_ACCESS_ENABLED"):
+        errors.append("AUTH_SES_PRODUCTION_ACCESS_ENABLED is false")
+    return tuple(errors)
 
 
 def assisted_password_reset_available() -> bool:
@@ -1023,6 +1036,9 @@ class EmailSender:
             source = os.getenv("AUTH_EMAIL_FROM", "").strip()
             if not source:
                 raise RuntimeError("AUTH_EMAIL_FROM is required when AUTH_EMAIL_MODE=ses")
+            identity_arn = os.getenv("AUTH_SES_IDENTITY_ARN", "").strip()
+            if is_production() and ses_delivery_configuration_errors():
+                raise RuntimeError("production_ses_delivery_not_configured")
             client = boto3.client("sesv2", region_name=os.getenv("AWS_REGION", "us-east-1"))
             request = dict(
                 FromEmailAddress=source,
@@ -1032,6 +1048,8 @@ class EmailSender:
                     "Body": {"Text": {"Data": body}},
                 }},
             )
+            if identity_arn:
+                request["FromEmailAddressIdentityArn"] = identity_arn
             configuration_set = os.getenv("AUTH_SES_CONFIGURATION_SET", "").strip()
             if configuration_set:
                 request["ConfigurationSetName"] = configuration_set
@@ -1082,8 +1100,8 @@ class IdentityService:
         _token_pepper()
         if (
             is_production()
-            and os.getenv("AUTH_EMAIL_MODE", "").strip().lower() != "ses"
             and not staging_console_delivery_enabled()
+            and ses_delivery_configuration_errors()
         ):
             raise RuntimeError("production_email_not_configured")
 

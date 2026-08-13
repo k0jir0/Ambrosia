@@ -1288,12 +1288,23 @@ def list_alert_queue(
 def get_provider_status(
     x_ambrosia_role: str | None = Header(default=None, alias="X-Ambrosia-Role"),
     requested_model_digest: str | None = Query(default=None, alias="requestedModelDigest"),
+    requested_context_length: int | None = Query(default=None, alias="requestedContextLength", ge=1024, le=1_000_000),
+    required_prompt_manifest_hash: str | None = Query(default=None, alias="requiredPromptManifestHash"),
+    required_output_schema_hash: str | None = Query(default=None, alias="requiredOutputSchemaHash"),
+    required_worker_version: str | None = Query(default=None, alias="requiredWorkerVersion"),
 ) -> dict:
     _require_role(ADVANCED_ROLES, x_ambrosia_role, scope="advanced")
     status = provider_status()
     principal = current_principal()
     readiness = (
-        llm_catalog.worker_readiness(principal.organization_id, requested_model_digest)
+        llm_catalog.worker_readiness(
+            principal.organization_id,
+            requested_model_digest,
+            requested_context_length,
+            required_prompt_manifest_hash,
+            required_output_schema_hash,
+            required_worker_version,
+        )
         if principal and principal.organization_id
         else {"ready": False, "reasonCode": "tenant_identity_required", "compatibleCount": 0}
     )
@@ -1309,7 +1320,12 @@ def get_provider_status(
             {
                 **policy,
                 "workerCompatibility": llm_catalog.worker_readiness(
-                    principal.organization_id, str(policy["digest"])
+                    principal.organization_id,
+                    str(policy["digest"]),
+                    int(policy.get("contextLength") or 0) or None,
+                    required_prompt_manifest_hash,
+                    required_output_schema_hash,
+                    required_worker_version,
                 ),
             }
             for policy in policies
@@ -2425,6 +2441,19 @@ def _report_claim_ids(report: ReportArtifact) -> set[str]:
     return {claim_id for section in report.sections for claim_id in section.claimIds}
 
 
+def _admission_bound_baseline(proposal: dict | None) -> dict | None:
+    if not proposal:
+        return None
+    for event in reversed(proposal.get("proposalEvents", [])):
+        if event.get("eventType") not in {"proposal.admitted", "proposal.auto_admitted"}:
+            continue
+        payload = event.get("payload") or {}
+        baseline = payload.get("baselineReport")
+        if baseline:
+            return baseline
+    return None
+
+
 @app.post("/packets/{packet_id}/report/diff", response_model=ReportDiff)
 def generate_packet_report_diff(packet_id: str) -> ReportDiff:
     """Persist a semantic diff between the two latest governed packet reports."""
@@ -2436,6 +2465,20 @@ def generate_packet_report_diff(packet_id: str) -> ReportDiff:
             detail={"code": "report_diff_requires_two_packet_versions"},
         )
     before_packet, after_packet = versions[-2], versions[-1]
+    matching_operation = next(
+        (
+            operation
+            for operation in ollama_bridge.list(packet_id)
+            if operation.get("resultPacketVersion") == after_packet.packetVersion
+        ),
+        None,
+    )
+    proposal = None
+    if matching_operation and matching_operation.get("proposalId"):
+        proposal_record = ollama_bridge.get_proposal(str(matching_operation["id"]))
+        if proposal_record:
+            proposal = ollama_bridge.public_proposal(proposal_record)
+    bound_baseline = _admission_bound_baseline(proposal)
     before = generate_report(before_packet, [])
     after = generate_report(after_packet, [])
     before_sections = {section.title: section for section in before.sections}
@@ -2457,34 +2500,70 @@ def generate_packet_report_diff(packet_id: str) -> ReportDiff:
     )
     citation_before = sum(len(section.citationEvidenceIds) for section in before.sections)
     citation_after = sum(len(section.citationEvidenceIds) for section in after.sections)
-    before_storage = _persist_report_json(
-        packet_id,
-        f"decision-report-baseline-v{before_packet.packetVersion}.json",
-        before.model_dump(mode="json"),
+    admitted_states = {
+        "auto_admitted",
+        "human_admitted",
+        "corrected_and_admitted",
+    }
+    before_hash = _report_hash(before)
+    bound_packet_version = None
+    if bound_baseline:
+        try:
+            bound_packet_version = int(bound_baseline.get("packetVersion"))
+        except (TypeError, ValueError):
+            bound_packet_version = None
+    requires_bound_baseline = bool(
+        matching_operation
+        and matching_operation.get("admissionState") in admitted_states
+    )
+    if requires_bound_baseline and not bound_baseline:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "report_diff_missing_baseline_provenance",
+                "message": "Admission baseline provenance is required before report diff generation.",
+            },
+        )
+    if not requires_bound_baseline:
+        bound_baseline = None
+    if bound_baseline and bound_packet_version != before_packet.packetVersion:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "report_diff_baseline_version_mismatch",
+                "message": "Admission baseline packet version does not match report diff baseline.",
+            },
+        )
+    if bound_baseline and bound_baseline.get("reportHash") != before_hash:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "report_diff_baseline_hash_mismatch",
+                "message": "Admission baseline hash does not match current baseline report rendering.",
+            },
+        )
+    before_storage = (
+        {
+            "artifactId": bound_baseline.get("artifactId") if bound_baseline else None,
+            "contentHash": bound_baseline.get("artifactHash") if bound_baseline else None,
+        }
+        if bound_baseline
+        else _persist_report_json(
+            packet_id,
+            f"decision-report-baseline-v{before_packet.packetVersion}.json",
+            before.model_dump(mode="json"),
+        )
     )
     after_storage = _persist_report_json(
         packet_id,
         f"decision-report-mutated-v{after_packet.packetVersion}.json",
         after.model_dump(mode="json"),
     )
-    matching_operation = next(
-        (
-            operation
-            for operation in ollama_bridge.list(packet_id)
-            if operation.get("resultPacketVersion") == after_packet.packetVersion
-        ),
-        None,
-    )
-    proposal = (
-        ollama_bridge.get_proposal(str(matching_operation["id"]))
-        if matching_operation and matching_operation.get("proposalId")
-        else None
-    )
     diff = ReportDiff(
         packetId=packet_id,
         beforePacketVersion=before_packet.packetVersion,
         afterPacketVersion=after_packet.packetVersion,
-        beforeReportHash=_report_hash(before),
+        beforeReportHash=before_hash,
         afterReportHash=_report_hash(after),
         addedClaimIds=sorted(after_claims - before_claims),
         correctedClaimIds=corrected_claims,
@@ -2523,6 +2602,8 @@ def generate_packet_report_diff(packet_id: str) -> ReportDiff:
             "originalOutputHash": proposal.get("originalOutputHash") if proposal else None,
             "proposedPatchHash": proposal.get("proposedPatchHash") if proposal else None,
             "reviewerDecisionHash": proposal.get("reviewerDecisionHash") if proposal else None,
+            "baselineBoundAtAdmission": bool(bound_baseline),
+            "baselineReportHash": bound_baseline.get("reportHash") if bound_baseline else before_hash,
             "beforeArtifactId": before_storage.get("artifactId"),
             "afterArtifactId": after_storage.get("artifactId"),
             "beforeArtifactHash": before_storage.get("contentHash"),

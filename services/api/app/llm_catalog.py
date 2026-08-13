@@ -14,7 +14,7 @@ from uuid import uuid4
 from uuid import UUID
 
 import psycopg
-from fastapi import APIRouter, Header, HTTPException, Request
+from fastapi import APIRouter, Header, HTTPException, Query, Request
 from pydantic import BaseModel, Field, field_validator, model_validator
 from psycopg.rows import dict_row
 
@@ -252,6 +252,17 @@ class HumanReviewCreate(BaseModel):
     usefulnessScore: int | None = Field(default=None, ge=1, le=5)
 
 
+class WorkerEnrollmentCreate(BaseModel):
+    name: str = Field(min_length=2, max_length=80)
+    requestedModelDigest: str | None = None
+    requiredContextLength: int = Field(default=8192, ge=1024, le=1_000_000)
+
+
+class WorkerEnrollmentCanaryCreate(BaseModel):
+    requestedModelDigest: str | None = None
+    requiredContextLength: int = Field(default=8192, ge=1024, le=1_000_000)
+
+
 class Catalog:
     def __init__(self) -> None:
         self.database_url = os.getenv("DATABASE_URL", "").strip()
@@ -398,7 +409,15 @@ class Catalog:
                     return True
         return False
 
-    def worker_readiness(self, organization_id: str, model_digest: str | None = None) -> dict:
+    def worker_readiness(
+        self,
+        organization_id: str,
+        model_digest: str | None = None,
+        required_context_length: int | None = None,
+        required_prompt_manifest_hash: str | None = None,
+        required_output_schema_hash: str | None = None,
+        required_worker_version: str | None = None,
+    ) -> dict:
         """Explain worker compatibility instead of collapsing it to a boolean."""
         configured = self.configured_model_policies(organization_id)
         default_digest = os.getenv("OLLAMA_DEFAULT_MODEL_DIGEST", "").strip()
@@ -410,6 +429,21 @@ class Catalog:
             }
         if model_digest is None and default_digest:
             model_digest = default_digest
+        required_prompt_manifest_hash = (
+            required_prompt_manifest_hash
+            or os.getenv("OLLAMA_REQUIRED_PROMPT_MANIFEST_HASH", "").strip()
+            or None
+        )
+        required_output_schema_hash = (
+            required_output_schema_hash
+            or os.getenv("OLLAMA_REQUIRED_OUTPUT_SCHEMA_HASH", "").strip()
+            or None
+        )
+        required_worker_version = (
+            required_worker_version
+            or os.getenv("OLLAMA_REQUIRED_WORKER_VERSION", "").strip()
+            or None
+        )
         workers = self.list_workers(organization_id)
         if not workers:
             return {"ready": False, "reasonCode": "no_enrolled_worker", "compatibleCount": 0}
@@ -438,8 +472,13 @@ class Catalog:
                 if newest_seen
                 else None,
             }
+        preflight_max_age_seconds = int(os.getenv("OLLAMA_PREFLIGHT_MAX_AGE_SECONDS", "0") or "0")
         qualified = []
         digest_seen = False
+        newest_preflight = None
+        max_qualified_context_length = 0
+        compatibility_failure = False
+        policy_mismatch = False
         for worker in fresh:
             models = (worker.get("capabilities") or {}).get("models", [])
             for model in models:
@@ -447,11 +486,64 @@ class Catalog:
                     continue
                 digest_seen = True
                 if model.get("readiness") == "preflighted" and model.get("preflightCompletedAt"):
+                    preflight_completed = model.get("preflightCompletedAt")
+                    if isinstance(preflight_completed, str):
+                        try:
+                            preflight_completed = datetime.fromisoformat(
+                                preflight_completed.replace("Z", "+00:00")
+                            )
+                        except ValueError:
+                            preflight_completed = None
+                    context_length = int(model.get("contextLength") or 0)
+                    if context_length > max_qualified_context_length:
+                        max_qualified_context_length = context_length
+                    if preflight_completed and (
+                        newest_preflight is None or preflight_completed > newest_preflight
+                    ):
+                        newest_preflight = preflight_completed
+                    if required_context_length and context_length < required_context_length:
+                        compatibility_failure = True
+                        continue
+                    if required_prompt_manifest_hash and model.get("promptManifestHash") != required_prompt_manifest_hash:
+                        compatibility_failure = True
+                        policy_mismatch = True
+                        continue
+                    if required_output_schema_hash and model.get("outputSchemaHash") != required_output_schema_hash:
+                        compatibility_failure = True
+                        policy_mismatch = True
+                        continue
+                    if required_worker_version and worker.get("worker_version") != required_worker_version:
+                        compatibility_failure = True
+                        policy_mismatch = True
+                        continue
+                    if preflight_max_age_seconds > 0 and preflight_completed:
+                        if (now() - preflight_completed).total_seconds() > preflight_max_age_seconds:
+                            compatibility_failure = True
+                            continue
                     qualified.append((worker, model))
         if not digest_seen:
             return {"ready": False, "reasonCode": "digest_mismatch", "compatibleCount": 0}
         if not qualified:
-            return {"ready": False, "reasonCode": "preflight_incomplete", "compatibleCount": 0}
+            response = {
+                "ready": False,
+                "reasonCode": "preflight_incomplete",
+                "compatibleCount": 0,
+            }
+            if required_context_length:
+                response["requiredContextLength"] = required_context_length
+                response["maxQualifiedContextLength"] = max_qualified_context_length
+            if preflight_max_age_seconds > 0:
+                response["preflightMaxAgeSeconds"] = preflight_max_age_seconds
+                response["preflightExpired"] = bool(compatibility_failure and newest_preflight)
+            if required_prompt_manifest_hash:
+                response["requiredPromptManifestHash"] = required_prompt_manifest_hash
+            if required_output_schema_hash:
+                response["requiredOutputSchemaHash"] = required_output_schema_hash
+            if required_worker_version:
+                response["requiredWorkerVersion"] = required_worker_version
+            if policy_mismatch:
+                response["policyCompatibilityMismatch"] = True
+            return response
         return {
             "ready": True,
             "reasonCode": "ready",
@@ -461,6 +553,10 @@ class Catalog:
             "lastHeartbeatAgeSeconds": int((now() - newest_seen).total_seconds())
             if newest_seen
             else 0,
+            "preflightCompletedAt": newest_preflight.isoformat() if newest_preflight else None,
+            "preflightAgeSeconds": int((now() - newest_preflight).total_seconds())
+            if newest_preflight
+            else None,
         }
 
     def _advertised_models(self, organization_id: str, *, fresh_only: bool) -> list[dict]:
@@ -1043,6 +1139,8 @@ class Catalog:
                                 body.code,
                             ),
                         )
+            if not retry:
+                record_domain_event("ollama_job_terminal", terminal_state)
             record_domain_event("ollama_job_failure", body.code)
             return True
         with self.lock:
@@ -1073,6 +1171,11 @@ class Catalog:
                     {"code": body.code, "message": body.message},
                 )
             )
+            if not retry:
+                record_domain_event(
+                    "ollama_job_terminal",
+                    "dead_letter" if body.retryable else "failed",
+                )
             record_domain_event("ollama_job_failure", body.code)
             return True
 
@@ -1584,6 +1687,114 @@ def create_worker(body: WorkerCreate) -> dict:
     if principal.role not in {"owner", "admin"}:
         raise HTTPException(status_code=403, detail="Owner or admin role required")
     return catalog.create_worker(principal.organization_id, principal.subject, body.name)
+
+
+@router.post("/llm/worker-enrollments", status_code=201)
+def create_worker_enrollment(body: WorkerEnrollmentCreate) -> dict:
+    principal = _principal()
+    if principal.role not in {"owner", "admin"}:
+        raise HTTPException(status_code=403, detail="Owner or admin role required")
+    created = catalog.create_worker(principal.organization_id, principal.subject, body.name)
+    readiness = catalog.worker_readiness(
+        principal.organization_id,
+        body.requestedModelDigest,
+        body.requiredContextLength,
+    )
+    return {
+        "enrollmentId": created["id"],
+        "workerId": created["id"],
+        "workerName": created["name"],
+        "token": created["token"],
+        "readiness": readiness,
+    }
+
+
+@router.get("/llm/worker-enrollments/{enrollment_id}")
+def get_worker_enrollment(
+    enrollment_id: str,
+    requested_model_digest: str | None = Query(default=None, alias="requestedModelDigest"),
+    required_context_length: int = Query(default=8192, alias="requiredContextLength", ge=1024, le=1_000_000),
+) -> dict:
+    principal = _principal()
+    if principal.role not in {"owner", "admin"}:
+        raise HTTPException(status_code=403, detail="Owner or admin role required")
+    worker = next(
+        (item for item in catalog.list_workers(principal.organization_id) if str(item.get("id")) == enrollment_id),
+        None,
+    )
+    if worker is None:
+        raise HTTPException(status_code=404, detail="Worker enrollment not found")
+    readiness = catalog.worker_readiness(
+        principal.organization_id,
+        requested_model_digest,
+        required_context_length,
+    )
+    return {
+        "enrollmentId": enrollment_id,
+        "worker": worker,
+        "readiness": readiness,
+    }
+
+
+@router.post("/llm/worker-enrollments/{enrollment_id}/rotate")
+def rotate_worker_enrollment(enrollment_id: str) -> dict:
+    principal = _principal()
+    if principal.role not in {"owner", "admin"}:
+        raise HTTPException(status_code=403, detail="Owner or admin role required")
+    result = catalog.rotate_worker(principal.organization_id, enrollment_id)
+    if not result:
+        raise HTTPException(status_code=404, detail="Active worker enrollment not found")
+    return {
+        "enrollmentId": enrollment_id,
+        "workerId": result["id"],
+        "workerName": result["name"],
+        "token": result["token"],
+    }
+
+
+@router.post("/llm/worker-enrollments/{enrollment_id}/canary", status_code=202)
+def run_worker_enrollment_canary(enrollment_id: str, body: WorkerEnrollmentCanaryCreate) -> dict:
+    principal = _principal()
+    if principal.role not in {"owner", "admin"}:
+        raise HTTPException(status_code=403, detail="Owner or admin role required")
+    worker = next(
+        (item for item in catalog.list_workers(principal.organization_id) if str(item.get("id")) == enrollment_id),
+        None,
+    )
+    if worker is None:
+        raise HTTPException(status_code=404, detail="Worker enrollment not found")
+    readiness = catalog.worker_readiness(
+        principal.organization_id,
+        body.requestedModelDigest,
+        body.requiredContextLength,
+    )
+    if not readiness.get("ready"):
+        raise HTTPException(status_code=409, detail={"code": readiness.get("reasonCode", "worker_offline")})
+    canary = catalog.enqueue(
+        principal.organization_id,
+        LlmJobCreate(
+            workspaceId="worker-enrollment-canary",
+            thesis="Canary: verify enrolled local worker can execute the governed adversarial pipeline.",
+            claims=["Canary should return structured output under schema constraints."],
+            evidence=[
+                {
+                    "id": "canary-evidence-1",
+                    "title": "Synthetic canary evidence",
+                    "subjectInstrumentId": "ticker:CANARY",
+                    "observedAt": now().isoformat(),
+                }
+            ],
+            observationCutoff=now(),
+            role="bear",
+            requestedModelDigest=body.requestedModelDigest,
+            requiredContextLength=body.requiredContextLength,
+        ),
+    )
+    return {
+        "enrollmentId": enrollment_id,
+        "job": canary,
+        "readiness": readiness,
+    }
 
 
 @router.get("/llm/workers")

@@ -838,6 +838,7 @@ def operational_audit(limit: int = 100) -> dict:
 
 def record_domain_event(name: str, label: str = "total") -> None:
     telemetry.increment(name, label)
+    LOGGER.info(json.dumps({"event": "domain_event", "name": name, "label": label}))
 
 
 def record_domain_measurement(name: str, value: int) -> None:

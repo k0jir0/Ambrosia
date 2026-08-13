@@ -1291,6 +1291,52 @@ resource "aws_cloudwatch_log_metric_filter" "persistence_failure" {
   }
 }
 
+resource "aws_cloudwatch_log_metric_filter" "ollama_readiness_blockers" {
+  for_each = {
+    no_enrolled_worker    = "NO_ENROLLED_WORKER"
+    worker_offline        = "WORKER_OFFLINE"
+    digest_mismatch       = "DIGEST_MISMATCH"
+    preflight_incomplete  = "PREFLIGHT_INCOMPLETE"
+  }
+  name           = "${local.name}-${each.key}"
+  pattern        = "\"api_problem code=${each.value}\""
+  log_group_name = aws_cloudwatch_log_group.api.name
+  metric_transformation {
+    name      = replace(title(replace(each.key, "_", " ")), " ", "")
+    namespace = "Ambrosia/${local.name}"
+    value     = "1"
+  }
+}
+
+resource "aws_cloudwatch_log_metric_filter" "ollama_domain_events" {
+  for_each = {
+    lease_lost = {
+      metric  = "OllamaLeaseLost"
+      pattern = "{ $.event = \"domain_event\" && $.name = \"ollama_job_failure\" && $.label = \"lease_lost\" }"
+    }
+    verification_rejected = {
+      metric  = "OllamaVerificationRejected"
+      pattern = "{ $.event = \"domain_event\" && $.name = \"ollama_job_failure\" && $.label = \"verification_rejected\" }"
+    }
+    stale_fence = {
+      metric  = "OllamaStaleFenceRejected"
+      pattern = "{ $.event = \"domain_event\" && $.name = \"ollama_stale_fence_rejected\" && $.label = \"heartbeat\" }"
+    }
+    dead_letter = {
+      metric  = "OllamaDeadLetter"
+      pattern = "{ $.event = \"domain_event\" && $.name = \"ollama_job_terminal\" && $.label = \"dead_letter\" }"
+    }
+  }
+  name           = "${local.name}-${each.key}"
+  pattern        = each.value.pattern
+  log_group_name = aws_cloudwatch_log_group.api.name
+  metric_transformation {
+    name      = each.value.metric
+    namespace = "Ambrosia/${local.name}"
+    value     = "1"
+  }
+}
+
 resource "aws_cloudwatch_metric_alarm" "governed_path_failures" {
   for_each = {
     report_artifact = "ReportArtifactFailure"
@@ -1303,6 +1349,44 @@ resource "aws_cloudwatch_metric_alarm" "governed_path_failures" {
   metric_name         = each.value
   namespace           = "Ambrosia/${local.name}"
   period              = 60
+  statistic           = "Sum"
+  threshold           = 0
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = [aws_sns_topic.alarms.arn]
+}
+
+resource "aws_cloudwatch_metric_alarm" "ollama_readiness_blockers" {
+  for_each = {
+    no_enrolled_worker   = "NoEnrolledWorker"
+    worker_offline       = "WorkerOffline"
+    digest_mismatch      = "DigestMismatch"
+    preflight_incomplete = "PreflightIncomplete"
+  }
+  alarm_name          = "${local.name}-${each.key}"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 1
+  metric_name         = each.value
+  namespace           = "Ambrosia/${local.name}"
+  period              = 300
+  statistic           = "Sum"
+  threshold           = 0
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = [aws_sns_topic.alarms.arn]
+}
+
+resource "aws_cloudwatch_metric_alarm" "ollama_domain_failures" {
+  for_each = {
+    lease_lost            = "OllamaLeaseLost"
+    verification_rejected = "OllamaVerificationRejected"
+    stale_fence           = "OllamaStaleFenceRejected"
+    dead_letter           = "OllamaDeadLetter"
+  }
+  alarm_name          = "${local.name}-${each.key}"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 1
+  metric_name         = each.value
+  namespace           = "Ambrosia/${local.name}"
+  period              = 300
   statistic           = "Sum"
   threshold           = 0
   treat_missing_data  = "notBreaching"

@@ -9,6 +9,7 @@ import {
   KeyRound,
   Laptop,
   Loader2,
+  RefreshCw,
   Shield,
   Trash2,
   UserRound,
@@ -17,13 +18,19 @@ import {
 import {
   changeAccountPassword,
   createLocalWorker,
+  createWorkerEnrollment,
   getAccountSession,
   getActivationReport,
+  getProviderStatus,
+  getWorkerEnrollmentStatus,
   getGovernedArtifactDownload,
   listAccountSessions,
   listGovernedArtifacts,
   listLlmRuns,
   listLocalWorkers,
+  runWorkerEnrollmentCanary,
+  type OllamaModelPolicy,
+  rotateLocalWorker,
   revokeAccountSession,
   revokeLocalWorker,
   updateAccountProfile,
@@ -33,6 +40,9 @@ import {
   type GovernedArtifactRecord,
   type LlmRunRecord,
   type LocalWorkerRecord,
+  type WorkerEnrollmentRecord,
+  type WorkerEnrollmentStatus,
+  type OllamaWorkerReadiness,
 } from "@/lib/api";
 
 const card = "rounded-xl border border-line bg-paper p-5 sm:p-6";
@@ -45,6 +55,18 @@ const ACTIVATION_STEPS = [
   ["outcome_recorded", "Outcome recorded"],
 ] as const;
 
+function readinessGuidance(readiness: OllamaWorkerReadiness | null): string {
+  const reason = readiness?.reasonCode ?? "worker_offline";
+  if (reason === "no_enrolled_worker") return "Create a worker credential, install the local worker beside Ollama, then run preflight.";
+  if (reason === "worker_revoked") return "All credentials are revoked. Rotate or create a new worker credential and restart the worker.";
+  if (reason === "worker_offline") return "A credential exists but no fresh heartbeat is present. Start Ollama and the local worker process.";
+  if (reason === "digest_mismatch") return "The worker is online but does not advertise the selected approved model digest.";
+  if (reason === "preflight_incomplete") return "Digest detected but worker preflight is incomplete. Run diagnose/preflight and retry.";
+  if (reason === "model_policy_ambiguous") return "No unambiguous model policy is configured. Set a default digest or pick one explicitly.";
+  if (reason === "tenant_identity_required") return "Sign in with a tenant-bound account to evaluate worker readiness.";
+  return "Worker is ready for tenant-scoped Ollama operations.";
+}
+
 export default function AdminPage() {
   const [profile, setProfile] = useState<AccountSession | null>(null);
   const [sessions, setSessions] = useState<AccountSessionRecord[]>([]);
@@ -52,6 +74,12 @@ export default function AdminPage() {
   const [runs, setRuns] = useState<LlmRunRecord[]>([]);
   const [activation, setActivation] = useState<ActivationReport | null>(null);
   const [artifacts, setArtifacts] = useState<GovernedArtifactRecord[]>([]);
+  const [workerReadiness, setWorkerReadiness] = useState<OllamaWorkerReadiness | null>(null);
+  const [ollamaPolicies, setOllamaPolicies] = useState<OllamaModelPolicy[]>([]);
+  const [selectedDigest, setSelectedDigest] = useState("");
+  const [activeEnrollment, setActiveEnrollment] = useState<WorkerEnrollmentRecord | null>(null);
+  const [enrollmentStatus, setEnrollmentStatus] = useState<WorkerEnrollmentStatus | null>(null);
+  const [canaryStatus, setCanaryStatus] = useState("");
   const [workerToken, setWorkerToken] = useState("");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
@@ -73,8 +101,90 @@ export default function AdminPage() {
       setRuns(runRows.runs);
       setActivation(activationRows);
       setArtifacts(artifactRows.artifacts);
+      try {
+        const providerStatus = await getProviderStatus();
+        setWorkerReadiness(providerStatus.ollamaWorkerReadiness);
+        setOllamaPolicies(providerStatus.ollamaModelPolicies ?? []);
+        setSelectedDigest((current) =>
+          (providerStatus.ollamaModelPolicies ?? []).some((item) => item.digest === current)
+            ? current
+            : ((providerStatus.ollamaModelPolicies ?? []).find((item) => item.default)?.digest
+              ?? providerStatus.ollamaModelPolicies?.[0]?.digest
+              ?? "")
+        );
+      } catch {
+        setWorkerReadiness(null);
+        setOllamaPolicies([]);
+        setSelectedDigest("");
+      }
+    } else {
+      setWorkerReadiness(null);
+      setOllamaPolicies([]);
+      setSelectedDigest("");
     }
   }, []);
+
+  useEffect(() => {
+    if (!activeEnrollment?.enrollmentId) return;
+    let cancelled = false;
+    const contextLength = ollamaPolicies.find((item) => item.digest === selectedDigest)?.contextLength ?? 8192;
+    const poll = async () => {
+      try {
+        const status = await getWorkerEnrollmentStatus(activeEnrollment.enrollmentId, {
+          requestedModelDigest: selectedDigest || undefined,
+          requiredContextLength: contextLength,
+        });
+        if (!cancelled) setEnrollmentStatus(status);
+      } catch {
+        if (!cancelled) setEnrollmentStatus(null);
+      }
+    };
+    void poll();
+    const timer = window.setInterval(() => {
+      void poll();
+    }, 10000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [activeEnrollment?.enrollmentId, ollamaPolicies, selectedDigest]);
+
+  async function startEnrollment(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const data = new FormData(form);
+    setError("");
+    setCanaryStatus("");
+    try {
+      const contextLength = ollamaPolicies.find((item) => item.digest === selectedDigest)?.contextLength ?? 8192;
+      const enrollment = await createWorkerEnrollment({
+        name: String(data.get("name") ?? "").trim(),
+        requestedModelDigest: selectedDigest || undefined,
+        requiredContextLength: contextLength,
+      });
+      setActiveEnrollment(enrollment);
+      setWorkerToken(enrollment.token);
+      setMessage("Worker enrollment created. Install worker token, run preflight, then verify readiness.");
+      await refresh();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Enrollment creation failed.");
+    }
+  }
+
+  async function runEnrollmentCanary() {
+    if (!activeEnrollment?.enrollmentId) return;
+    setError("");
+    try {
+      const contextLength = ollamaPolicies.find((item) => item.digest === selectedDigest)?.contextLength ?? 8192;
+      const queued = await runWorkerEnrollmentCanary(activeEnrollment.enrollmentId, {
+        requestedModelDigest: selectedDigest || undefined,
+        requiredContextLength: contextLength,
+      });
+      setCanaryStatus(`Canary queued as ${queued.job.id}.`);
+    } catch (cause) {
+      setCanaryStatus(cause instanceof Error ? cause.message : "Canary request failed.");
+    }
+  }
 
   useEffect(() => {
     refresh()
@@ -165,6 +275,61 @@ export default function AdminPage() {
       {canAdminister ? (
         <section className={card}>
           <div className="flex items-center gap-3">
+            <Cpu className="h-5 w-5 text-teal" />
+            <div>
+              <h2 className="font-semibold">Worker onboarding wizard</h2>
+              <p className="text-xs text-ink/48">Create one enrollment, bind it to an approved digest, and watch readiness transition to ready.</p>
+            </div>
+          </div>
+          <form onSubmit={startEnrollment} className="mt-4 grid gap-3 md:grid-cols-[1fr_1fr_auto]">
+            <input
+              name="name"
+              required
+              minLength={2}
+              placeholder="Staging research workstation"
+              className="focus-ring rounded-md border border-line bg-fog px-3 py-2.5 text-sm"
+            />
+            <select
+              value={selectedDigest}
+              onChange={(event) => setSelectedDigest(event.target.value)}
+              className="focus-ring rounded-md border border-line bg-fog px-3 py-2.5 text-sm"
+            >
+              {ollamaPolicies.length === 0 ? <option value="">No approved model policy configured</option> : null}
+              {ollamaPolicies.map((policy) => (
+                <option key={policy.digest} value={policy.digest}>
+                  {policy.name ?? "Approved model"} · {policy.digest.slice(0, 18)} · ctx {policy.contextLength ?? 8192}
+                </option>
+              ))}
+            </select>
+            <button className="focus-ring rounded-md bg-teal px-4 py-2.5 text-sm font-bold text-[#071411]">Create enrollment</button>
+          </form>
+          <div className="mt-4 rounded-md border border-line bg-fog/65 p-3 text-xs">
+            <p className="font-semibold uppercase tracking-[0.14em] text-ink/55">Enrollment status</p>
+            <p className="mt-2 text-sm font-semibold text-ink">
+              {(enrollmentStatus?.readiness?.reasonCode ?? activeEnrollment?.readiness?.reasonCode ?? "worker_offline").replaceAll("_", " ")}
+            </p>
+            <p className="mt-2 text-ink/58">{readinessGuidance(enrollmentStatus?.readiness ?? activeEnrollment?.readiness ?? workerReadiness)}</p>
+            {activeEnrollment ? (
+              <p className="mt-2 text-ink/58">Enrollment: {activeEnrollment.enrollmentId}</p>
+            ) : null}
+            <div className="mt-3 flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => void runEnrollmentCanary()}
+                disabled={!activeEnrollment}
+                className="focus-ring rounded-md border border-line px-3 py-2 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Run one-click canary
+              </button>
+            </div>
+            {canaryStatus ? <p className="mt-2 text-ink/58">{canaryStatus}</p> : null}
+          </div>
+        </section>
+      ) : null}
+
+      {canAdminister ? (
+        <section className={card}>
+          <div className="flex items-center gap-3">
             <BarChart3 className="h-5 w-5 text-teal" />
             <div>
               <h2 className="font-semibold">Activation evidence</h2>
@@ -227,9 +392,17 @@ export default function AdminPage() {
       {canAdminister ? (
         <section className={card}>
           <div className="flex items-center gap-3"><Laptop className="h-5 w-5 text-teal" /><div><h2 className="font-semibold">Local Ollama workers</h2><p className="text-xs text-ink/48">Outbound-only organization queue; port 11434 stays on loopback.</p></div></div>
+          <div className="mt-4 rounded-md border border-line bg-fog/60 p-3">
+            <p className="text-xs font-semibold uppercase tracking-[0.14em] text-ink/55">Tenant readiness</p>
+            <p className="mt-2 text-sm font-semibold text-ink">
+              {(workerReadiness?.reasonCode ?? "worker_offline").replaceAll("_", " ")}
+              {workerReadiness?.lastHeartbeatAgeSeconds != null ? ` · last heartbeat ${workerReadiness.lastHeartbeatAgeSeconds}s ago` : ""}
+            </p>
+            <p className="mt-2 text-xs text-ink/58">{readinessGuidance(workerReadiness)}</p>
+          </div>
           {workerToken ? <div className="mt-5 rounded-md border border-amber-300/30 bg-amber-300/10 p-4"><p className="text-xs font-semibold uppercase tracking-wide text-amber-200">Copy once</p><code className="mt-2 block break-all text-xs text-ink/72">{workerToken}</code><p className="mt-3 text-xs text-ink/55">Set this as AMBROSIA_WORKER_TOKEN. The database stores only its keyed hash.</p></div> : null}
           <form onSubmit={addWorker} className="mt-5 flex flex-col gap-3 sm:flex-row"><input name="name" required minLength={2} placeholder="Research workstation" className="focus-ring min-w-0 flex-1 rounded-md border border-line bg-fog px-3 py-2.5 text-sm" /><button className="focus-ring rounded-md bg-teal px-4 py-2.5 text-sm font-bold text-[#071411]">Create credential</button></form>
-          <div className="mt-4 divide-y divide-line">{workers.map((worker) => <div key={worker.id} className="flex items-center justify-between gap-3 py-3"><div><p className="text-sm font-medium">{worker.name}</p><p className="text-xs text-ink/48">{worker.last_seen_at ? `Last seen ${new Date(worker.last_seen_at).toLocaleString()}` : "Not connected yet"}</p></div><button onClick={async () => { await revokeLocalWorker(worker.id); await refresh(); }} className="focus-ring rounded-md border border-line p-2" aria-label={`Revoke ${worker.name}`}><Trash2 className="h-4 w-4" /></button></div>)}</div>
+          <div className="mt-4 divide-y divide-line">{workers.map((worker) => <div key={worker.id} className="flex items-center justify-between gap-3 py-3"><div><p className="text-sm font-medium">{worker.name}</p><p className="text-xs text-ink/48">{worker.last_seen_at ? `Last seen ${new Date(worker.last_seen_at).toLocaleString()}` : "Not connected yet"}</p></div><div className="flex items-center gap-2"><button onClick={async () => { const rotated = await rotateLocalWorker(worker.id); setWorkerToken(rotated.token); await refresh(); }} className="focus-ring rounded-md border border-line p-2" aria-label={`Rotate ${worker.name}`}><RefreshCw className="h-4 w-4" /></button><button onClick={async () => { await revokeLocalWorker(worker.id); await refresh(); }} className="focus-ring rounded-md border border-line p-2" aria-label={`Revoke ${worker.name}`}><Trash2 className="h-4 w-4" /></button></div></div>)}</div>
         </section>
       ) : null}
 

@@ -9,7 +9,7 @@ import pytest
 import time as time_module
 
 from app import coordinator
-from app.main import app
+from app.main import app, ollama_bridge as main_ollama_bridge
 from app.llm_catalog import DisconfirmationOutput, catalog as llm_catalog
 from app.ollama_bridge import enabled as ollama_bridge_enabled
 from app.store import ReviewStore
@@ -363,6 +363,56 @@ def test_provider_status_and_tool_boundaries_endpoints() -> None:
     assert "Risk_tools" in names
 
 
+def test_provider_status_supports_context_and_policy_hash_predicates() -> None:
+    credential = client.post("/llm/workers", json={"name": "Policy compatibility worker"}).json()
+    headers = {"Authorization": f"Bearer {credential['token']}"}
+    response = client.post(
+        "/local-worker/capabilities",
+        headers=headers,
+        json={
+            "workerVersion": "ambrosia-local-worker.v3",
+            "ollamaVersion": "0.11.4",
+            "models": [
+                {
+                    **_qualified_model("llama3.1:8b", "sha256:policy-test", context_length=4096),
+                    "promptManifestHash": "manifest-a",
+                    "outputSchemaHash": "schema-a",
+                }
+            ],
+        },
+    )
+    assert response.status_code == 200
+
+    mismatch = client.get(
+        "/providers/status",
+        params={
+            "requestedModelDigest": "sha256:policy-test",
+            "requestedContextLength": 4096,
+            "requiredPromptManifestHash": "manifest-b",
+            "requiredOutputSchemaHash": "schema-a",
+            "requiredWorkerVersion": "ambrosia-local-worker.v3",
+        },
+    )
+    assert mismatch.status_code == 200
+    readiness = mismatch.json()["ollamaWorkerReadiness"]
+    assert readiness["ready"] is False
+    assert readiness["reasonCode"] == "preflight_incomplete"
+    assert readiness["policyCompatibilityMismatch"] is True
+
+    compatible = client.get(
+        "/providers/status",
+        params={
+            "requestedModelDigest": "sha256:policy-test",
+            "requestedContextLength": 4096,
+            "requiredPromptManifestHash": "manifest-a",
+            "requiredOutputSchemaHash": "schema-a",
+            "requiredWorkerVersion": "ambrosia-local-worker.v3",
+        },
+    )
+    assert compatible.status_code == 200
+    assert compatible.json()["ollamaWorkerReadiness"]["ready"] is True
+
+
 def test_packet_agents_run_populates_specialist_outputs_with_provider_fallback() -> None:
     packet_id = "packet-agents-1"
     create_response = client.post("/packets", json=_build_packet_payload(packet_id))
@@ -675,6 +725,126 @@ def test_rejected_ollama_output_completes_as_human_review_without_packet_mutatio
     assert client.get(f"/packets/{packet_id}").json()["packetVersion"] == 1
 
 
+def test_operation_and_proposal_are_hidden_from_other_tenants(monkeypatch) -> None:
+    monkeypatch.setenv("OLLAMA_REVIEW_BRIDGE_ENABLED", "true")
+    monkeypatch.setenv(
+        "AMBROSIA_DEV_ORGANIZATION_ID", "00000000-0000-0000-0000-0000000000a1"
+    )
+    digest = "sha256:tenant-bound-proposal"
+    packet_id = "packet-tenant-bound-proposal"
+    assert client.post("/packets", json=_build_packet_payload(packet_id)).status_code == 200
+    headers = _enroll_ollama_worker(digest)
+    operation = client.post(
+        f"/packets/{packet_id}/agent-operations",
+        json={"providerMode": "ollama", "requestedModelDigest": digest},
+    ).json()
+    claim = client.post(
+        "/local-worker/claim",
+        headers=headers,
+        json={"leaseSeconds": 120, "models": [_qualified_model("test", digest)]},
+    ).json()["job"]
+    result = _ollama_result(claim)
+    result["modelDigest"] = digest
+    result["output"]["materialClaims"][0]["supportingEvidenceIds"] = ["invented-source"]
+    result["output"]["evidenceReferences"] = ["invented-source"]
+    result["resultHash"] = hashlib.sha256(
+        json.dumps(result["output"], sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    assert (
+        client.post(
+            f"/local-worker/jobs/{claim['id']}/result", headers=headers, json=result
+        ).status_code
+        == 200
+    )
+    assert client.get(f"/operations/{operation['id']}/proposal").status_code == 200
+
+    monkeypatch.setenv(
+        "AMBROSIA_DEV_ORGANIZATION_ID", "00000000-0000-0000-0000-0000000000b2"
+    )
+    assert client.get(f"/operations/{operation['id']}").status_code == 404
+    assert client.get(f"/operations/{operation['id']}/proposal").status_code == 404
+    assert client.get(f"/packets/{packet_id}/agent-operations").json()["operations"] == []
+
+
+def test_auto_admitted_operation_binds_baseline_provenance_for_report_diff(monkeypatch) -> None:
+    monkeypatch.setenv("OLLAMA_REVIEW_BRIDGE_ENABLED", "true")
+    digest = "sha256:auto-admitted-baseline"
+    packet_id = "packet-auto-admitted-baseline"
+    assert client.post("/packets", json=_build_packet_payload(packet_id)).status_code == 200
+    headers = _enroll_ollama_worker(digest)
+    operation = client.post(
+        f"/packets/{packet_id}/agent-operations",
+        json={"providerMode": "ollama", "requestedModelDigest": digest},
+    ).json()
+    claim = client.post(
+        "/local-worker/claim",
+        headers=headers,
+        json={"leaseSeconds": 120, "models": [_qualified_model("test", digest)]},
+    ).json()["job"]
+    result = _ollama_result(claim)
+    result["modelDigest"] = digest
+    result["resultHash"] = hashlib.sha256(
+        json.dumps(result["output"], sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    assert (
+        client.post(
+            f"/local-worker/jobs/{claim['id']}/result", headers=headers, json=result
+        ).status_code
+        == 200
+    )
+    diff = client.post(f"/packets/{packet_id}/report/diff")
+    assert diff.status_code == 200, diff.text
+    assert diff.json()["provenance"]["baselineBoundAtAdmission"] is True
+    proposal = client.get(f"/operations/{operation['id']}/proposal").json()
+    assert proposal["admissionState"] == "auto_admitted"
+    assert proposal["proposalEvents"][-1]["eventType"] == "proposal.auto_admitted"
+    assert proposal["proposalEvents"][-1]["payload"]["baselineReport"]["packetVersion"] == 1
+
+
+def test_report_diff_fails_when_admitted_baseline_provenance_is_missing(monkeypatch) -> None:
+    monkeypatch.setenv("OLLAMA_REVIEW_BRIDGE_ENABLED", "true")
+    digest = "sha256:missing-baseline-provenance"
+    packet_id = "packet-missing-baseline-provenance"
+    assert client.post("/packets", json=_build_packet_payload(packet_id)).status_code == 200
+    headers = _enroll_ollama_worker(digest)
+    client.post(
+        f"/packets/{packet_id}/agent-operations",
+        json={"providerMode": "ollama", "requestedModelDigest": digest},
+    ).json()
+    claim = client.post(
+        "/local-worker/claim",
+        headers=headers,
+        json={"leaseSeconds": 120, "models": [_qualified_model("test", digest)]},
+    ).json()["job"]
+    result = _ollama_result(claim)
+    result["modelDigest"] = digest
+    result["resultHash"] = hashlib.sha256(
+        json.dumps(result["output"], sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    assert (
+        client.post(
+            f"/local-worker/jobs/{claim['id']}/result", headers=headers, json=result
+        ).status_code
+        == 200
+    )
+
+    original_public_proposal = main_ollama_bridge.public_proposal
+
+    def _without_baseline(proposal: dict) -> dict:
+        value = original_public_proposal(proposal)
+        for event in value.get("proposalEvents", []):
+            if event.get("eventType") in {"proposal.admitted", "proposal.auto_admitted"}:
+                payload = dict(event.get("payload") or {})
+                payload.pop("baselineReport", None)
+                event["payload"] = payload
+        return value
+
+    monkeypatch.setattr(main_ollama_bridge, "public_proposal", _without_baseline)
+    diff = client.post(f"/packets/{packet_id}/report/diff")
+    assert diff.status_code == 409, diff.text
+    assert diff.json()["detail"]["code"] == "report_diff_missing_baseline_provenance"
+
+
 def test_human_correction_is_revalidated_and_admitted_exactly_once(monkeypatch) -> None:
     monkeypatch.setenv("OLLAMA_REVIEW_BRIDGE_ENABLED", "true")
     digest = "sha256:human-correction"
@@ -790,6 +960,8 @@ def test_human_correction_is_revalidated_and_admitted_exactly_once(monkeypatch) 
     assert diff.json()["beforePacketVersion"] == 1
     assert diff.json()["afterPacketVersion"] == 2
     assert diff.json()["provenance"]["admittedClaimsOnly"] is True
+    assert diff.json()["provenance"]["baselineBoundAtAdmission"] is True
+    assert diff.json()["provenance"]["baselineReportHash"]
     assert diff.json()["provenance"]["proposalId"] == proposal["id"]
     reviewed = client.get(f"/operations/{operation['id']}/proposal").json()
     assert reviewed["reviewerDecisionHash"]
@@ -797,6 +969,7 @@ def test_human_correction_is_revalidated_and_admitted_exactly_once(monkeypatch) 
         "accept_with_human_correction"
     )
     assert reviewed["proposalEvents"][-1]["eventType"] == "proposal.admitted"
+    assert reviewed["proposalEvents"][-1]["payload"]["baselineReport"]["packetVersion"] == 1
 
     rollback = client.post(
         f"/operations/{operation['id']}/rollback",

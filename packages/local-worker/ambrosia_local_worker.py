@@ -708,6 +708,22 @@ def qualify_model(ollama, model):
 
 
 def build_capabilities(model, preflight):
+    preflight_input = preflight_job()["input"]
+    prompt_manifest_hash = canonical_hash(preflight_input.get("instructionManifest", {}))
+    output_schema_hash = canonical_hash(preflight_input.get("outputSchema", {}))
+    preflight_policy_hash = canonical_hash(
+        {
+            "modelDigest": preflight["modelDigest"],
+            "workerVersion": WORKER_VERSION,
+            "ollamaVersion": preflight["ollamaVersion"],
+            "contextLength": preflight["contextLength"],
+            "outputSchemaVersion": preflight_input.get("outputSchemaVersion"),
+            "promptTemplateId": preflight_input.get("promptTemplateId"),
+            "promptManifestHash": prompt_manifest_hash,
+            "outputSchemaHash": output_schema_hash,
+            "stageHashes": preflight.get("stageHashes", {}),
+        }
+    )
     return {
         "leaseSeconds": int(os.getenv("AMBROSIA_WORKER_LEASE_SECONDS", "300")),
         "workerVersion": WORKER_VERSION,
@@ -720,8 +736,14 @@ def build_capabilities(model, preflight):
                 "readiness": "preflighted",
                 "preflightCompletedAt": preflight["completedAt"],
                 "loadedModel": preflight["loadedModel"],
+                "promptManifestHash": prompt_manifest_hash,
+                "outputSchemaHash": output_schema_hash,
+                "preflightPolicyHash": preflight_policy_hash,
+                "stageHashes": preflight.get("stageHashes", {}),
+                "stageDurationsNs": preflight.get("stageDurationsNs", {}),
             }
         ],
+        "workerProtocolVersion": "local-worker-capability.v1",
         "maxConcurrentJobs": 1,
         "waitSeconds": 20,
     }

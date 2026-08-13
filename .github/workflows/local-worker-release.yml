@@ -1,0 +1,93 @@
+name: Local worker release
+
+on:
+  workflow_dispatch:
+    inputs:
+      include_signature:
+        description: "Set true to sign package catalog (requires cert on runner)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  package-worker:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Build local worker package
+        id: package
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $dist = Join-Path $PWD 'packages/local-worker/dist'
+          if (Test-Path -LiteralPath $dist) {
+            Remove-Item -LiteralPath $dist -Recurse -Force
+          }
+          New-Item -ItemType Directory -Path $dist | Out-Null
+
+          if ('${{ inputs.include_signature }}' -eq 'true') {
+            throw 'include_signature=true requires a certificate-enabled self-hosted runner.'
+          }
+
+          $result = & "$PWD/packages/local-worker/package-worker.ps1" -OutputDirectory $dist
+          $result | Format-List | Out-String | Write-Host
+
+          $zip = Join-Path $dist 'ambrosia-local-worker.zip'
+          $sha = Join-Path $dist 'ambrosia-local-worker.zip.sha256'
+          if (-not (Test-Path -LiteralPath $zip -PathType Leaf)) { throw 'worker ZIP was not created' }
+          if (-not (Test-Path -LiteralPath $sha -PathType Leaf)) { throw 'worker checksum was not created' }
+
+          $manifestHash = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          "ZIP_PATH=$zip" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "SHA_PATH=$sha" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "ZIP_SHA=$manifestHash" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Generate provenance metadata
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $provenance = [ordered]@{
+            schemaVersion = 'ambrosia-worker-provenance.v1'
+            workflow = '${{ github.workflow }}'
+            runId = '${{ github.run_id }}'
+            runAttempt = '${{ github.run_attempt }}'
+            repository = '${{ github.repository }}'
+            ref = '${{ github.ref }}'
+            sha = '${{ github.sha }}'
+            generatedAt = (Get-Date).ToUniversalTime().ToString('o')
+            artifact = [ordered]@{
+              fileName = 'ambrosia-local-worker.zip'
+              sha256 = $env:ZIP_SHA
+              checksumFile = 'ambrosia-local-worker.zip.sha256'
+            }
+          }
+          $path = Join-Path (Split-Path -Parent $env:ZIP_PATH) 'ambrosia-local-worker.provenance.json'
+          $json = $provenance | ConvertTo-Json -Depth 8
+          [System.IO.File]::WriteAllText($path, $json, [System.Text.UTF8Encoding]::new($false))
+          "PROVENANCE_PATH=$path" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Upload worker release artifact bundle
+        uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808 # v4
+        with:
+          name: ambrosia-local-worker-${{ github.sha }}
+          if-no-files-found: error
+          path: |
+            ${{ env.ZIP_PATH }}
+            ${{ env.SHA_PATH }}
+            ${{ env.PROVENANCE_PATH }}
+
+      - name: Publish summary
+        shell: pwsh
+        run: |
+          @"
+          ## Local worker package built
+
+          - Commit: `${{ github.sha }}`
+          - ZIP: `ambrosia-local-worker.zip`
+          - SHA256: `$env:ZIP_SHA`
+          - Provenance: `ambrosia-local-worker.provenance.json`
+          "@ | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8

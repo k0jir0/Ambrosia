@@ -47,7 +47,8 @@ export type ApiErrorCode =
   | "IDEMPOTENCY_KEY_REUSED" | "REPORT_GENERATION_IN_PROGRESS"
   | "PROPOSAL_CONTENT_RETAINED_DATA_DELETED"
   | "CORRECTION_REVERIFICATION_REQUIRED" | "CORRECTION_REVERIFICATION_FAILED"
-  | "MARKET_DATA_UNAVAILABLE" | "MODEL_POLICY_UNCONFIGURED" | "WORKER_OFFLINE"
+  | "MARKET_DATA_UNAVAILABLE" | "MODEL_POLICY_UNCONFIGURED" | "NO_ENROLLED_WORKER"
+  | "WORKER_OFFLINE" | "WORKER_REVOKED"
   | "DIGEST_MISMATCH" | "PREFLIGHT_INCOMPLETE" | "PROPOSAL_AWAITING_REVIEW"
   | "PROPOSAL_STALE" | "RATE_LIMITED" | "PAYLOAD_TOO_LARGE" | "INTERNAL_ERROR";
 
@@ -100,6 +101,11 @@ async function readJsonResponse<T>(response: Response): Promise<T> {
         detail: payload.detail, instance: payload.instance ?? "unknown",
         code: payload.code, requestId: payload.requestId, traceId: payload.traceId,
         retryable: payload.retryable ?? false,
+        dependency: payload.dependency,
+        operationId: payload.operationId,
+        packetId: payload.packetId,
+        expectedVersion: payload.expectedVersion,
+        actualVersion: payload.actualVersion,
       });
     }
     const detail = formatApiErrorDetail(payload?.detail);
@@ -488,6 +494,27 @@ export type LocalWorkerRecord = {
   created_at?: string;
 };
 
+export type WorkerEnrollmentRecord = {
+  enrollmentId: string;
+  workerId: string;
+  workerName: string;
+  token: string;
+  readiness: OllamaWorkerReadiness;
+};
+
+export type WorkerEnrollmentCredential = {
+  enrollmentId: string;
+  workerId: string;
+  workerName: string;
+  token: string;
+};
+
+export type WorkerEnrollmentStatus = {
+  enrollmentId: string;
+  worker: LocalWorkerRecord;
+  readiness: OllamaWorkerReadiness;
+};
+
 export function listLocalWorkers(): Promise<{ workers: LocalWorkerRecord[] }> {
   return authRequest("/llm/workers");
 }
@@ -500,6 +527,49 @@ export function createLocalWorker(name: string): Promise<{ id: string; name: str
 
 export function revokeLocalWorker(id: string): Promise<{ revoked: boolean }> {
   return authRequest(`/llm/workers/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
+export function rotateLocalWorker(id: string): Promise<{ id: string; name: string; token: string }> {
+  return authRequest(`/llm/workers/${encodeURIComponent(id)}/rotate`, { method: "POST" });
+}
+
+export function createWorkerEnrollment(body: {
+  name: string;
+  requestedModelDigest?: string;
+  requiredContextLength?: number;
+}): Promise<WorkerEnrollmentRecord> {
+  return authRequest("/llm/worker-enrollments", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+export function getWorkerEnrollmentStatus(
+  enrollmentId: string,
+  options: { requestedModelDigest?: string; requiredContextLength?: number } = {},
+): Promise<WorkerEnrollmentStatus> {
+  const params = new URLSearchParams();
+  if (options.requestedModelDigest) params.set("requestedModelDigest", options.requestedModelDigest);
+  if (options.requiredContextLength) params.set("requiredContextLength", String(options.requiredContextLength));
+  return authRequest(`/llm/worker-enrollments/${encodeURIComponent(enrollmentId)}${params.toString() ? `?${params.toString()}` : ""}`);
+}
+
+export function rotateWorkerEnrollment(enrollmentId: string): Promise<WorkerEnrollmentCredential> {
+  return authRequest(`/llm/worker-enrollments/${encodeURIComponent(enrollmentId)}/rotate`, {
+    method: "POST",
+  });
+}
+
+export function runWorkerEnrollmentCanary(
+  enrollmentId: string,
+  body: { requestedModelDigest?: string; requiredContextLength?: number },
+): Promise<{ enrollmentId: string; job: LlmJobStatus; readiness: OllamaWorkerReadiness }> {
+  return authRequest(`/llm/worker-enrollments/${encodeURIComponent(enrollmentId)}/canary`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
 }
 
 export type LlmRunRecord = {
@@ -685,7 +755,7 @@ export async function runPacketAgents(packetId: string, providerMode: ProviderMo
 export type AdmissionState = "proposed" | "auto_admitted" | "awaiting_human_review" | "human_admitted" | "corrected_and_admitted" | "rejected" | "stale" | "rolled_back";
 export type AgentOperation = { id: string; operationId: string; packetId: string; expectedPacketVersion: number; state: "queued" | "leased" | "running" | "verifying" | "repairing" | "retry_wait" | "completed" | "failed" | "dead_letter" | "expired" | "canceled" | "superseded"; stage: string; progress: number; requestedProvider: string; actualProvider?: string | null; workerId?: string | null; workerName?: string | null; modelName?: string | null; modelDigest?: string | null; verificationStatus?: string | null; proposalId?: string | null; admissionState?: AdmissionState | null; resultPacketVersion?: number | null; fallbackOperationId?: string | null; statusUrl: string; cancelUrl: string; traceparent: string; deadlineAt: string; createdAt: string; updatedAt: string; error?: { code: string; message: string } | null };
 export type OllamaModelPolicy = { name?: string; digest: string; contextLength?: number; approved: boolean; default?: boolean; workerCompatibility?: OllamaWorkerReadiness };
-export type OllamaWorkerReadiness = { ready: boolean; reasonCode: "ready" | "no_enrolled_worker" | "worker_offline" | "worker_revoked" | "preflight_incomplete" | "digest_mismatch" | "model_policy_ambiguous" | "tenant_identity_required"; compatibleCount: number; lastSeenAt?: string | null; lastHeartbeatAgeSeconds?: number | null; freshnessSeconds?: number };
+export type OllamaWorkerReadiness = { ready: boolean; reasonCode: "ready" | "no_enrolled_worker" | "worker_offline" | "worker_revoked" | "preflight_incomplete" | "digest_mismatch" | "model_policy_ambiguous" | "tenant_identity_required"; compatibleCount: number; lastSeenAt?: string | null; lastHeartbeatAgeSeconds?: number | null; freshnessSeconds?: number; preflightCompletedAt?: string | null; preflightAgeSeconds?: number | null; preflightMaxAgeSeconds?: number; preflightExpired?: boolean; requiredContextLength?: number; maxQualifiedContextLength?: number; requiredPromptManifestHash?: string; requiredOutputSchemaHash?: string; requiredWorkerVersion?: string; policyCompatibilityMismatch?: boolean };
 export type ProviderStatus = { activeTenantWorkerCompatible: boolean; ollamaWorkerReadiness: OllamaWorkerReadiness; ollamaModelPolicies: OllamaModelPolicy[]; [key: string]: unknown };
 export type ProposalClaim = { claimId: string; text: string; supportingEvidenceIds?: string[]; contradictingEvidenceIds?: string[]; falsifier?: string; materiality?: string; admissionStatus?: string };
 export type PacketMutationProposal = { id: string; operationId: string; runId: string; packetId: string; basePacketVersion: number; basePacketHash: string; evidencePackHash: string; modelName: string; modelDigest: string; workerId?: string | null; originalOutputHash: string; proposedPatchHash: string; originalOutputArtifactId?: string | null; retentionUntil?: string | null; deletionState?: "active" | "content_deleted"; originalOutput: { materialClaims?: ProposalClaim[]; [key: string]: unknown }; proposedPatch: Record<string, unknown>; deterministicFindings: Array<Record<string, unknown>>; admissionState: AdmissionState; resultPacketVersion?: number | null; rollbackPacketVersion?: number | null; reviewerDecisionHash?: string | null; evidenceSnapshot: Array<Record<string, unknown>>; reviewImpact: Array<{ claimId?: string; reportSection: string }>; claimDecisions: Array<Record<string, unknown>>; proposalEvents: Array<Record<string, unknown>>; createdAt: string };
@@ -694,7 +764,26 @@ export type AdmissionRequest = { proposalId: string; expectedPacketVersion: numb
 export type LlmJobStatus = { id: string; state: string; taskType: string; runId?: string | null; verificationStatus?: string | null };
 export const TERMINAL_AGENT_OPERATION_STATES = new Set<AgentOperation["state"]>(["completed", "failed", "dead_letter", "expired", "canceled", "superseded"]);
 const TERMINAL = TERMINAL_AGENT_OPERATION_STATES;
-export async function getProviderStatus(requestedModelDigest?: string): Promise<ProviderStatus> { const base = getApiBaseUrl(); if (!base) throw new ApiUnavailableError(); const query = requestedModelDigest ? `?requestedModelDigest=${encodeURIComponent(requestedModelDigest)}` : ""; return readJsonResponse(await fetchWithTimeout(`${base}/providers/status${query}`)); }
+export async function getProviderStatus(
+  requestedModelDigest?: string,
+  requestedContextLength?: number,
+  options: {
+    requiredPromptManifestHash?: string;
+    requiredOutputSchemaHash?: string;
+    requiredWorkerVersion?: string;
+  } = {},
+): Promise<ProviderStatus> {
+  const base = getApiBaseUrl();
+  if (!base) throw new ApiUnavailableError();
+  const params = new URLSearchParams();
+  if (requestedModelDigest) params.set("requestedModelDigest", requestedModelDigest);
+  if (requestedContextLength) params.set("requestedContextLength", String(requestedContextLength));
+  if (options.requiredPromptManifestHash) params.set("requiredPromptManifestHash", options.requiredPromptManifestHash);
+  if (options.requiredOutputSchemaHash) params.set("requiredOutputSchemaHash", options.requiredOutputSchemaHash);
+  if (options.requiredWorkerVersion) params.set("requiredWorkerVersion", options.requiredWorkerVersion);
+  const query = params.toString();
+  return readJsonResponse(await fetchWithTimeout(`${base}/providers/status${query ? `?${query}` : ""}`));
+}
 export async function createAgentOperation(packetId: string, idempotencyKey = crypto.randomUUID(), requestedModelDigest?: string): Promise<AgentOperation> { const base = getApiBaseUrl(); if (!base) throw new ApiUnavailableError(); const trace = crypto.randomUUID().replaceAll("-", "") + crypto.randomUUID().replaceAll("-", ""); const traceparent = `00-${trace.slice(0, 32)}-${trace.slice(32, 48)}-01`; return readJsonResponse(await fetchWithTimeout(`${base}/packets/${encodeURIComponent(packetId)}/agent-operations`, { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": idempotencyKey, traceparent }, body: JSON.stringify({ providerMode: "ollama", requestedModelDigest, traceparent }) })); }
 export async function getAgentOperation(id: string): Promise<AgentOperation> { const base = getApiBaseUrl(); if (!base) throw new ApiUnavailableError(); return readJsonResponse(await fetchWithTimeout(`${base}/operations/${encodeURIComponent(id)}`)); }
 export async function getAgentOperationProposal(id: string): Promise<PacketMutationProposal> { const base = getApiBaseUrl(); if (!base) throw new ApiUnavailableError(); return readJsonResponse(await fetchWithTimeout(`${base}/operations/${encodeURIComponent(id)}/proposal`)); }

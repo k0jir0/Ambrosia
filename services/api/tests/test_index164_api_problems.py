@@ -8,6 +8,9 @@ def test_domain_failures_are_not_classified_as_api_unreachable() -> None:
     assert normalize_error_code(503, {"code": "worker_offline"}, "/providers/status") == (
         "WORKER_OFFLINE"
     )
+    assert normalize_error_code(503, {"code": "no_enrolled_worker"}, "/providers/status") == (
+        "NO_ENROLLED_WORKER"
+    )
     assert normalize_error_code(409, {"code": "proposal_stale"}, "/operations/1/admission") == (
         "PROPOSAL_STALE"
     )

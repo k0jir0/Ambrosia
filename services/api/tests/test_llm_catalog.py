@@ -147,6 +147,84 @@ def test_multiple_configured_policies_require_an_explicit_digest(monkeypatch) ->
     assert readiness["reasonCode"] == "model_policy_ambiguous"
 
 
+def test_readiness_respects_required_context_length(monkeypatch) -> None:
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    local = Catalog()
+    credential = local.create_worker("org-a", "user-a", "Context worker")
+    worker = local.authenticate_worker(credential["token"])
+    assert worker
+    worker["capabilities"] = {
+        "models": [_qualified_model("qwen", "sha256:qwen", context_length=4096)]
+    }
+
+    readiness = local.worker_readiness(
+        "org-a", "sha256:qwen", required_context_length=8192
+    )
+    assert readiness["ready"] is False
+    assert readiness["reasonCode"] == "preflight_incomplete"
+    assert readiness["requiredContextLength"] == 8192
+    assert readiness["maxQualifiedContextLength"] == 4096
+
+
+def test_readiness_marks_expired_preflight_when_max_age_configured(monkeypatch) -> None:
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.setenv("OLLAMA_PREFLIGHT_MAX_AGE_SECONDS", "60")
+    local = Catalog()
+    credential = local.create_worker("org-a", "user-a", "Aged preflight worker")
+    worker = local.authenticate_worker(credential["token"])
+    assert worker
+    stale_model = _qualified_model("qwen", "sha256:qwen")
+    stale_model["preflightCompletedAt"] = (
+        datetime.now(UTC) - timedelta(minutes=5)
+    ).isoformat()
+    worker["capabilities"] = {"models": [stale_model]}
+
+    readiness = local.worker_readiness("org-a", "sha256:qwen")
+    assert readiness["ready"] is False
+    assert readiness["reasonCode"] == "preflight_incomplete"
+    assert readiness["preflightExpired"] is True
+    assert readiness["preflightMaxAgeSeconds"] == 60
+
+
+def test_readiness_enforces_prompt_schema_and_worker_version_predicates(monkeypatch) -> None:
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    local = Catalog()
+    credential = local.create_worker("org-a", "user-a", "Policy-bound worker")
+    worker = local.authenticate_worker(credential["token"])
+    assert worker
+    worker["worker_version"] = "ambrosia-local-worker.v3"
+    worker["capabilities"] = {
+        "models": [
+            {
+                **_qualified_model("qwen", "sha256:qwen"),
+                "promptManifestHash": "manifest-a",
+                "outputSchemaHash": "schema-a",
+            }
+        ]
+    }
+
+    mismatch = local.worker_readiness(
+        "org-a",
+        "sha256:qwen",
+        required_prompt_manifest_hash="manifest-b",
+        required_output_schema_hash="schema-a",
+        required_worker_version="ambrosia-local-worker.v3",
+    )
+    assert mismatch["ready"] is False
+    assert mismatch["reasonCode"] == "preflight_incomplete"
+    assert mismatch["policyCompatibilityMismatch"] is True
+
+    compatible = local.worker_readiness(
+        "org-a",
+        "sha256:qwen",
+        required_prompt_manifest_hash="manifest-a",
+        required_output_schema_hash="schema-a",
+        required_worker_version="ambrosia-local-worker.v3",
+    )
+    assert compatible["ready"] is True
+    assert compatible["reasonCode"] == "ready"
+
+
 def test_completion_catalogues_reproducibility_and_requires_resolved_citations(monkeypatch) -> None:
     monkeypatch.delenv("DATABASE_URL", raising=False)
     catalog = Catalog()

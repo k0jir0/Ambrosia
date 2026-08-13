@@ -18,6 +18,7 @@ from .llm_catalog import LlmJobCreate, WorkerResult, canonical_hash, catalog
 from .models import AuditEvent, DecisionPacket, SpecialistAgentOutput
 from .operations import current_principal, record_domain_event, record_domain_measurement
 from .providers import resolve_provider
+from .report import generate_report
 from .selective_integration import invalidate_integration
 from .store import store
 from .tenant_context import reset_organization_id, set_organization_id
@@ -1176,6 +1177,54 @@ class Bridge:
             raise HTTPException(409, "Immutable job input is unavailable")
         return catalog.resolved_input(job["input_payload"])
 
+    @staticmethod
+    def _report_hash_for_provenance(report: dict) -> str:
+        return canonical_hash(
+            {
+                key: value
+                for key, value in report.items()
+                if key not in {"artifactId", "storageStatus", "createdAt"}
+            }
+        )
+
+    def _capture_admission_baseline(
+        self, packet: DecisionPacket, actor: str, organization_id: str
+    ) -> dict:
+        baseline_report = generate_report(packet, []).model_dump(mode="json")
+        tenant_token = set_organization_id(str(organization_id))
+        try:
+            try:
+                storage = artifact_store.persist_json(
+                    "reports",
+                    packet.id,
+                    f"decision-report-baseline-v{packet.packetVersion}.json",
+                    baseline_report,
+                    created_by_user_id=actor,
+                )
+            except Exception as exc:
+                code = (
+                    "KMS_ACCESS_DENIED"
+                    if "kms" in str(exc).lower()
+                    else "ARTIFACT_STORAGE_UNAVAILABLE"
+                )
+                raise HTTPException(
+                    503,
+                    {
+                        "code": code,
+                        "message": "Immutable baseline report persistence failed before admission.",
+                    },
+                ) from exc
+        except Exception as exc:
+            raise exc
+        finally:
+            reset_organization_id(tenant_token)
+        return {
+            "packetVersion": packet.packetVersion,
+            "artifactId": storage.get("artifactId"),
+            "artifactHash": storage.get("contentHash"),
+            "reportHash": self._report_hash_for_provenance(baseline_report),
+        }
+
     def admit(self, operation_id: str, body: AdmissionRequest, key: str | None) -> dict:
         principal = current_principal()
         if not principal or not principal.organization_id:
@@ -1308,6 +1357,11 @@ class Bridge:
             decision_hash = canonical_hash(
                 [proposal["proposedPatchHash"], principal.subject, body.model_dump(mode="json")]
             )
+            baseline_report = self._capture_admission_baseline(
+                packet,
+                str(principal.subject),
+                str(principal.organization_id),
+            )
             updated = self.result_packet(
                 packet,
                 worker,
@@ -1343,6 +1397,7 @@ class Bridge:
                     "decisionHash": decision_hash,
                     "resultPacketVersion": saved.packetVersion,
                     "state": state,
+                    "baselineReport": baseline_report,
                 },
             )
             result = self.public(operation)
@@ -1629,6 +1684,11 @@ class Bridge:
                         body.model_dump(mode="json"),
                     ]
                 )
+                baseline_report = self._capture_admission_baseline(
+                    packet,
+                    str(principal.subject),
+                    str(principal.organization_id),
+                )
                 updated = self.result_packet(
                     packet,
                     worker,
@@ -1707,6 +1767,7 @@ class Bridge:
                         "decisionHash": decision_hash,
                         "resultPacketVersion": updated.packetVersion,
                         "state": state,
+                        "baselineReport": baseline_report,
                     },
                     connection,
                 )
@@ -2067,6 +2128,11 @@ class Bridge:
             )
             self.persist(row)
             return
+        baseline_report = self._capture_admission_baseline(
+            packet,
+            "automatic-verifier",
+            str(worker["organization_id"]),
+        )
         updated = self.result_packet(
             packet, worker, body, verification, run_id, str(oid), row["traceId"]
         )
@@ -2084,7 +2150,10 @@ class Bridge:
                 proposal,
                 "proposal.auto_admitted",
                 "server:automatic-verifier",
-                {"resultPacketVersion": saved.packetVersion},
+                {
+                    "resultPacketVersion": saved.packetVersion,
+                    "baselineReport": baseline_report,
+                },
             )
             row.update(
                 state="completed",
@@ -2282,6 +2351,11 @@ class Bridge:
                 job.get("attempt_id"),
             )
             return {"duplicate": False, "superseded": False, "rejected": True}
+        baseline_report = self._capture_admission_baseline(
+            packet,
+            "automatic-verifier",
+            str(worker["organization_id"]),
+        )
         updated = self.result_packet(
             packet, worker, body, verification, run_id, operation_id, operation["trace_id"]
         )
@@ -2328,7 +2402,10 @@ class Bridge:
             proposal,
             "proposal.auto_admitted",
             "server:automatic-verifier",
-            {"resultPacketVersion": updated.packetVersion},
+            {
+                "resultPacketVersion": updated.packetVersion,
+                "baselineReport": baseline_report,
+            },
             connection,
         )
         self.event(

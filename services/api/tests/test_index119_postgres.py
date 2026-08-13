@@ -200,6 +200,7 @@ def test_durable_llm_completion_rejects_stale_reclaimed_lease() -> None:
     finally:
         try:
             with catalog._connect(tenant=False) as connection:
+                catalog._set_worker_tenant(connection, {"organization_id": LEGACY_QUARANTINE_ORGANIZATION_ID})
                 connection.execute(
                     "DELETE FROM llm_evaluations WHERE run_id IN (SELECT id FROM llm_runs WHERE job_id=%s)",
                     (job_id,),

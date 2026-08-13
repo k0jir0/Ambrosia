@@ -21,7 +21,7 @@ from psycopg.rows import dict_row
 from .coordinator import INSTRUCTION_MANIFEST, SPECIALIST_RESPONSE_SCHEMA_V2, _before
 from .artifact_store import artifact_store
 from .financial_calculations import evaluate_calculation_intent
-from .identity import hash_token, ip_prefix
+from .identity import hash_token
 from .models import CalculationArtifact, SpecialistOutputV2, TickerIdentity
 from .operations import current_principal, record_domain_event
 from .review_engine import detects_prompt_injection

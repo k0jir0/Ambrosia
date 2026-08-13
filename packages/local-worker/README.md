@@ -41,6 +41,7 @@ $env:AMBROSIA_API_URL = 'https://staging.example.com/api'
 $env:AMBROSIA_WORKER_TOKEN = '<one-time worker credential>'
 $env:OLLAMA_MODEL = 'approved-model:tag'
 $env:OLLAMA_CONTEXT_LENGTH = '8192'
+$env:OLLAMA_MAX_OUTPUT_TOKENS = '1536'
 python .\ambrosia_local_worker.py --diagnose
 python .\ambrosia_local_worker.py
 ```
@@ -60,6 +61,13 @@ The advertised context is the context actually passed to Ollama through
 `num_ctx`; it is not the model's theoretical maximum. Qualify a larger context
 separately before changing `OLLAMA_CONTEXT_LENGTH`. The staging bridge currently
 requires 8192 tokens, so a worker qualified only at 4096 will not claim its jobs.
+
+Each structured generation disables the model's separate thinking trace because
+the worker already implements explicit analyst and independent-verifier stages.
+It also caps output with `OLLAMA_MAX_OUTPUT_TOKENS` (default 1536, hard bounds
+256-4096). This prevents a thinking-capable model's otherwise unbounded output
+from consuming the 15-minute operation deadline. Raising the cap requires a new
+four-stage hardware preflight and latency qualification.
 
 ## Rotation, revocation, and recovery
 

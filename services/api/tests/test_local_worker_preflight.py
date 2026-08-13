@@ -53,6 +53,7 @@ def test_run_stage_allocates_the_context_it_advertises(monkeypatch) -> None:
         }
 
     monkeypatch.setenv("OLLAMA_CONTEXT_LENGTH", "4096")
+    monkeypatch.setenv("OLLAMA_MAX_OUTPUT_TOKENS", "1024")
     monkeypatch.setattr(worker, "request_json", fake_request)
 
     output, metadata = worker.run_stage(
@@ -64,7 +65,31 @@ def test_run_stage_allocates_the_context_it_advertises(monkeypatch) -> None:
 
     assert output["summary"] == "bounded"
     assert captured["options"]["num_ctx"] == 4096
+    assert captured["options"]["num_predict"] == 1024
+    assert captured["think"] is False
     assert metadata["parameters"]["contextLength"] == 4096
+    assert metadata["parameters"]["maxOutputTokens"] == 1024
+    assert metadata["parameters"]["thinking"] is False
+
+
+@pytest.mark.parametrize(("configured", "expected"), [("1", 256), ("99999", 4096)])
+def test_run_stage_bounds_output_token_budget(monkeypatch, configured, expected) -> None:
+    captured = {}
+
+    def fake_request(_url, **kwargs):
+        captured.update(kwargs["body"])
+        return {"done": True, "done_reason": "stop", "response": '{"summary":"bounded"}'}
+
+    monkeypatch.setenv("OLLAMA_MAX_OUTPUT_TOKENS", configured)
+    monkeypatch.setattr(worker, "request_json", fake_request)
+    worker.run_stage(
+        "http://127.0.0.1:11434",
+        "qwen3:8b-q4_K_M",
+        "Return bounded JSON.",
+        {"type": "object", "required": ["summary"], "properties": {"summary": {"type": "string"}}},
+    )
+
+    assert captured["options"]["num_predict"] == expected
 
 
 def test_hardware_preflight_exercises_all_four_model_stages(monkeypatch) -> None:

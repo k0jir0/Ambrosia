@@ -132,6 +132,21 @@ def test_durable_llm_completion_rejects_stale_reclaimed_lease() -> None:
                     datetime.now(UTC),
                 ),
             )
+            connection.execute(
+                "ALTER TABLE local_worker_credentials ADD COLUMN IF NOT EXISTS last_ip_prefix TEXT"
+            )
+            connection.execute(
+                "ALTER TABLE local_worker_credentials ADD COLUMN IF NOT EXISTS capability_digest CHAR(64)"
+            )
+            connection.execute(
+                "ALTER TABLE local_worker_credentials ADD COLUMN IF NOT EXISTS worker_version TEXT"
+            )
+            connection.execute(
+                "ALTER TABLE local_worker_credentials ADD COLUMN IF NOT EXISTS ollama_version TEXT"
+            )
+            connection.execute(
+                "ALTER TABLE local_worker_credentials ADD COLUMN IF NOT EXISTS max_concurrent_jobs INTEGER NOT NULL DEFAULT 1 CHECK (max_concurrent_jobs BETWEEN 1 AND 16)"
+            )
         credential = catalog.create_worker(
             LEGACY_QUARANTINE_ORGANIZATION_ID,
             user_id,

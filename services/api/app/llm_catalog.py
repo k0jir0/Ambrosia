@@ -342,9 +342,9 @@ class Catalog:
                 ).fetchone()
                 if row:
                     connection.execute(
-                        """UPDATE local_worker_credentials SET last_seen_at=now(),last_ip_prefix=%s
+                        """UPDATE local_worker_credentials SET last_seen_at=now()
                         WHERE id=%s""",
-                        (ip_prefix(remote_ip), row["id"]),
+                        (row["id"],),
                     )
             return dict(row) if row else None
         with self.lock:

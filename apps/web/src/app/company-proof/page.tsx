@@ -8,8 +8,8 @@ const evidence = [
 ];
 const pending = [
   "AWS production is gated on owner-approved provisioning and domain setup.",
-  "Data integrity, restore drills, rollback rehearsal, and a 72-hour production observation remain release criteria.",
-  "Customer and financial outcomes will be measured prospectively rather than asserted upfront.",
+  "Release readiness is based on verified data integrity, recovery testing, rollback validation, and a 72-hour operating review.",
+  "Customer and financial impact will be measured prospectively rather than asserted upfront.",
 ];
 
 export default function CompanyProofPage() {

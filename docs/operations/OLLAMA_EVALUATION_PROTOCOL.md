@@ -61,6 +61,13 @@ existing durable rows and audit events remain readable, while already queued
 operations are canceled or allowed to finish according to the incident policy.
 Never relabel an Ollama result as deterministic output.
 
+Enroll the controlled staging workspace and worker before authorizing the
+release candidate. Store `OLLAMA_REVIEW_BRIDGE_ORGANIZATIONS` and
+`OLLAMA_APPROVED_MODEL_DIGESTS` as JSON arrays in the protected GitHub
+environment, and verify both values round-trip as JSON before dispatch. Because
+ECR tags are immutable, a changed canary policy must use a new reviewed commit;
+do not rebuild an existing commit tag after its base image may have changed.
+
 Monitor operation creation and replay, queue age, claim latency, stale fencing
 rejections, failures by bounded reason code, dead-letter depth, supersession,
 explicit fallback, worker availability/version, and requested-versus-used

@@ -355,11 +355,19 @@ def run_stage(url, model, text, schema):
                 "model": model,
                 "prompt": text,
                 "stream": False,
+                # Qwen3 enables its separate reasoning trace by default. The worker
+                # already supplies an explicit analyst/verifier protocol, so an
+                # unbounded hidden trace only consumes the operation deadline.
+                "think": False,
                 "format": schema,
                 "options": {
                     "temperature": 0,
                     "seed": 42,
                     "num_ctx": context_length(),
+                    "num_predict": max(
+                        256,
+                        min(int(os.getenv("OLLAMA_MAX_OUTPUT_TOKENS", "1536")), 4096),
+                    ),
                 },
                 "keep_alive": os.getenv("OLLAMA_KEEP_ALIVE", "10m"),
             },
@@ -386,6 +394,11 @@ def run_stage(url, model, text, schema):
             "temperature": 0,
             "seed": 42,
             "contextLength": context_length(),
+            "thinking": False,
+            "maxOutputTokens": max(
+                256,
+                min(int(os.getenv("OLLAMA_MAX_OUTPUT_TOKENS", "1536")), 4096),
+            ),
         },
         "finishReason": raw.get("done_reason"),
         "truncationDetected": False,

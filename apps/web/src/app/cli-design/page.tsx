@@ -24,16 +24,71 @@ export default function CliGuidePage() {
     <div className="space-y-4">
       <Panel className="p-6">
         <SectionTitle eyebrow="Read-only reference" title="CLI Guide" />
-        <p className="mt-3 max-w-4xl text-sm leading-6 text-ink/75">
-          This catalog is generated from the shipped Python argparse parser. Implemented means the command parses;
-          tested means a focused CLI contract test exists; qualified means a read command also matches the current
-          OpenAPI path. These states are independent.
-        </p>
-        <div className="mt-4 flex flex-wrap gap-2">
-          <Badge tone="info">{commands.length} implemented</Badge>
-          <Badge tone="good">{tested} tested</Badge>
-          <Badge tone="good">{qualified} qualified reads</Badge>
+        <div className="mt-4 space-y-4">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-teal">Capability statement</p>
+            <p className="mt-2 max-w-4xl text-sm leading-6 text-ink/75">
+              Ambrosia CLI is the local operator interface for setup, health checks, review reads, signal workflows,
+              alpha execution commands, and enterprise control-plane inspection. It is a real command surface backed by
+              the shipped Python parser and verified contract tests, not a placeholder design page.
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-ink/60">Current status</p>
+            <Badge tone="good">implemented and locally validated</Badge>
+            <Badge tone="warn">release-gated</Badge>
+          </div>
+          <p className="max-w-4xl text-sm leading-6 text-ink/75">
+            This catalog is generated from the shipped Python argparse parser. Implemented means the command parses;
+            tested means a focused CLI contract test exists; qualified means a read command also matches the current
+            OpenAPI path. These states are independent.
+          </p>
+          <div className="mt-4 flex flex-wrap gap-2">
+            <Badge tone="info">{commands.length} implemented</Badge>
+            <Badge tone="good">{tested} tested</Badge>
+            <Badge tone="good">{qualified} qualified reads</Badge>
+          </div>
         </div>
+      </Panel>
+
+      <Panel className="p-5">
+        <SectionTitle eyebrow="What exists today" title="Current product scope" />
+        <ul className="mt-3 grid gap-2 text-sm text-ink/75 md:grid-cols-2">
+          <li>Health, config, auth, status, and quickstart operations for local and staging setup.</li>
+          <li>Review, packet, market, and scanner commands with parser-backed contract routes.</li>
+          <li>Signals, alpha, backtest, paper-trade, and warm-path execution workflows.</li>
+          <li>Enterprise control-plane inspection for service accounts, readiness, and security packet reads.</li>
+        </ul>
+      </Panel>
+
+      <Panel className="p-5">
+        <SectionTitle eyebrow="What has been validated" title="Evidence in the repo" />
+        <ul className="mt-3 grid gap-2 text-sm text-ink/75 md:grid-cols-2">
+          <li>The registry is generated from the parser and is used on this page.</li>
+          <li>Focused CLI contract tests exist in packages/cli/tests/test_cli_contract.py.</li>
+          <li>Read commands are qualified against the current API path when the route is available.</li>
+          <li>This page is intentionally read-only; there is no in-browser terminal and no public package publication is claimed.</li>
+        </ul>
+      </Panel>
+
+      <Panel className="p-5">
+        <SectionTitle eyebrow="Remaining release gates" title="Operational status" />
+        <ul className="mt-3 grid gap-2 text-sm text-ink/75 md:grid-cols-2">
+          <li>Approve the public release gate language before treating the CLI as broadly production-ready.</li>
+          <li>Confirm staging deployment reflects the final page and does not show stale design copy.</li>
+          <li>Keep the registry and contract tests as the durable evidence source for product claims.</li>
+          <li>Separate what is implemented locally from what is production-gated by server policy or deployment status.</li>
+        </ul>
+      </Panel>
+
+      <Panel className="p-5">
+        <SectionTitle eyebrow="Evidence and ownership" title="Responsible completion language" />
+        <p className="mt-3 max-w-4xl text-sm leading-6 text-ink/75">
+          The CLI is implemented and locally validated under the repo contract. It remains release-gated for broader
+          public claims because deployment and operational evidence must be indexed alongside the parser and tests.
+          Ownership stays with the Ambrosia engineering and product owners who confirm the final evidence before any
+          production-ready label is used.
+        </p>
       </Panel>
 
       <Panel className="p-5">

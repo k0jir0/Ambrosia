@@ -2285,6 +2285,7 @@ function AgentOutputList({ packet }: { packet: DecisionPacket }) {
               <Badge tone={agent.fallbackUsed ? "warn" : "good"}>{agent.fallbackUsed ? "fallback" : "primary"}</Badge>
               <Badge tone="neutral">{agent.provider}</Badge>
               {agent.score !== null ? <Badge tone="info">{agent.score}</Badge> : null}
+              <Badge tone={agent.verificationStatus === "passed" || agent.verificationStatus === "repaired" ? "good" : agent.verificationStatus === "human_review" ? "warn" : "neutral"}>{agent.verificationStatus ?? "unverified"}</Badge>
             </div>
           </div>
           <p className="mt-2 text-[11px] text-slate-500">{agent.timestamp}</p>
@@ -2429,8 +2430,8 @@ function buildLocalReportArtifact(review: TradeReview, packet: DecisionPacket | 
         ].join("\n\n")
       },
       {
-        title: "Agentic AI for Investments",
-        content: "Ambrosia decomposes the investment question into packet intake, market context, specialist critique, risk evaluation, confidence synthesis, decision memory, and reporting. This local artifact was generated from the current packet state when the API report endpoint was unavailable."
+        title: "Unverified Local Continuity Report",
+        content: "The validated report API was unavailable. This browser artifact is not a verified ticker-intelligence report and its agent prose has not passed claim-level verification.", evidenceMode:"unavailable", verificationStatus:"unverified"
       },
       {
         title: "Investment Trading Decision Evidence",
@@ -2454,6 +2455,7 @@ function buildLocalReportArtifact(review: TradeReview, packet: DecisionPacket | 
     provenanceLabel: "Client-side fallback export generated from current Ambrosia review state because the report API was unavailable.",
     marketDataSource: packet?.marketSnapshot?.dataSource ?? null,
     marketDataFreshnessSeconds: null
+    ,schemaVersion:"ticker-intelligence-report.v1",verifiedClaimCoverage:0,unresolvedMaterialClaimCount:0,reportValidationStatus:"legacy"
   };
 }
 
@@ -2480,6 +2482,8 @@ function renderReportMarkdown(report: ReportArtifact) {
     `Generated: ${formatReportTimestamp(report.createdAt)}`,
     `Data mode: ${report.dataMode}`,
     `Provenance: ${report.provenanceLabel}`,
+    `Validation: ${report.reportValidationStatus ?? "legacy"}`,
+    `Verified claim coverage: ${Math.round((report.verifiedClaimCoverage ?? 0)*100)}%`,
     report.marketDataSource ? `Market data source: ${report.marketDataSource}` : "Market data source: none attached",
     report.marketDataFreshnessSeconds !== null ? `Market data freshness: ${report.marketDataFreshnessSeconds}s` : "Market data freshness: unavailable",
     ""

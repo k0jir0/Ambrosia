@@ -20,6 +20,7 @@ import type {
   ScannerRunRequest,
   SentimentData,
   TechnicalIndicators,
+  TickerIdentity,
   ThesisInput,
   TradeReview,
 } from "./types";
@@ -526,6 +527,7 @@ export async function getMarketSnapshot(ticker: string): Promise<MarketSnapshot>
   const response = await fetchWithTimeout(`${apiBaseUrl}/market/${encodeURIComponent(safeTicker)}/snapshot`);
   return readJsonResponse<MarketSnapshot>(response);
 }
+export async function getMarketIdentity(ticker:string):Promise<TickerIdentity>{const apiBaseUrl=getApiBaseUrl();if(!apiBaseUrl)throw new ApiUnavailableError();const safeTicker=normalizeTickerForPath(ticker);return readJsonResponse<TickerIdentity>(await fetchWithTimeout(`${apiBaseUrl}/market/${encodeURIComponent(safeTicker)}/identity`));}
 
 export async function getMarketTechnicals(ticker: string): Promise<TechnicalIndicators> {
   const apiBaseUrl = getApiBaseUrl();

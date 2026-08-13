@@ -417,6 +417,14 @@
   },
   {
     "method": "GET",
+    "path": "/market/{ticker}/identity",
+    "exposure": "user",
+    "frontendRoute": "/markets/:ticker",
+    "requiredRole": "user",
+    "auditEvent": "market.identity.read"
+  },
+  {
+    "method": "GET",
     "path": "/market/{ticker}/snapshot",
     "exposure": "user",
     "frontendRoute": "/markets/:ticker",

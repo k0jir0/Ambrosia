@@ -22,6 +22,7 @@ import {
 } from "recharts";
 import {
   getMarketSnapshot,
+  getMarketIdentity,
   getMarketTechnicals,
   getSentiment,
   ApiRequestError,
@@ -38,7 +39,7 @@ import {
   summarizeTicker,
   withMovingAverages
 } from "@/lib/market-intelligence";
-import type { MarketSnapshot, SentimentData, TechnicalIndicators } from "@/lib/types";
+import type { MarketSnapshot, SentimentData, TechnicalIndicators, TickerIdentity } from "@/lib/types";
 import { Badge, Panel, SectionTitle, cn } from "./ui";
 
 type Tab = "primary" | "analytics" | "macro" | "performance";
@@ -60,6 +61,7 @@ export function MarketIntelligencePage({ ticker, compare = [] }: { ticker: strin
   const [snapshot, setSnapshot] = useState<MarketSnapshot | null>(null);
   const [technicals, setTechnicals] = useState<TechnicalIndicators | null>(null);
   const [sentiment, setSentiment] = useState<SentimentData | null>(null);
+  const [tickerIdentity, setTickerIdentity] = useState<TickerIdentity | null>(null);
   const [snapshotStatus, setSnapshotStatus] = useState<EvidenceStatus>("loading");
   const [technicalsStatus, setTechnicalsStatus] = useState<EvidenceStatus>("loading");
   const [sentimentStatus, setSentimentStatus] = useState<EvidenceStatus>("loading");
@@ -114,10 +116,11 @@ export function MarketIntelligencePage({ ticker, compare = [] }: { ticker: strin
     setSnapshotStatus("loading");
     setTechnicalsStatus("loading");
     setSentimentStatus("loading");
-    const [nextSnapshot, nextTechnicals, nextSentiment] = await Promise.allSettled([
+    const [nextSnapshot, nextTechnicals, nextSentiment, nextIdentity] = await Promise.allSettled([
       getMarketSnapshot(ticker),
       getMarketTechnicals(ticker),
       getSentiment(ticker),
+      getMarketIdentity(ticker),
     ]);
 
     setSnapshot(nextSnapshot.status === "fulfilled" ? nextSnapshot.value : null);
@@ -126,6 +129,7 @@ export function MarketIntelligencePage({ ticker, compare = [] }: { ticker: strin
     setTechnicalsStatus(nextTechnicals.status === "fulfilled" ? timedEvidenceStatus(nextTechnicals.value.dataMode, nextTechnicals.value.updateTime, 15 * 60) : rejectedEvidenceStatus(nextTechnicals.reason));
     setSentiment(nextSentiment.status === "fulfilled" ? nextSentiment.value : null);
     setSentimentStatus(nextSentiment.status === "fulfilled" ? timedEvidenceStatus(nextSentiment.value.dataMode, nextSentiment.value.lastUpdated, 60 * 60) : rejectedEvidenceStatus(nextSentiment.reason));
+    setTickerIdentity(nextIdentity.status === "fulfilled" ? nextIdentity.value : null);
   }, [ticker]);
 
   useEffect(() => {
@@ -163,7 +167,7 @@ export function MarketIntelligencePage({ ticker, compare = [] }: { ticker: strin
             <p className={cn("text-sm", Number(displayDelta) >= 0 ? "text-teal" : "text-coral")}>{Number(displayDelta) >= 0 ? "+" : ""}{displayDelta}%</p>
             <p className="mt-1 text-[11px] text-ink/55">{priceProvenance}</p>
           </div>
-          <Link href={buildReviewHref(ticker, compareSymbols, snapshot, technicals, sentiment)} className="focus-ring inline-flex items-center gap-2 rounded-md bg-teal px-3 py-2 text-sm font-semibold text-fog">
+          <Link href={buildReviewHref(ticker, compareSymbols, snapshot, technicals, sentiment, tickerIdentity)} className="focus-ring inline-flex items-center gap-2 rounded-md bg-teal px-3 py-2 text-sm font-semibold text-fog">
             Start governed review <ArrowRight className="h-4 w-4" />
           </Link>
           </div>
@@ -474,6 +478,7 @@ function buildReviewHref(
   snapshot: MarketSnapshot | null,
   technicals: TechnicalIndicators | null,
   sentiment: SentimentData | null,
+  identity: TickerIdentity | null,
 ): string {
   const params = new URLSearchParams({
     source: "market-intelligence",
@@ -483,6 +488,7 @@ function buildReviewHref(
     expression: "Research decision only — no live order",
     sourcePointer: [
       `market-intelligence:${ticker.toUpperCase()}`,
+      identity ? `instrumentId=${identity.instrumentId}; canonicalTicker=${identity.canonicalTicker}; exchange=${identity.exchangeMic ?? "unknown"}; verifiedAt=${identity.effectiveFrom ?? "unknown"}` : "instrumentIdentity:unavailable",
       snapshot ? `quote:${snapshot.dataSourceConfidence}:${snapshot.dataSource}:${snapshot.timestamp}` : "quote:unavailable",
       technicals ? `technicals:${technicals.dataMode}:${technicals.updateTime}` : "technicals:unavailable",
       sentiment ? `sentiment:${sentiment.dataMode}:${sentiment.lastUpdated}` : "sentiment:unavailable",

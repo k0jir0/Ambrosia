@@ -53,6 +53,7 @@ from .models import (
     ScannerResult,
     SentimentData,
     TechnicalIndicators,
+    TickerIdentity,
     ThesisRequest,
     TradeReview,
     ToolBoundary,
@@ -109,7 +110,7 @@ from .phase_e_execution_loop import router as phase_e_router
 from .phase_e_market_integration import router as market_integration_router
 from .index84_platform import INDEX97_SIGNAL_SEED, router as index84_platform_router
 from .mobile_api import router as mobile_router
-from .llm_catalog import router as llm_catalog_router
+from .llm_catalog import catalog as llm_catalog, router as llm_catalog_router
 from .team_api import router as team_router
 from .product_analytics import router as product_analytics_router
 from .artifact_store import artifact_store, router as artifact_router
@@ -147,6 +148,7 @@ def _submit_tenant_task(function) -> None:
 
     _executor.submit(scoped)
 
+
 TEAM_READ_ROLES = {"viewer", "analyst", "reviewer", "owner", "admin", "service"}
 TEAM_WRITE_ROLES = {"analyst", "reviewer", "owner", "admin", "service"}
 TEAM_APPROVAL_ROLES = {"reviewer", "owner", "admin", "service"}
@@ -155,9 +157,7 @@ ADMIN_ROLES = {"owner", "admin", "service"}
 
 default_origins = ["http://localhost:3000", "http://127.0.0.1:3000"]
 configured_origins = [
-    origin.strip()
-    for origin in os.getenv("ALLOWED_ORIGINS", "").split(",")
-    if origin.strip()
+    origin.strip() for origin in os.getenv("ALLOWED_ORIGINS", "").split(",") if origin.strip()
 ]
 allowed_origin_regex = os.getenv("ALLOWED_ORIGIN_REGEX", "").strip() or None
 
@@ -235,7 +235,9 @@ def _feature_enabled(name: str, *, default: bool) -> bool:
 def _require_selective_integration_enabled() -> None:
     if not _feature_enabled("SELECTIVE_INTEGRATION_ENABLED", default=True):
         telemetry.increment("selective_stage_blocked", "feature_disabled")
-        raise HTTPException(status_code=503, detail="Selective integration is disabled by feature flag")
+        raise HTTPException(
+            status_code=503, detail="Selective integration is disabled by feature flag"
+        )
 
 
 def _request_actor(request: Request, fallback: str = "system") -> str:
@@ -357,7 +359,12 @@ def _require_role(
 
 
 def _require_market_scanner_enabled() -> None:
-    if os.getenv("MARKET_SCANNER_ENABLED", "true").strip().lower() not in {"1", "true", "yes", "on"}:
+    if os.getenv("MARKET_SCANNER_ENABLED", "true").strip().lower() not in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }:
         raise HTTPException(status_code=503, detail="Market Scanner is temporarily unavailable")
 
 
@@ -365,14 +372,22 @@ def _require_market_intelligence_enabled() -> None:
     environment = os.getenv("ENVIRONMENT", "development").strip().lower()
     default = environment not in {"production", "staging"}
     if not _feature_enabled("MARKET_INTELLIGENCE_ENABLED", default=default):
-        raise HTTPException(status_code=503, detail="Market Intelligence is temporarily unavailable")
+        raise HTTPException(
+            status_code=503, detail="Market Intelligence is temporarily unavailable"
+        )
 
 
 def _verified_market_ticker(ticker: str) -> str:
     resolution = resolve_instrument(ticker)
     if resolution.status == "verified":
         return resolution.canonical_ticker or ticker.upper()
-    status_code = 422 if resolution.status == "ambiguous" else 503 if resolution.status == "provider_unavailable" else 404
+    status_code = (
+        422
+        if resolution.status == "ambiguous"
+        else 503
+        if resolution.status == "provider_unavailable"
+        else 404
+    )
     raise HTTPException(
         status_code=status_code,
         detail={"status": resolution.status, "ticker": ticker.upper(), "reason": resolution.reason},
@@ -383,16 +398,14 @@ def _require_report_export_enabled() -> None:
     environment = os.getenv("ENVIRONMENT", "development").strip().lower()
     default = environment not in {"production", "staging"}
     if not _feature_enabled("REPORT_EXPORT_ENABLED", default=default):
-        raise HTTPException(status_code=503, detail="Governed report export is temporarily unavailable")
+        raise HTTPException(
+            status_code=503, detail="Governed report export is temporarily unavailable"
+        )
 
 
 @app.get("/health")
 def health() -> dict:
-    return {
-        "status": "ok",
-        "service": "ambrosia-api",
-        "timestamp": datetime.now().isoformat()
-    }
+    return {"status": "ok", "service": "ambrosia-api", "timestamp": datetime.now().isoformat()}
 
 
 @app.get("/health/phases")
@@ -407,47 +420,42 @@ def health_phases() -> dict:
                 "status": "OPERATIONAL",
                 "retrieval_quality": "ACTIVE",
                 "benchmarks": "5/5 PASSING",
-                "baseline": "ESTABLISHED"
+                "baseline": "ESTABLISHED",
             },
             "phase_b": {
                 "status": "OPERATIONAL",
                 "provider_ablation": "ACTIVE",
                 "synthetic_monitoring": "ACTIVE",
                 "release_gates": "ENFORCED",
-                "function_registry": "ENFORCED"
+                "function_registry": "ENFORCED",
             },
             "phase_c": {
                 "status": "OPERATIONAL",
                 "discovery_engine": "ACTIVE",
                 "report_export": "ACTIVE",
-                "analyst_workflows": "ACTIVE"
+                "analyst_workflows": "ACTIVE",
             },
             "phase_d": {
                 "status": "OPERATIONAL",
                 "rbac_middleware": "ACTIVE",
                 "permission_boundaries": "ENFORCED",
                 "audit_logging": "ACTIVE",
-                "ui_tabs": "ACTIVE"
+                "ui_tabs": "ACTIVE",
             },
             "phase_e": {
                 "status": "OPERATIONAL",
                 "market_connectivity": "ACTIVE",
                 "paper_trading": "ACTIVE",
                 "attribution_analysis": "ACTIVE",
-                "e2e_certification": "PASSED"
-            }
+                "e2e_certification": "PASSED",
+            },
         },
         "overall_completion": "100%",
         "all_contracts": "18/18 PASSING",
         "retrievalQuality": {
             "status": "ok",
-            "recent_benchmarks": {
-                "precision": 0.60,
-                "recall": 0.75,
-                "ndcg": 0.481,
-                "mrr": 0.333
-            }
-        }
+            "recent_benchmarks": {"precision": 0.60, "recall": 0.75, "ndcg": 0.481, "mrr": 0.333},
+        },
     }
 
 
@@ -549,7 +557,11 @@ def seed_index97_reviews() -> dict:
         title = str(hypothesis_payload.get("title", signal_payload.get("name", ticker)))
         review = generate_review(
             ThesisRequest(
-                thesis=str(hypothesis_payload.get("thesis", f"Evaluate {title} as an Ambrosia demo review.")),
+                thesis=str(
+                    hypothesis_payload.get(
+                        "thesis", f"Evaluate {title} as an Ambrosia demo review."
+                    )
+                ),
                 ticker=ticker,
                 asset_class="Equities",
                 time_horizon=str(signal_payload.get("horizon", "2-6 weeks")),
@@ -600,9 +612,7 @@ def record_decision(review_id: str, update: DecisionUpdate) -> TradeReview:
             and packet.decisionState == update.decision_state
         )
         blockers = (
-            []
-            if already_recorded
-            else packet_decision_blockers(packet, update.decision_state)
+            [] if already_recorded else packet_decision_blockers(packet, update.decision_state)
         )
         if blockers:
             raise HTTPException(
@@ -762,7 +772,9 @@ def run_packet_disconfirmation(packet_id: str, request: Request) -> DecisionPack
     if packet is None:
         raise HTTPException(status_code=404, detail="Packet not found")
     if not packet.provenance:
-        raise HTTPException(status_code=409, detail="Provenance must be attached before disconfirmation")
+        raise HTTPException(
+            status_code=409, detail="Provenance must be attached before disconfirmation"
+        )
     result = run_disconfirmation(packet)
     state = (
         IntegrationStage.risk_pending
@@ -923,7 +935,9 @@ def resolve_packet_memory(
     if packet is None:
         raise HTTPException(status_code=404, detail="Packet not found")
     if packet.integrationStatus.state != IntegrationStage.decided:
-        raise HTTPException(status_code=409, detail="A human decision must be recorded before outcome resolution")
+        raise HTTPException(
+            status_code=409, detail="A human decision must be recorded before outcome resolution"
+        )
     actor = _request_actor(request, body.actor)
     existing = store.get_packet_memory(packet_id)
     memory = create_decision_memory_record(
@@ -1057,6 +1071,35 @@ def get_market_snapshot(
     _require_market_intelligence_enabled()
     _require_role(ADVANCED_ROLES, x_ambrosia_role, scope="market intelligence")
     return build_market_snapshot(_verified_market_ticker(ticker))
+
+
+@app.get("/market/{ticker}/identity", response_model=TickerIdentity)
+def get_market_identity(
+    ticker: str,
+    x_ambrosia_role: str | None = Header(default=None, alias="X-Ambrosia-Role"),
+) -> TickerIdentity:
+    _require_market_intelligence_enabled()
+    _require_role(ADVANCED_ROLES, x_ambrosia_role, scope="market intelligence")
+    resolution = resolve_instrument(ticker)
+    if resolution.status != "verified":
+        raise HTTPException(
+            status_code=422
+            if resolution.status == "ambiguous"
+            else 503
+            if resolution.status == "provider_unavailable"
+            else 404,
+            detail={"status": resolution.status, "reason": resolution.reason},
+        )
+    return TickerIdentity(
+        ticker=ticker.upper(),
+        canonicalTicker=resolution.canonical_ticker or ticker.upper(),
+        instrumentId=resolution.instrument_id or f"ticker:{ticker.upper()}",
+        exchangeMic=resolution.exchange,
+        securityType=(resolution.instrument_type or "listed_instrument").lower(),
+        effectiveFrom=resolution.verified_at,
+        resolutionProvider=resolution.provider,
+        resolutionStatus="verified",
+    )
 
 
 @app.get("/market/{ticker}/technicals", response_model=TechnicalIndicators)
@@ -1210,12 +1253,26 @@ def run_packet_agents(packet_id: str, body: AgentRunRequest) -> DecisionPacket:
     updated_packet = base_packet.model_copy(
         update={
             "agentOutputs": specialist_outputs,
+            "coordinatorVersion": "coordinator.v2",
             "providerInfo": {
                 "name": selected_provider.name,
                 "type": selected_provider.provider_type,
                 "fallbackChain": selected_provider.fallback_chain,
                 "fallbackUsed": runtime_fallback_used,
                 "reason": selected_provider.reason,
+                "pipelineVersion": "evidence-grounded-adversarial.v2"
+                if selected_provider.provider_type == "ollama"
+                else "specialist-output.v1",
+                "verifiedRoleCount": sum(
+                    1
+                    for output in specialist_outputs.values()
+                    if output and output.verificationStatus in {"passed", "repaired", "abstained"}
+                ),
+                "humanReviewRoleCount": sum(
+                    1
+                    for output in specialist_outputs.values()
+                    if output and output.verificationStatus == "human_review"
+                ),
             },
             "audit": [
                 *base_packet.audit,
@@ -1232,7 +1289,7 @@ def run_packet_agents(packet_id: str, body: AgentRunRequest) -> DecisionPacket:
         _originating_review_id_from_packet_id(packet_id),
         f"{packet_id}:agents.run:{selected_provider.name}:{datetime.now().isoformat()}",
         "completed",
-        "coordinator.v1",
+        "coordinator.v2",
     )
     saved = store.commit_packet_transition(
         updated_packet,
@@ -1292,7 +1349,9 @@ def run_packet_backtest(packet_id: str, body: BacktestRunRequest) -> DecisionPac
                 AuditEvent(
                     id=f"packet-audit-{len(base_packet.audit) + 1}",
                     timestamp=_clock(),
-                    eventType="backtest.completed" if result.validityScore != "refused" else "backtest.refused",
+                    eventType="backtest.completed"
+                    if result.validityScore != "refused"
+                    else "backtest.refused",
                     detail=f"Controlled backtest run finished with validity {result.validityScore}",
                 ),
             ],
@@ -1307,7 +1366,9 @@ def run_packet_backtest(packet_id: str, body: BacktestRunRequest) -> DecisionPac
     )
     saved = store.commit_packet_transition(
         updated_packet,
-        event_type="backtest.completed" if result.validityScore != "refused" else "backtest.refused",
+        event_type="backtest.completed"
+        if result.validityScore != "refused"
+        else "backtest.refused",
         detail=f"Controlled backtest validity={result.validityScore}.",
     )
     return saved
@@ -1339,8 +1400,12 @@ def run_packet_backtest_async(
             bt_result = run_controlled_backtest(pkt, force_run=body.forceRun)
             bt_plan = pkt.backtestPlan.model_copy() if pkt.backtestPlan else None
             if bt_plan is not None:
-                bt_plan.status = "completed" if bt_result.validityScore != "refused" else "ineligible"
-            base_packet = invalidate_integration(pkt, reason="Asynchronous backtest evidence changed.")
+                bt_plan.status = (
+                    "completed" if bt_result.validityScore != "refused" else "ineligible"
+                )
+            base_packet = invalidate_integration(
+                pkt, reason="Asynchronous backtest evidence changed."
+            )
             updated = base_packet.model_copy(
                 update={
                     "backtestPlan": bt_plan,
@@ -1350,7 +1415,9 @@ def run_packet_backtest_async(
                         AuditEvent(
                             id=f"packet-audit-{len(base_packet.audit) + 1}",
                             timestamp=_clock(),
-                            eventType="backtest.completed" if bt_result.validityScore != "refused" else "backtest.refused",
+                            eventType="backtest.completed"
+                            if bt_result.validityScore != "refused"
+                            else "backtest.refused",
                             detail=f"Async backtest finished with validity {bt_result.validityScore}",
                         ),
                     ],
@@ -1358,7 +1425,9 @@ def run_packet_backtest_async(
             )
             store.commit_packet_transition(
                 updated,
-                event_type="backtest.completed" if bt_result.validityScore != "refused" else "backtest.refused",
+                event_type="backtest.completed"
+                if bt_result.validityScore != "refused"
+                else "backtest.refused",
                 detail=f"Async controlled backtest validity={bt_result.validityScore}.",
             )
             store.complete_job(job.id, bt_result.model_dump(mode="json"))
@@ -1494,7 +1563,10 @@ def record_packet_outcome(
         next_status = packet.integrationStatus.model_copy(
             update={
                 "state": IntegrationStage.resolved,
-                "completedStages": [*packet.integrationStatus.completedStages, "outcome_resolution"],
+                "completedStages": [
+                    *packet.integrationStatus.completedStages,
+                    "outcome_resolution",
+                ],
                 "nextAction": "Use the resolved record in outcome-weighted retrieval.",
                 "updatedAt": datetime.now().isoformat(),
             }
@@ -1502,7 +1574,9 @@ def record_packet_outcome(
 
     updated_packet = packet.model_copy(
         update={
-            "memoryRecords": [*memory_records, memory] if memory is not None else packet.memoryRecords,
+            "memoryRecords": [*memory_records, memory]
+            if memory is not None
+            else packet.memoryRecords,
             "integrationStatus": next_status,
             "audit": [
                 *packet.audit,
@@ -1678,7 +1752,9 @@ def retrieve_packet_context(packet_id: str, body: RetrievalRequest) -> Retrieval
             )
 
     for review in store.list_reviews():
-        if review.id == packet.id or (originating_review_id is not None and review.id == originating_review_id):
+        if review.id == packet.id or (
+            originating_review_id is not None and review.id == originating_review_id
+        ):
             continue
         review_text = f"{review.title} {review.thesis} {review.ticker}"
         score = _score_text_match(query, review_text)
@@ -1956,11 +2032,11 @@ def health_detailed() -> dict:
     packets = store.list_packets()
     jobs = store.list_jobs()
     mkt_status = market_provider_status()
-    
+
     # Get calibration health info
     cal_summary = store.get_calibration_summary()
     cal_alerts = store.list_calibration_alerts(severity="critical")
-    
+
     # Get all calibration metrics
     metrics_board = store.get_calibration_metrics()
     persistence = {**store.persistence_status(), **_load_db_schema_version()}
@@ -1972,9 +2048,13 @@ def health_detailed() -> dict:
     if persistence["databaseRequired"] and not persistence["databaseConnected"]:
         alerts.append("Required Postgres database is unavailable")
     if not mkt_status.get("polygonConfigured"):
-        alerts.append("Licensed NYSE data path not configured; market data using Yahoo Finance fallback")
+        alerts.append(
+            "Licensed NYSE data path not configured; market data using Yahoo Finance fallback"
+        )
     if cal_alerts:
-        alerts.append(f"{len(cal_alerts)} critical calibration alert(s) — check GET /feedback/calibration/alerts")
+        alerts.append(
+            f"{len(cal_alerts)} critical calibration alert(s) — check GET /feedback/calibration/alerts"
+        )
     if metrics_board.overall_status == "critical":
         alerts.append(f"Critical metrics detected: {metrics_board.overall_status.upper()}")
     if metrics_board.overall_status == "warning":
@@ -2075,9 +2155,17 @@ def generate_packet_report(packet_id: str) -> ReportArtifact:
     if packet is None:
         raise HTTPException(status_code=404, detail="Packet not found")
 
-    report = generate_report(packet)
+    principal = current_principal()
+    runs = (
+        llm_catalog.verified_runs_for_packet(principal.organization_id, packet_id)
+        if principal and principal.organization_id
+        else []
+    )
+    report = generate_report(packet, runs)
     storage = artifact_store.persist_json(
-        "reports", packet_id, f"decision-report-{report.createdAt}.json",
+        "reports",
+        packet_id,
+        f"decision-report-{report.createdAt}.json",
         report.model_dump(mode="json"),
     )
     report = report.model_copy(update=storage)
@@ -2113,9 +2201,17 @@ def generate_packet_report_async(
             if pkt is None:
                 store.fail_job(job.id, "Packet no longer found")
                 return
-            rpt = generate_report(pkt)
+            task_principal = current_principal()
+            runs = (
+                llm_catalog.verified_runs_for_packet(task_principal.organization_id, packet_id)
+                if task_principal and task_principal.organization_id
+                else []
+            )
+            rpt = generate_report(pkt, runs)
             storage = artifact_store.persist_json(
-                "reports", packet_id, f"decision-report-{rpt.createdAt}.json",
+                "reports",
+                packet_id,
+                f"decision-report-{rpt.createdAt}.json",
                 rpt.model_dump(mode="json"),
                 created_by_user_id=created_by_user_id,
             )
@@ -2138,6 +2234,7 @@ def generate_packet_report_async(
 # ---------------------------------------------------------------------------
 # Phase 4: Collaboration — workspaces
 # ---------------------------------------------------------------------------
+
 
 @app.post("/workspaces", response_model=WorkspaceRecord)
 def create_workspace(
@@ -2193,6 +2290,7 @@ def add_packet_to_workspace(
 # Phase 4: Collaboration — packet comments
 # ---------------------------------------------------------------------------
 
+
 @app.post("/packets/{packet_id}/comments", response_model=PacketComment)
 def add_packet_comment(
     packet_id: str,
@@ -2227,6 +2325,7 @@ def list_packet_comments(
 # ---------------------------------------------------------------------------
 # Phase 4: Collaboration — approval flows
 # ---------------------------------------------------------------------------
+
 
 @app.post("/packets/{packet_id}/approval", response_model=PacketApproval)
 def set_packet_approval(
@@ -2265,6 +2364,7 @@ def get_packet_approval(
 # ---------------------------------------------------------------------------
 # Phase 5: Workflow templates (enterprise / marketplace layer)
 # ---------------------------------------------------------------------------
+
 
 @app.post("/workflows/templates", response_model=WorkflowTemplate)
 def create_workflow_template(

@@ -80,7 +80,9 @@ class ThesisRequest(BaseModel):
     time_horizon: str = "Unspecified"
     intended_expression: str = "Expression requires review"
     source_pointer: str = ""
-    subject_type: Literal["listed_instrument", "basket", "macro", "private_asset", "other"] | None = None
+    subject_type: (
+        Literal["listed_instrument", "basket", "macro", "private_asset", "other"] | None
+    ) = None
     instrument_id: str | None = None
 
 
@@ -261,6 +263,149 @@ class SpecialistAgentOutput(BaseModel):
     timestamp: str
     provider: str
     fallbackUsed: bool
+    schemaVersion: str = "specialist-output.v1"
+    direction: Literal["supports", "challenges", "mixed", "insufficient"] | None = None
+    evidenceStrength: float | None = Field(default=None, ge=0, le=1)
+    modelUncertainty: float | None = Field(default=None, ge=0, le=1)
+    coverage: float | None = Field(default=None, ge=0, le=1)
+    materiality: Literal["low", "medium", "high"] | None = None
+    verificationStatus: Literal["unverified", "passed", "repaired", "abstained", "human_review"] = (
+        "unverified"
+    )
+    materialClaims: list["MaterialClaim"] = Field(default_factory=list)
+    verificationFindings: list["VerificationFinding"] = Field(default_factory=list)
+    rejectedClaims: list["MaterialClaim"] = Field(default_factory=list)
+    calculationArtifacts: list["CalculationArtifact"] = Field(default_factory=list)
+    missingEvidence: list[str] = Field(default_factory=list)
+    falsifiableConditions: list[str] = Field(default_factory=list)
+    alternativeHypotheses: list[str] = Field(default_factory=list)
+    abstained: bool = False
+    abstentionReason: str | None = None
+    evidencePackHash: str | None = None
+    promptTemplateId: str | None = None
+    modelDigest: str | None = None
+    finishReason: str | None = None
+    truncationDetected: bool = False
+
+
+class TickerIdentity(BaseModel):
+    ticker: str
+    canonicalTicker: str
+    instrumentId: str
+    legalEntityName: str | None = None
+    exchangeMic: str | None = None
+    cik: str | None = None
+    securityType: str = "listed_instrument"
+    currency: str | None = None
+    shareClass: str | None = None
+    effectiveFrom: str | None = None
+    effectiveTo: str | None = None
+    resolutionProvider: str = "ambrosia-packet"
+    resolutionStatus: Literal["verified", "provisional", "ambiguous"] = "provisional"
+
+
+class EvidenceItemV2(BaseModel):
+    evidenceId: str
+    evidenceType: str
+    subjectInstrumentId: str
+    canonicalTicker: str
+    sourceName: str
+    sourcePointer: str | None = None
+    observedAt: str
+    retrievedAt: str
+    observationCutoff: str
+    dataMode: Literal["observed", "derived", "simulated", "user_asserted"]
+    freshnessSeconds: int | None = Field(default=None, ge=0)
+    content: dict[str, object] = Field(default_factory=dict)
+    units: str | None = None
+    currency: str | None = None
+    period: str | None = None
+    permission: str = "public"
+    trustBoundary: Literal["trusted_system", "external_data", "user_content"] = "external_data"
+    contentHash: str
+
+
+class ClaimEvidenceRelation(BaseModel):
+    evidenceId: str
+    relation: Literal["supports", "contradicts", "qualifies", "requires"]
+
+
+class MaterialClaim(BaseModel):
+    claimId: str
+    text: str
+    claimType: Literal["observation", "inference", "scenario", "opinion"]
+    materiality: Literal["low", "medium", "high"] = "medium"
+    supportingEvidenceIds: list[str] = Field(default_factory=list)
+    contradictingEvidenceIds: list[str] = Field(default_factory=list)
+    relations: list[ClaimEvidenceRelation] = Field(default_factory=list)
+    premiseClaimIds: list[str] = Field(default_factory=list)
+    uncertainty: float = Field(default=0.5, ge=0, le=1)
+    falsifier: str | None = None
+    calculationId: str | None = None
+    admissionStatus: Literal["proposed", "admitted", "repaired", "rejected", "human_review"] = (
+        "proposed"
+    )
+
+
+class VerificationFinding(BaseModel):
+    claimId: str
+    status: Literal[
+        "entailed", "contradicted", "insufficient", "nonfactual_opinion", "policy_violation"
+    ]
+    evidenceIds: list[str] = Field(default_factory=list)
+    reasons: list[str] = Field(default_factory=list)
+    deterministicChecksPassed: bool = False
+    verifier: str = "ambrosia-deterministic"
+
+
+class SelectiveConfidence(BaseModel):
+    direction: Literal["supports", "challenges", "mixed", "insufficient"]
+    evidenceStrength: float = Field(ge=0, le=1)
+    modelUncertainty: float = Field(ge=0, le=1)
+    coverage: float = Field(ge=0, le=1)
+    materiality: Literal["low", "medium", "high"]
+
+
+class CalculationIntent(BaseModel):
+    calculationId: str
+    operation: Literal[
+        "add", "subtract", "divide", "percent_change", "percentage_point_change", "margin"
+    ]
+    inputEvidenceIds: list[str] = Field(min_length=1, max_length=10)
+    inputPaths: list[str] = Field(min_length=1, max_length=10)
+    units: str | None = None
+    scale: str | None = None
+    fiscalPeriods: list[str] = Field(default_factory=list)
+    roundingDigits: int | None = Field(default=None, ge=0, le=8)
+
+
+class SpecialistOutputV2(BaseModel):
+    schemaVersion: Literal["specialist-output.v2"] = "specialist-output.v2"
+    role: str
+    instructionReferences: list[str] = Field(default_factory=list)
+    materialClaims: list[MaterialClaim] = Field(default_factory=list, max_length=40)
+    calculationIntents: list[CalculationIntent] = Field(default_factory=list, max_length=20)
+    missingEvidence: list[str] = Field(default_factory=list, max_length=40)
+    falsifiableConditions: list[str] = Field(default_factory=list, max_length=40)
+    alternativeHypotheses: list[str] = Field(default_factory=list, max_length=40)
+    roleConclusion: str
+    confidence: SelectiveConfidence
+    abstained: bool = False
+    abstentionReason: str | None = None
+
+
+class CalculationArtifact(BaseModel):
+    calculationId: str
+    operation: str
+    inputEvidenceIds: list[str]
+    rawValues: list[float]
+    units: str | None = None
+    scale: str | None = None
+    fiscalPeriods: list[str] = Field(default_factory=list)
+    formula: str
+    result: float
+    roundingRule: str = "no_implicit_rounding"
+    validationStatus: Literal["passed", "failed", "human_review"]
 
 
 class MetricLineage(BaseModel):
@@ -392,7 +537,7 @@ class DecisionPacket(BaseModel):
     trialCountImpact: int
     followUpDate: str
     createdAt: str
-    
+
     # Base review fields
     claims: list[Claim]
     strongestCritique: str
@@ -402,7 +547,7 @@ class DecisionPacket(BaseModel):
     tradeability: list[TradeabilityQuestion]
     sources: list[SourcePointer]
     audit: list[AuditEvent]
-    
+
     # Selective integration fields
     provenance: list[ProvenanceMetadata] = Field(default_factory=list)
     disconfirmationResult: DisconfirmationOutcome | None = None
@@ -421,10 +566,10 @@ class DecisionPacket(BaseModel):
     riskMonitor: RiskMonitor | None = None
     portfolioContext: PortfolioContext | None = None
     confidenceBreakdown: ConfidenceComponents | None = None
-    
+
     # Agent specialist outputs
     agentOutputs: dict[str, SpecialistAgentOutput | None] | None = None
-    
+
     # Coordinator metadata
     coordinatorVersion: str = "coordinator.v1"
     providerInfo: dict | None = None
@@ -690,7 +835,9 @@ class ScannerRunRequest(BaseModel):
 
 class ScannerCandidate(BaseModel):
     ticker: str
-    signal: Literal["momentum_up", "momentum_down", "mean_reversion_up", "mean_reversion_down", "neutral"]
+    signal: Literal[
+        "momentum_up", "momentum_down", "mean_reversion_up", "mean_reversion_down", "neutral"
+    ]
     thesisSuggestion: str
     score: float = Field(ge=0.0, le=1.0)
     price: float
@@ -712,7 +859,14 @@ class ScannerCandidate(BaseModel):
 class ScannerRejectedSymbol(BaseModel):
     ticker: str
     reason: str
-    status: Literal["inactive", "ambiguous", "unsupported", "not_found", "provider_unavailable", "market_data_unavailable"]
+    status: Literal[
+        "inactive",
+        "ambiguous",
+        "unsupported",
+        "not_found",
+        "provider_unavailable",
+        "market_data_unavailable",
+    ]
 
 
 class ScannerResult(BaseModel):
@@ -730,6 +884,12 @@ class ScannerResult(BaseModel):
 class ReportSection(BaseModel):
     title: str
     content: str
+    evidenceMode: Literal[
+        "observed", "derived", "simulated", "user_asserted", "mixed", "unavailable"
+    ] = "unavailable"
+    claimIds: list[str] = Field(default_factory=list)
+    citationEvidenceIds: list[str] = Field(default_factory=list)
+    verificationStatus: Literal["passed", "partial", "unverified", "unavailable"] = "unverified"
 
 
 class ReportArtifact(BaseModel):
@@ -744,6 +904,19 @@ class ReportArtifact(BaseModel):
     marketDataFreshnessSeconds: int | None = None
     artifactId: str | None = None
     storageStatus: str = "development_not_persisted"
+    schemaVersion: str = "ticker-intelligence-report.v1"
+    tickerIdentity: TickerIdentity | None = None
+    asOf: str | None = None
+    knowledgeCutoff: str | None = None
+    modelDigest: str | None = None
+    promptVersion: str | None = None
+    pipelineVersion: str | None = None
+    sourceSnapshotHash: str | None = None
+    verifiedClaimCoverage: float = Field(default=0, ge=0, le=1)
+    unresolvedMaterialClaimCount: int = Field(default=0, ge=0)
+    calculationArtifacts: list[CalculationArtifact] = Field(default_factory=list)
+    rejectedClaimIds: list[str] = Field(default_factory=list)
+    reportValidationStatus: Literal["passed", "partial", "legacy", "failed"] = "legacy"
 
 
 class JobRecord(BaseModel):
@@ -766,6 +939,7 @@ class JobRecord(BaseModel):
 # ---------------------------------------------------------------------------
 # Phase 4: Collaboration layer
 # ---------------------------------------------------------------------------
+
 
 class WorkspaceMemberRole(str, Enum):
     owner = "owner"
@@ -847,6 +1021,7 @@ class PacketApprovalCreate(BaseModel):
 # ---------------------------------------------------------------------------
 # Phase 5: Workflow templates (enterprise/marketplace layer)
 # ---------------------------------------------------------------------------
+
 
 class WorkflowTemplateStatus(str, Enum):
     draft = "draft"

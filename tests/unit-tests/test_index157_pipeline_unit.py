@@ -178,8 +178,11 @@ def test_report_uses_only_admitted_claims(packet_factory):
         packet_factory().model_copy(update={"agentOutputs": {"risk": output}})
     )
     text = "\n".join(s.content for s in artifact.sections)
+    synthesis_text = "\n".join(
+        s.content for s in artifact.sections if s.title != "Human Review Appendix"
+    )
     assert (
         artifact.schemaVersion == "ticker-intelligence-report.v2"
         and "Conditional verified risk" in text
-        and "Unsupported certainty" not in text
+        and "Unsupported certainty" not in synthesis_text
     )

@@ -192,6 +192,9 @@ class DisconfirmationOutput(BaseModel):
     roleConclusion: str | None = None
     confidence: dict = Field(default_factory=dict)
     abstentionReason: str | None = None
+    humanReviewLineage: list[dict] = Field(default_factory=list)
+    humanCorrectedClaims: list[dict] = Field(default_factory=list)
+    humanRejectedClaims: list[dict] = Field(default_factory=list)
 
 
 class WorkerResult(BaseModel):
@@ -395,6 +398,16 @@ class Catalog:
 
     def worker_readiness(self, organization_id: str, model_digest: str | None = None) -> dict:
         """Explain worker compatibility instead of collapsing it to a boolean."""
+        configured = self.configured_model_policies(organization_id)
+        default_digest = os.getenv("OLLAMA_DEFAULT_MODEL_DIGEST", "").strip()
+        if model_digest is None and len(configured) > 1 and not default_digest:
+            return {
+                "ready": False,
+                "reasonCode": "model_policy_ambiguous",
+                "compatibleCount": 0,
+            }
+        if model_digest is None and default_digest:
+            model_digest = default_digest
         workers = self.list_workers(organization_id)
         if not workers:
             return {"ready": False, "reasonCode": "no_enrolled_worker", "compatibleCount": 0}
@@ -404,14 +417,25 @@ class Catalog:
             return {"ready": False, "reasonCode": reason, "compatibleCount": 0}
         cutoff = now() - timedelta(minutes=2)
         fresh = []
+        newest_seen = None
         for worker in active:
             seen = worker.get("last_seen_at") or worker.get("lastSeenAt")
             if isinstance(seen, str):
                 seen = datetime.fromisoformat(seen.replace("Z", "+00:00"))
+            if seen and (newest_seen is None or seen > newest_seen):
+                newest_seen = seen
             if not self.durable or (seen and seen > cutoff):
                 fresh.append(worker)
         if not fresh:
-            return {"ready": False, "reasonCode": "worker_offline", "compatibleCount": 0}
+            return {
+                "ready": False,
+                "reasonCode": "worker_offline",
+                "compatibleCount": 0,
+                "lastSeenAt": newest_seen.isoformat() if newest_seen else None,
+                "lastHeartbeatAgeSeconds": int((now() - newest_seen).total_seconds())
+                if newest_seen
+                else None,
+            }
         qualified = []
         digest_seen = False
         for worker in fresh:
@@ -431,15 +455,20 @@ class Catalog:
             "reasonCode": "ready",
             "compatibleCount": len({str(worker.get("id")) for worker, _ in qualified}),
             "freshnessSeconds": 120,
+            "lastSeenAt": newest_seen.isoformat() if newest_seen else None,
+            "lastHeartbeatAgeSeconds": int((now() - newest_seen).total_seconds())
+            if newest_seen
+            else 0,
         }
 
-    def active_model_policies(self, organization_id: str) -> list[dict]:
+    def _advertised_models(self, organization_id: str, *, fresh_only: bool) -> list[dict]:
         if self.durable:
             with self._connect() as connection:
+                freshness = "AND last_seen_at>now()-interval '2 minutes'" if fresh_only else ""
                 rows = connection.execute(
-                    """SELECT capabilities->'models' AS models FROM local_worker_credentials
+                    f"""SELECT capabilities->'models' AS models FROM local_worker_credentials
                     WHERE organization_id=%s AND status='active'
-                    AND last_seen_at>now()-interval '2 minutes'""",
+                    {freshness}""",
                     (organization_id,),
                 ).fetchall()
             models = [model for row in rows for model in (row["models"] or [])]
@@ -448,19 +477,41 @@ class Catalog:
                 model
                 for worker in self.devices.values()
                 if worker["organization_id"] == organization_id and worker["status"] == "active"
+                and (not fresh_only or worker.get("last_seen_at"))
                 for model in worker.get("capabilities", {}).get("models", [])
             ]
-        by_digest = {str(model.get("digest")): model for model in models if model.get("digest")}
+        return models
+
+    def configured_model_policies(self, organization_id: str) -> list[dict]:
+        """Return durable policy eligibility independently of worker freshness."""
+        advertised = self._advertised_models(organization_id, fresh_only=False)
+        metadata = {
+            str(model.get("digest")): model for model in advertised if model.get("digest")
+        }
         approved = {
             item.strip()
             for item in os.getenv("OLLAMA_APPROVED_MODEL_DIGESTS", "").split(",")
             if item.strip()
         }
+        default_digest = os.getenv("OLLAMA_DEFAULT_MODEL_DIGEST", "").strip()
+        if default_digest:
+            approved.add(default_digest)
+        if not approved:
+            approved = set(metadata)
         return [
-            {**model, "approved": True}
-            for digest, model in sorted(by_digest.items())
-            if not approved or digest in approved
+            {
+                **metadata.get(digest, {}),
+                "name": metadata.get(digest, {}).get("name") or "Approved Ollama model",
+                "digest": digest,
+                "approved": True,
+                "default": digest == default_digest,
+            }
+            for digest in sorted(approved)
         ]
+
+    def active_model_policies(self, organization_id: str) -> list[dict]:
+        """Backward-compatible name: configured policies, not liveness-derived policies."""
+        return self.configured_model_policies(organization_id)
 
     def revoke_worker(self, organization_id: str, worker_id: str) -> bool:
         if self.durable:
@@ -1089,6 +1140,11 @@ class Catalog:
                 for item in input_payload.get("evidence", [])
                 if isinstance(item, dict)
             }
+            findings = {
+                str(item.get("claimId")): item
+                for item in output.get("verificationFindings", [])
+                if isinstance(item, dict)
+            }
             for claim in output.get("materialClaims", []):
                 support = [str(item) for item in claim.get("supportingEvidenceIds", [])]
                 if claim.get("claimType") == "observation" and (
@@ -1106,6 +1162,21 @@ class Catalog:
                 ):
                     passed = False
                 if claim.get("calculationId") and claim["calculationId"] not in computed:
+                    passed = False
+                finding = findings.get(str(claim.get("claimId")))
+                expected_status = (
+                    "nonfactual_opinion"
+                    if claim.get("claimType") == "opinion"
+                    else "entailed"
+                )
+                if (
+                    not finding
+                    or finding.get("status") != expected_status
+                    or not finding.get("deterministicChecksPassed")
+                    or not set(claim.get("supportingEvidenceIds", [])).issubset(
+                        set(finding.get("evidenceIds", []))
+                    )
+                ):
                     passed = False
         return ("passed" if passed else "needs_human_review", ratio)
 

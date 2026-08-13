@@ -10,6 +10,8 @@ param(
 $ErrorActionPreference = 'Stop'
 $workerPath = Join-Path $PSScriptRoot 'ambrosia_local_worker.py'
 $readmePath = Join-Path $PSScriptRoot 'README.md'
+$installerPath = Join-Path $PSScriptRoot 'install-scheduled-worker.ps1'
+$launcherPath = Join-Path $PSScriptRoot 'run-scheduled-worker.ps1'
 $resolvedOutput = [System.IO.Path]::GetFullPath($OutputDirectory)
 $resolvedRoot = [System.IO.Path]::GetFullPath($PSScriptRoot)
 
@@ -27,6 +29,8 @@ New-Item -ItemType Directory -Path $stage | Out-Null
 try {
     Copy-Item -LiteralPath $workerPath -Destination $stage
     Copy-Item -LiteralPath $readmePath -Destination $stage
+    Copy-Item -LiteralPath $installerPath -Destination $stage
+    Copy-Item -LiteralPath $launcherPath -Destination $stage
 
     $manifestPath = Join-Path $stage 'MANIFEST.sha256'
     $manifestLines = Get-ChildItem -LiteralPath $stage -File |

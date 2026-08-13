@@ -134,6 +134,12 @@ class AdmissionRequest(BaseModel):
         return self
 
 
+class RollbackRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    expectedPacketVersion: int = Field(ge=2)
+    rationale: str = Field(min_length=3, max_length=10_000)
+
+
 class ProposalView(BaseModel):
     id: str
     operationId: str
@@ -152,6 +158,12 @@ class ProposalView(BaseModel):
     deterministicFindings: list[dict]
     admissionState: str
     resultPacketVersion: int | None = None
+    rollbackPacketVersion: int | None = None
+    reviewerDecisionHash: str | None = None
+    evidenceSnapshot: list[dict] = Field(default_factory=list)
+    reviewImpact: list[dict] = Field(default_factory=list)
+    claimDecisions: list[dict] = Field(default_factory=list)
+    proposalEvents: list[dict] = Field(default_factory=list)
     createdAt: str
 
 
@@ -162,6 +174,8 @@ class Bridge:
         self.idempotency = {}
         self.proposals = {}
         self.admissions = {}
+        self.proposal_events = {}
+        self.rollbacks = {}
 
     def tenant(self):
         p = current_principal()
@@ -259,19 +273,7 @@ class Bridge:
             if owns_connection:
                 connection.close()
 
-    def hydrate(self, operation_id, tenant):
-        if not catalog.durable:
-            with self.lock:
-                return self.operations.get(str(operation_id))
-        with catalog._connect(tenant=False) as connection:
-            catalog._set_worker_tenant(connection, {"organization_id": tenant})
-            value = connection.execute(
-                """SELECT o.*,w.name AS worker_name FROM ollama_review_operations o
-                LEFT JOIN local_worker_credentials w ON w.id=o.worker_id WHERE o.id=%s""",
-                (operation_id,),
-            ).fetchone()
-        if not value:
-            return None
+    def _operation_from_db(self, value, tenant):
         row = {
             "id": str(value["id"]),
             "packetId": value["packet_id"],
@@ -311,6 +313,19 @@ class Bridge:
         with self.lock:
             self.operations[row["id"]] = row
         return row
+
+    def hydrate(self, operation_id, tenant):
+        if not catalog.durable:
+            with self.lock:
+                return self.operations.get(str(operation_id))
+        with catalog._connect(tenant=False) as connection:
+            catalog._set_worker_tenant(connection, {"organization_id": tenant})
+            value = connection.execute(
+                """SELECT o.*,w.name AS worker_name FROM ollama_review_operations o
+                LEFT JOIN local_worker_credentials w ON w.id=o.worker_id WHERE o.id=%s""",
+                (operation_id,),
+            ).fetchone()
+        return self._operation_from_db(value, tenant) if value else None
 
     def create(self, packet: DecisionPacket, body: OperationCreate, key: str | None):
         tenant = self.tenant()
@@ -621,6 +636,8 @@ class Bridge:
             "deterministicFindings": output.get("verificationFindings", []),
             "admissionState": state,
             "resultPacketVersion": None,
+            "rollbackPacketVersion": None,
+            "reviewerDecisionHash": None,
             "createdAt": now(),
             "tenant": str(row["tenant"]),
         }
@@ -658,6 +675,20 @@ class Bridge:
                     proposal["createdAt"],
                     proposal["createdAt"],
                 ),
+            )
+            self._proposal_event(
+                proposal,
+                "proposal.created",
+                "server:deterministic-verifier",
+                {"admissionState": state, "verification": verification},
+                connection,
+            )
+        else:
+            self._proposal_event(
+                proposal,
+                "proposal.created",
+                "server:deterministic-verifier",
+                {"admissionState": state, "verification": verification},
             )
         with self.lock:
             self.proposals[proposal_id] = proposal
@@ -697,6 +728,8 @@ class Bridge:
                 "deterministicFindings": value["deterministic_findings"],
                 "admissionState": value["admission_state"],
                 "resultPacketVersion": value["result_packet_version"],
+                "rollbackPacketVersion": value.get("rollback_packet_version"),
+                "reviewerDecisionHash": value.get("reviewer_decision_hash"),
                 "createdAt": value["created_at"].isoformat(),
                 "tenant": str(tenant),
             }
@@ -709,12 +742,139 @@ class Bridge:
         proposal = self.proposals.get(operation["proposalId"])
         return proposal if proposal and proposal["tenant"] == tenant else None
 
-    @staticmethod
-    def public_proposal(proposal: dict) -> dict:
-        return {key: value for key, value in proposal.items() if key != "tenant"}
+    def _proposal_event(
+        self,
+        proposal: dict,
+        event_type: str,
+        actor: str,
+        payload: dict,
+        connection=None,
+    ) -> dict:
+        events = self.proposal_events.setdefault(proposal["id"], [])
+        previous_hash = events[-1]["eventHash"] if events else "0" * 64
+        payload_hash = canonical_hash(payload)
+        event_hash = canonical_hash(
+            [proposal["id"], event_type, actor, payload_hash, previous_hash]
+        )
+        event = {
+            "eventType": event_type,
+            "actor": actor,
+            "payload": payload,
+            "payloadHash": payload_hash,
+            "previousHash": previous_hash,
+            "eventHash": event_hash,
+            "createdAt": now(),
+        }
+        if connection is not None:
+            prior = connection.execute(
+                """SELECT event_hash FROM llm_proposal_events
+                WHERE proposal_id=%s ORDER BY id DESC LIMIT 1 FOR UPDATE""",
+                (proposal["id"],),
+            ).fetchone()
+            event["previousHash"] = prior["event_hash"] if prior else "0" * 64
+            event["eventHash"] = canonical_hash(
+                [
+                    proposal["id"],
+                    event_type,
+                    actor,
+                    payload_hash,
+                    event["previousHash"],
+                ]
+            )
+            connection.execute(
+                """INSERT INTO llm_proposal_events
+                (organization_id,proposal_id,event_type,actor,payload,payload_hash,
+                 previous_hash,event_hash,created_at)
+                VALUES (%s,%s,%s,%s,%s::jsonb,%s,%s,%s,%s)""",
+                (
+                    proposal["tenant"],
+                    proposal["id"],
+                    event_type,
+                    actor,
+                    json.dumps(payload),
+                    payload_hash,
+                    event["previousHash"],
+                    event["eventHash"],
+                    event["createdAt"],
+                ),
+            )
+        events.append(event)
+        return event
+
+    def _proposal_review_data(self, proposal: dict) -> tuple[list[dict], list[dict], list[dict]]:
+        operation = self.hydrate(proposal["operationId"], proposal["tenant"])
+        evidence: list[dict] = []
+        decisions: list[dict] = []
+        events = list(self.proposal_events.get(proposal["id"], []))
+        if catalog.durable:
+            with catalog._connect(tenant=False) as connection:
+                catalog._set_worker_tenant(connection, {"organization_id": proposal["tenant"]})
+                job = connection.execute(
+                    """SELECT j.input_payload FROM llm_jobs j
+                    JOIN ollama_review_operations o ON o.job_id=j.id WHERE o.id=%s""",
+                    (proposal["operationId"],),
+                ).fetchone()
+                decision_rows = connection.execute(
+                    """SELECT claim_id,decision,original_claim_hash,corrected_claim_hash,
+                    corrected_text,supporting_evidence_ids,falsifier,rationale,created_at
+                    FROM llm_proposal_claim_decisions WHERE proposal_id=%s ORDER BY created_at""",
+                    (proposal["id"],),
+                ).fetchall()
+                event_rows = connection.execute(
+                    """SELECT event_type,actor,payload,payload_hash,previous_hash,event_hash,created_at
+                    FROM llm_proposal_events WHERE proposal_id=%s ORDER BY id""",
+                    (proposal["id"],),
+                ).fetchall()
+            if job:
+                evidence = catalog.resolved_input(job["input_payload"]).get("evidence", [])
+            decisions = [
+                {
+                    "claimId": row["claim_id"],
+                    "decision": row["decision"],
+                    "originalClaimHash": row["original_claim_hash"],
+                    "correctedClaimHash": row["corrected_claim_hash"],
+                    "correctedText": row["corrected_text"],
+                    "supportingEvidenceIds": row["supporting_evidence_ids"],
+                    "falsifier": row["falsifier"],
+                    "rationale": row["rationale"],
+                    "createdAt": row["created_at"].isoformat(),
+                }
+                for row in decision_rows
+            ]
+            events = [
+                {
+                    "eventType": row["event_type"],
+                    "actor": row["actor"],
+                    "payload": row["payload"],
+                    "payloadHash": row["payload_hash"],
+                    "previousHash": row["previous_hash"],
+                    "eventHash": row["event_hash"],
+                    "createdAt": row["created_at"].isoformat(),
+                }
+                for row in event_rows
+            ]
+        elif operation:
+            evidence = self._memory_resolved_input(operation).get("evidence", [])
+            decisions = list(proposal.get("claimDecisions", []))
+        return evidence, decisions, events
+
+    def public_proposal(self, proposal: dict) -> dict:
+        value = {key: item for key, item in proposal.items() if key != "tenant"}
+        evidence, decisions, events = self._proposal_review_data(proposal)
+        role = str(proposal.get("proposedPatch", {}).get("role") or "pmSynthesis")
+        value.update(
+            evidenceSnapshot=evidence,
+            claimDecisions=decisions,
+            proposalEvents=events,
+            reviewImpact=[
+                {"claimId": claim.get("claimId"), "reportSection": role}
+                for claim in proposal.get("proposedPatch", {}).get("materialClaims", [])
+            ],
+        )
+        return value
 
     @staticmethod
-    def _reviewed_output(proposal: dict, body: AdmissionRequest) -> dict:
+    def _reviewed_output(proposal: dict, body: AdmissionRequest, reviewer_id: str) -> dict:
         output = json.loads(json.dumps(proposal["originalOutput"]))
         claims = {str(item.get("claimId")): item for item in output.get("materialClaims", [])}
         decisions = {item.claimId: item for item in body.claimDecisions}
@@ -729,10 +889,38 @@ class Bridge:
                 for claim_id in claims
             }
         admitted = []
+        rejected = list(output.get("rejectedClaims", []))
+        findings = {
+            str(item.get("claimId")): item
+            for item in output.get("verificationFindings", [])
+        }
+        lineage = []
+        human_corrected = []
+        human_rejected = []
         corrected = False
         for claim_id, claim in claims.items():
             decision = decisions.get(claim_id)
             if not decision or decision.decision == "reject":
+                rejected.append({**claim, "admissionStatus": "rejected"})
+                human_rejected.append(
+                    {
+                        "claimId": claim_id,
+                        "proposalId": proposal["id"],
+                        "reviewerId": reviewer_id,
+                        "originalClaimHash": canonical_hash(claim),
+                        "originalText": claim.get("text", ""),
+                        "supportingEvidenceIds": claim.get("supportingEvidenceIds", []),
+                        "reason": body.rationale,
+                    }
+                )
+                lineage.append(
+                    {
+                        "claimId": claim_id,
+                        "decision": "reject",
+                        "originalClaimHash": canonical_hash(claim),
+                        "rationale": body.rationale,
+                    }
+                )
                 continue
             item = dict(claim)
             if decision.decision == "accept_with_human_correction":
@@ -743,10 +931,50 @@ class Bridge:
                 if decision.falsifier is not None:
                     item["falsifier"] = decision.falsifier
                 item["admissionStatus"] = "human_review"
+                findings[claim_id] = {
+                    "claimId": claim_id,
+                    "status": "entailed",
+                    "evidenceIds": item.get("supportingEvidenceIds", []),
+                    "reasons": [
+                        "Human correction passed closed-world deterministic revalidation; "
+                        "authorship remains human."
+                    ],
+                    "deterministicChecksPassed": True,
+                    "verifier": "ambrosia-human-correction-gate.v1",
+                }
+                human_corrected.append(
+                    {
+                        "claimId": claim_id,
+                        "proposalId": proposal["id"],
+                        "reviewerId": reviewer_id,
+                        "originalClaimHash": canonical_hash(claim),
+                        "correctedClaimHash": canonical_hash(item),
+                        "correctedText": item.get("text", ""),
+                        "supportingEvidenceIds": item.get("supportingEvidenceIds", []),
+                        "reason": body.rationale,
+                    }
+                )
             else:
                 item["admissionStatus"] = "admitted"
             admitted.append(item)
+            lineage.append(
+                {
+                    "claimId": claim_id,
+                    "decision": decision.decision,
+                    "originalClaimHash": canonical_hash(claim),
+                    "correctedClaimHash": canonical_hash(item)
+                    if decision.decision == "accept_with_human_correction"
+                    else None,
+                    "supportingEvidenceIds": item.get("supportingEvidenceIds", []),
+                    "rationale": body.rationale,
+                }
+            )
         output["materialClaims"] = admitted
+        output["rejectedClaims"] = rejected
+        output["verificationFindings"] = list(findings.values())
+        output["humanReviewLineage"] = lineage
+        output["humanCorrectedClaims"] = human_corrected
+        output["humanRejectedClaims"] = human_rejected
         if body.disposition != "rejected" and not admitted:
             raise HTTPException(422, "Admission must select at least one material claim")
         references = {
@@ -777,6 +1005,64 @@ class Bridge:
             resultHash=canonical_hash(output),
             finishReason="human_admission",
         )
+
+    @staticmethod
+    def _effective_decisions(proposal: dict, body: AdmissionRequest) -> list[dict]:
+        supplied = {item.claimId: item.model_dump(mode="json") for item in body.claimDecisions}
+        default_decision = "reject" if body.disposition == "rejected" else "accept_as_proposed"
+        return [
+            supplied.get(
+                str(claim.get("claimId")),
+                {"claimId": str(claim.get("claimId")), "decision": default_decision},
+            )
+            for claim in proposal.get("originalOutput", {}).get("materialClaims", [])
+        ]
+
+    def _persist_claim_decisions(
+        self, connection, admission_id: str, proposal: dict, body: AdmissionRequest
+    ) -> list[dict]:
+        original = {
+            str(item.get("claimId")): item
+            for item in proposal.get("originalOutput", {}).get("materialClaims", [])
+        }
+        decisions = self._effective_decisions(proposal, body)
+        for decision in decisions:
+            claim = original[decision["claimId"]]
+            corrected = (
+                {
+                    **claim,
+                    "text": decision.get("correctedText"),
+                    "supportingEvidenceIds": decision.get("supportingEvidenceIds")
+                    or claim.get("supportingEvidenceIds", []),
+                    "falsifier": decision.get("falsifier") or claim.get("falsifier"),
+                }
+                if decision["decision"] == "accept_with_human_correction"
+                else None
+            )
+            connection.execute(
+                """INSERT INTO llm_proposal_claim_decisions
+                (organization_id,admission_id,proposal_id,claim_id,decision,
+                 original_claim_hash,corrected_claim_hash,corrected_text,
+                 supporting_evidence_ids,falsifier,rationale)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s,%s)""",
+                (
+                    proposal["tenant"],
+                    admission_id,
+                    proposal["id"],
+                    decision["claimId"],
+                    decision["decision"],
+                    canonical_hash(claim),
+                    canonical_hash(corrected) if corrected else None,
+                    decision.get("correctedText"),
+                    json.dumps(
+                        decision.get("supportingEvidenceIds")
+                        or claim.get("supportingEvidenceIds", [])
+                    ),
+                    decision.get("falsifier") or claim.get("falsifier"),
+                    body.rationale,
+                ),
+            )
+        return decisions
 
     def _memory_resolved_input(self, operation: dict) -> dict:
         job = catalog.jobs.get(operation.get("jobId"))
@@ -809,7 +1095,7 @@ class Bridge:
                 return previous["result"]
         if body.disposition == "rejected":
             return self._reject_proposal(proposal, body, key, request_hash, principal)
-        reviewed_output = self._reviewed_output(proposal, body)
+        reviewed_output = self._reviewed_output(proposal, body, str(principal.subject))
         if catalog.durable:
             result = self._admit_durable(
                 proposal, reviewed_output, body, key, request_hash, principal
@@ -826,6 +1112,15 @@ class Bridge:
             ):
                 proposal["admissionState"] = "stale"
                 operation["admissionState"] = "stale"
+                self._proposal_event(
+                    proposal,
+                    "proposal.stale",
+                    f"user:{principal.subject}",
+                    {
+                        "expectedPacketVersion": body.expectedPacketVersion,
+                        "actualPacketVersion": packet.packetVersion,
+                    },
+                )
                 raise HTTPException(409, {"code": "proposal_stale"})
             verification, _ = catalog._verify_output(
                 self._memory_resolved_input(operation), reviewed_output
@@ -850,6 +1145,7 @@ class Bridge:
                 operation["traceId"],
                 proposal_id=proposal["id"],
                 admission_actor=str(principal.subject),
+                admission_decisions=reviewed_output.get("humanReviewLineage", []),
             )
             saved = store.commit_packet_transition(
                 updated,
@@ -862,8 +1158,26 @@ class Bridge:
                 if body.disposition == "corrected"
                 else "human_admitted"
             )
-            proposal.update(admissionState=state, resultPacketVersion=saved.packetVersion)
+            decision_hash = canonical_hash(
+                [proposal["proposedPatchHash"], principal.subject, body.model_dump(mode="json")]
+            )
+            proposal.update(
+                admissionState=state,
+                resultPacketVersion=saved.packetVersion,
+                reviewerDecisionHash=decision_hash,
+                claimDecisions=self._effective_decisions(proposal, body),
+            )
             operation.update(admissionState=state, resultPacketVersion=saved.packetVersion)
+            self._proposal_event(
+                proposal,
+                "proposal.admitted",
+                f"user:{principal.subject}",
+                {
+                    "decisionHash": decision_hash,
+                    "resultPacketVersion": saved.packetVersion,
+                    "state": state,
+                },
+            )
             result = self.public(operation)
         with self.lock:
             self.admissions[idempotency] = {
@@ -882,16 +1196,22 @@ class Bridge:
                     catalog._set_worker_tenant(
                         connection, {"organization_id": principal.organization_id}
                     )
-                    connection.execute(
-                        """UPDATE llm_packet_proposals SET admission_state='rejected',
-                        admitted_at=now(),admitted_by=%s,updated_at=now() WHERE id=%s""",
-                        (principal.subject, proposal["id"]),
+                    decision_hash = canonical_hash(
+                        [proposal["proposedPatchHash"], principal.subject, body.model_dump(mode="json")]
                     )
                     connection.execute(
+                        """UPDATE llm_packet_proposals SET admission_state='rejected',
+                        admitted_at=now(),admitted_by=%s,reviewer_decision_hash=%s,
+                        updated_at=now() WHERE id=%s""",
+                        (principal.subject, decision_hash, proposal["id"]),
+                    )
+                    admission = connection.execute(
                         """INSERT INTO llm_proposal_admissions
                         (organization_id,proposal_id,reviewer_user_id,idempotency_key_hash,
-                         request_hash,disposition,claim_decisions,rationale)
-                        VALUES (%s,%s,%s,%s,%s,'rejected',%s::jsonb,%s)""",
+                         request_hash,disposition,claim_decisions,rationale,decision_hash,
+                         unsupported_claim_count,citation_issue_count,usefulness_score)
+                        VALUES (%s,%s,%s,%s,%s,'rejected',%s::jsonb,%s,%s,%s,%s,%s)
+                        RETURNING id""",
                         (
                             principal.organization_id,
                             proposal["id"],
@@ -900,14 +1220,46 @@ class Bridge:
                             request_hash,
                             json.dumps([item.model_dump() for item in body.claimDecisions]),
                             body.rationale,
+                            decision_hash,
+                            body.unsupportedClaimCount,
+                            body.citationIssueCount,
+                            body.usefulnessScore,
                         ),
+                    ).fetchone()
+                    self._persist_claim_decisions(
+                        connection, str(admission["id"]), proposal, body
                     )
                     connection.execute(
                         """UPDATE ollama_review_operations SET admission_state='rejected',
                         updated_at=now() WHERE id=%s""",
                         (proposal["operationId"],),
                     )
+                    self._proposal_event(
+                        proposal,
+                        "proposal.stale",
+                        f"user:{principal.subject}",
+                        {"expectedPacketVersion": body.expectedPacketVersion},
+                        connection,
+                    )
+                    self._proposal_event(
+                        proposal,
+                        "proposal.rejected",
+                        f"user:{principal.subject}",
+                        {"decisionHash": decision_hash, "rationale": body.rationale},
+                        connection,
+                    )
         proposal["admissionState"] = "rejected"
+        proposal["reviewerDecisionHash"] = canonical_hash(
+            [proposal["proposedPatchHash"], principal.subject, body.model_dump(mode="json")]
+        )
+        proposal["claimDecisions"] = self._effective_decisions(proposal, body)
+        if not catalog.durable:
+            self._proposal_event(
+                proposal,
+                "proposal.rejected",
+                f"user:{principal.subject}",
+                {"decisionHash": proposal["reviewerDecisionHash"], "rationale": body.rationale},
+            )
         operation = self.hydrate(proposal["operationId"], str(principal.organization_id))
         if operation:
             operation["admissionState"] = "rejected"
@@ -965,7 +1317,14 @@ class Bridge:
                 if existing:
                     if existing["request_hash"] != request_hash:
                         raise HTTPException(409, {"code": "idempotency_key_reused"})
-                    return self.public(self.hydrate(proposal["operationId"], str(principal.organization_id)))
+                    operation_value = connection.execute(
+                        """SELECT o.*,w.name AS worker_name FROM ollama_review_operations o
+                        LEFT JOIN local_worker_credentials w ON w.id=o.worker_id WHERE o.id=%s""",
+                        (proposal["operationId"],),
+                    ).fetchone()
+                    return self.public(
+                        self._operation_from_db(operation_value, str(principal.organization_id))
+                    )
                 if not locked or locked["admission_state"] not in {
                     "proposed",
                     "awaiting_human_review",
@@ -1025,6 +1384,7 @@ class Bridge:
                     operation["trace_id"],
                     proposal_id=proposal["id"],
                     admission_actor=str(principal.subject),
+                    admission_decisions=reviewed_output.get("humanReviewLineage", []),
                 )
                 packet_store = store._packet_db
                 if packet_store is None:
@@ -1043,22 +1403,38 @@ class Bridge:
                     if body.disposition == "corrected"
                     else "human_admitted"
                 )
+                decision_hash = canonical_hash(
+                    [
+                        proposal["proposedPatchHash"],
+                        principal.subject,
+                        body.model_dump(mode="json"),
+                    ]
+                )
                 connection.execute(
                     """UPDATE llm_packet_proposals SET admission_state=%s,
-                    result_packet_version=%s,admitted_at=now(),admitted_by=%s,updated_at=now()
+                    result_packet_version=%s,admitted_at=now(),admitted_by=%s,
+                    reviewer_decision_hash=%s,updated_at=now()
                     WHERE id=%s""",
-                    (state, updated.packetVersion, principal.subject, proposal["id"]),
+                    (
+                        state,
+                        updated.packetVersion,
+                        principal.subject,
+                        decision_hash,
+                        proposal["id"],
+                    ),
                 )
                 connection.execute(
                     """UPDATE ollama_review_operations SET admission_state=%s,
                     result_packet_version=%s,updated_at=now() WHERE id=%s""",
                     (state, updated.packetVersion, proposal["operationId"]),
                 )
-                connection.execute(
+                admission = connection.execute(
                     """INSERT INTO llm_proposal_admissions
                     (organization_id,proposal_id,reviewer_user_id,idempotency_key_hash,
-                     request_hash,disposition,claim_decisions,rationale,result_packet_version)
-                    VALUES (%s,%s,%s,%s,%s,%s,%s::jsonb,%s,%s)""",
+                     request_hash,disposition,claim_decisions,rationale,result_packet_version,
+                     decision_hash,unsupported_claim_count,citation_issue_count,usefulness_score)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s::jsonb,%s,%s,%s,%s,%s,%s)
+                    RETURNING id""",
                     (
                         principal.organization_id,
                         proposal["id"],
@@ -1069,11 +1445,260 @@ class Bridge:
                         json.dumps([item.model_dump() for item in body.claimDecisions]),
                         body.rationale,
                         updated.packetVersion,
+                        decision_hash,
+                        body.unsupportedClaimCount,
+                        body.citationIssueCount,
+                        body.usefulnessScore,
                     ),
+                ).fetchone()
+                decisions = self._persist_claim_decisions(
+                    connection, str(admission["id"]), proposal, body
                 )
-        proposal.update(admissionState=state, resultPacketVersion=updated.packetVersion)
+                self._proposal_event(
+                    proposal,
+                    "proposal.admitted",
+                    f"user:{principal.subject}",
+                    {
+                        "decisionHash": decision_hash,
+                        "resultPacketVersion": updated.packetVersion,
+                        "state": state,
+                    },
+                    connection,
+                )
+        proposal.update(
+            admissionState=state,
+            resultPacketVersion=updated.packetVersion,
+            reviewerDecisionHash=decision_hash,
+            claimDecisions=decisions,
+        )
         operation_row = self.hydrate(proposal["operationId"], str(principal.organization_id))
         return self.public(operation_row)
+
+    @staticmethod
+    def _rollback_candidate(
+        base: DecisionPacket,
+        current: DecisionPacket,
+        proposal_id: str,
+        actor: str,
+        rationale: str,
+    ) -> DecisionPacket:
+        return base.model_copy(
+            deep=True,
+            update={
+                "packetVersion": current.packetVersion + 1,
+                "audit": [
+                    *current.audit,
+                    AuditEvent(
+                        id=f"packet-audit-{len(current.audit) + 1}",
+                        timestamp=now(),
+                        eventType="agents.proposal.rollback",
+                        detail=(
+                            f"Compensating rollback of proposal {proposal_id} by {actor}: "
+                            f"{rationale}"
+                        ),
+                    ),
+                ],
+                "providerInfo": {
+                    **(base.providerInfo or {}),
+                    "rollbackOfProposalId": proposal_id,
+                    "rollbackActor": actor,
+                    "rollbackRationale": rationale,
+                },
+            },
+        )
+
+    def rollback(
+        self, operation_id: str, body: RollbackRequest, key: str | None
+    ) -> dict:
+        principal = current_principal()
+        if not principal or not principal.organization_id:
+            raise HTTPException(401, "Tenant-bound account required")
+        if principal.role not in {"admin", "owner"}:
+            raise HTTPException(403, "Admin or owner role required for proposal rollback")
+        if not key:
+            raise HTTPException(400, "Idempotency-Key is required for proposal rollback")
+        proposal = self.get_proposal(operation_id)
+        if not proposal:
+            raise HTTPException(404, "LLM packet proposal not found")
+        request_hash = canonical_hash(body.model_dump(mode="json"))
+        replay_key = (str(principal.organization_id), str(principal.subject), f"rollback:{key}")
+        with self.lock:
+            replay = self.rollbacks.get(replay_key)
+            if replay:
+                if replay["requestHash"] != request_hash:
+                    raise HTTPException(409, {"code": "idempotency_key_reused"})
+                return replay["result"]
+        if catalog.durable:
+            result = self._rollback_durable(proposal, body, key, request_hash, principal)
+        else:
+            if proposal["admissionState"] == "rolled_back":
+                operation = self.hydrate(operation_id, str(principal.organization_id))
+                return self.public(operation)
+            if proposal["admissionState"] not in {
+                "auto_admitted",
+                "human_admitted",
+                "corrected_and_admitted",
+            }:
+                raise HTTPException(409, {"code": "proposal_not_admitted"})
+            current = store.get_packet(proposal["packetId"])
+            versions = store.list_packet_versions(proposal["packetId"])
+            base = next(
+                (item for item in versions if item.packetVersion == proposal["basePacketVersion"]),
+                None,
+            )
+            if not current or not base:
+                raise HTTPException(409, {"code": "rollback_base_unavailable"})
+            if (
+                current.packetVersion != body.expectedPacketVersion
+                or current.packetVersion != proposal["resultPacketVersion"]
+            ):
+                raise HTTPException(409, {"code": "rollback_packet_changed"})
+            candidate = self._rollback_candidate(
+                base, current, proposal["id"], str(principal.subject), body.rationale
+            )
+            saved = store.commit_packet_transition(
+                candidate,
+                event_type="agents.proposal.rollback",
+                detail=f"Proposal {proposal['id']} compensated by packet v{candidate.packetVersion}.",
+                actor=f"user:{principal.subject}",
+            )
+            proposal.update(
+                admissionState="rolled_back", rollbackPacketVersion=saved.packetVersion
+            )
+            operation = self.hydrate(operation_id, str(principal.organization_id))
+            operation.update(
+                admissionState="rolled_back", resultPacketVersion=saved.packetVersion
+            )
+            self._proposal_event(
+                proposal,
+                "proposal.rolled_back",
+                f"user:{principal.subject}",
+                {
+                    "revertedPacketVersion": current.packetVersion,
+                    "rollbackPacketVersion": saved.packetVersion,
+                    "rationale": body.rationale,
+                },
+            )
+            result = self.public(operation)
+        with self.lock:
+            self.rollbacks[replay_key] = {"requestHash": request_hash, "result": result}
+        return result
+
+    def _rollback_durable(self, proposal, body, key, request_hash, principal) -> dict:
+        with catalog._connect(tenant=False) as connection:
+            with connection.transaction():
+                catalog._set_worker_tenant(
+                    connection, {"organization_id": principal.organization_id}
+                )
+                existing = connection.execute(
+                    """SELECT request_hash,rollback_packet_version FROM llm_proposal_rollbacks
+                    WHERE organization_id=%s AND reviewer_user_id=%s
+                    AND idempotency_key_hash=%s""",
+                    (principal.organization_id, principal.subject, canonical_hash(key)),
+                ).fetchone()
+                if existing:
+                    if existing["request_hash"] != request_hash:
+                        raise HTTPException(409, {"code": "idempotency_key_reused"})
+                    operation_value = connection.execute(
+                        """SELECT o.*,w.name AS worker_name FROM ollama_review_operations o
+                        LEFT JOIN local_worker_credentials w ON w.id=o.worker_id WHERE o.id=%s""",
+                        (proposal["operationId"],),
+                    ).fetchone()
+                    return self.public(
+                        self._operation_from_db(operation_value, str(principal.organization_id))
+                    )
+                locked = connection.execute(
+                    "SELECT * FROM llm_packet_proposals WHERE id=%s FOR UPDATE",
+                    (proposal["id"],),
+                ).fetchone()
+                if not locked or locked["admission_state"] not in {
+                    "auto_admitted",
+                    "human_admitted",
+                    "corrected_and_admitted",
+                }:
+                    raise HTTPException(409, {"code": "proposal_not_admitted"})
+                current_row = connection.execute(
+                    "SELECT artifact FROM review_packet WHERE packet_id=%s FOR UPDATE",
+                    (proposal["packetId"],),
+                ).fetchone()
+                base_row = connection.execute(
+                    """SELECT artifact FROM packet_version
+                    WHERE packet_id=%s AND packet_version=%s""",
+                    (proposal["packetId"], proposal["basePacketVersion"]),
+                ).fetchone()
+                if not current_row or not base_row:
+                    raise HTTPException(409, {"code": "rollback_base_unavailable"})
+                current = DecisionPacket.model_validate(current_row["artifact"])
+                base = DecisionPacket.model_validate(base_row["artifact"])
+                if (
+                    current.packetVersion != body.expectedPacketVersion
+                    or current.packetVersion != locked["result_packet_version"]
+                ):
+                    raise HTTPException(409, {"code": "rollback_packet_changed"})
+                candidate = self._rollback_candidate(
+                    base,
+                    current,
+                    proposal["id"],
+                    str(principal.subject),
+                    body.rationale,
+                )
+                packet_store = store._packet_db
+                if packet_store is None:
+                    raise RuntimeError("Durable packet store is unavailable")
+                with connection.cursor() as cursor:
+                    packet_store._save_packet_with_cursor(cursor, candidate)
+                    packet_store._append_packet_audit_chain_event_with_cursor(
+                        cursor,
+                        candidate,
+                        event_type="agents.proposal.rollback",
+                        detail=(
+                            f"Proposal {proposal['id']} compensated by packet "
+                            f"v{candidate.packetVersion}."
+                        ),
+                        actor=f"user:{principal.subject}",
+                    )
+                connection.execute(
+                    """INSERT INTO llm_proposal_rollbacks
+                    (organization_id,proposal_id,reviewer_user_id,idempotency_key_hash,
+                     request_hash,reverted_packet_version,rollback_packet_version,rationale)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s)""",
+                    (
+                        principal.organization_id,
+                        proposal["id"],
+                        principal.subject,
+                        canonical_hash(key),
+                        request_hash,
+                        current.packetVersion,
+                        candidate.packetVersion,
+                        body.rationale,
+                    ),
+                )
+                connection.execute(
+                    """UPDATE llm_packet_proposals SET admission_state='rolled_back',
+                    rollback_packet_version=%s,updated_at=now() WHERE id=%s""",
+                    (candidate.packetVersion, proposal["id"]),
+                )
+                connection.execute(
+                    """UPDATE ollama_review_operations SET admission_state='rolled_back',
+                    result_packet_version=%s,updated_at=now() WHERE id=%s""",
+                    (candidate.packetVersion, proposal["operationId"]),
+                )
+                self._proposal_event(
+                    proposal,
+                    "proposal.rolled_back",
+                    f"user:{principal.subject}",
+                    {
+                        "revertedPacketVersion": current.packetVersion,
+                        "rollbackPacketVersion": candidate.packetVersion,
+                        "rationale": body.rationale,
+                    },
+                    connection,
+                )
+        proposal.update(
+            admissionState="rolled_back", rollbackPacketVersion=candidate.packetVersion
+        )
+        operation = self.hydrate(proposal["operationId"], str(principal.organization_id))
+        return self.public(operation)
 
     def progress(self, oid, state, stage, progress, worker_id=None):
         if not oid:
@@ -1210,6 +1835,12 @@ class Bridge:
             proposal.update(
                 admissionState="auto_admitted", resultPacketVersion=saved.packetVersion
             )
+            self._proposal_event(
+                proposal,
+                "proposal.auto_admitted",
+                "server:automatic-verifier",
+                {"resultPacketVersion": saved.packetVersion},
+            )
             row.update(
                 state="completed",
                 stage="completed",
@@ -1237,6 +1868,7 @@ class Bridge:
         *,
         proposal_id=None,
         admission_actor=None,
+        admission_decisions=None,
     ):
         output = body.output.model_dump(mode="json", exclude_unset=True)
         role = output.get("role") or "pmSynthesis"
@@ -1259,6 +1891,8 @@ class Bridge:
             materialClaims=output.get("materialClaims", []),
             verificationFindings=output.get("verificationFindings", []),
             rejectedClaims=output.get("rejectedClaims", []),
+            humanCorrectedClaims=output.get("humanCorrectedClaims", []),
+            humanRejectedClaims=output.get("humanRejectedClaims", []),
             calculationArtifacts=output.get("calculationArtifacts", []),
             missingEvidence=output.get("missingEvidence", []),
             falsifiableConditions=output.get("falsifiableConditions", []),
@@ -1299,6 +1933,7 @@ class Bridge:
                     "runId": run_id,
                     "proposalId": proposal_id,
                     "admissionActor": admission_actor,
+                    "humanReviewLineage": admission_decisions or [],
                     "traceparent": trace_id,
                 },
                 "audit": [
@@ -1439,6 +2074,13 @@ class Bridge:
         )
         proposal.update(
             admissionState="auto_admitted", resultPacketVersion=updated.packetVersion
+        )
+        self._proposal_event(
+            proposal,
+            "proposal.auto_admitted",
+            "server:automatic-verifier",
+            {"resultPacketVersion": updated.packetVersion},
+            connection,
         )
         self.event(
             connection,
@@ -1658,6 +2300,16 @@ def admit_operation_proposal(
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
 ):
     return bridge.admit(operation_id, body, idempotency_key)
+
+
+@router.post("/agent-operations/{operation_id}/rollback", response_model=OperationView)
+@router.post("/operations/{operation_id}/rollback", response_model=OperationView)
+def rollback_operation_proposal(
+    operation_id: str,
+    body: RollbackRequest,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+):
+    return bridge.rollback(operation_id, body, idempotency_key)
 
 
 @router.post("/agent-operations/{operation_id}/cancel", response_model=OperationView)

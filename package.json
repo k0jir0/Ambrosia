@@ -51,6 +51,7 @@
     "evals:retrieval": "cd services/api && uv run python ../../packages/evals/run_retrieval_benchmark.py",
     "evals:scanner": "cd services/api && uv run python ../../packages/evals/run_scanner_benchmark.py",
     "evals:ticker-report": "python packages/evals/run_ticker_report_eval.py",
+    "evals:ollama-disconfirmation": "python packages/evals/run_ollama_disconfirmation_eval.py",
     "evals:financebench": "python packages/evals/run_financebench_relay.py",
     "evals:finqa": "python packages/evals/run_finqa_relay.py",
     "evals:tatqa": "python packages/evals/run_tatqa_relay.py",

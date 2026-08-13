@@ -115,7 +115,13 @@ class ArtifactStore:
         if not bucket:
             if _production():
                 raise RuntimeError("ARTIFACT_BUCKET is required")
-            return {"artifactId": None, "storageStatus": "development_not_persisted"}
+            return {
+                "artifactId": None,
+                "storageStatus": "development_not_persisted",
+                "contentHash": hashlib.sha256(
+                    json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+                ).hexdigest(),
+            }
 
         encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
         content_hash = hashlib.sha256(encoded).hexdigest()
@@ -165,7 +171,11 @@ class ArtifactStore:
             self._set_status(database_url, artifact_id, "failed")
             raise
         self._set_status(database_url, artifact_id, "durable")
-        return {"artifactId": artifact_id, "storageStatus": "durable"}
+        return {
+            "artifactId": artifact_id,
+            "storageStatus": "durable",
+            "contentHash": content_hash,
+        }
 
     @staticmethod
     def _set_status(database_url: str, artifact_id: str, status: str) -> None:

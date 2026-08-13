@@ -46,6 +46,22 @@ python .\ambrosia_local_worker.py --diagnose
 python .\ambrosia_local_worker.py
 ```
 
+For a persistent staging canary, use the signed package's installer from the
+same Windows account that will run the worker. The installer prompts for the
+one-time token as a `SecureString`, protects it with current-user Windows DPAPI,
+registers a limited scheduled task at logon, and restarts failures with bounded
+backoff. The credential is never placed in task arguments or the JSON config:
+
+```powershell
+.\install-scheduled-worker.ps1 `
+  -ApiUrl 'https://staging.example.com/api' `
+  -Model 'qwen3:8b-q4_K_M'
+```
+
+The task intentionally runs only for the installing user because another
+account cannot decrypt that user's DPAPI secret. Stop and revoke the worker
+before deleting `%LOCALAPPDATA%\Ambrosia\LocalWorker` during decommissioning.
+
 `--diagnose` is the supported one-command health check. Version 3 does not treat
 an installed manifest as readiness. It explicitly allocates the configured
 context, executes schema-constrained analyst, verifier, repair, and final-verifier

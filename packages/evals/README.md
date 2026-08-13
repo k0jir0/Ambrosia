@@ -13,6 +13,29 @@ Eval categories:
 
 The JSONL fixtures here are intentionally small and human-readable.
 
+## Ollama disconfirmation treatments
+
+Validate the frozen protocol without making a model-quality claim:
+
+```powershell
+pnpm evals:ollama-disconfirmation
+```
+
+Evaluate a completed, blinded three-treatment run and enforce the release gates:
+
+```powershell
+python packages/evals/run_ollama_disconfirmation_eval.py `
+  --outputs artifacts/ollama-treatment-outputs.json `
+  --require-treatments `
+  --require-release-thresholds
+```
+
+Each case must have `deterministic`, `auto_admit`, and `human_admit` records.
+The harness reports aggregate and per-treatment schema validity, evidence-reference
+precision, abstention behavior, unsupported material claims, security violations,
+and human usefulness. A protocol-only run is explicitly labelled `not_executed`;
+it is not evidence that Ollama improves report quality.
+
 ## Provider Ablation Matrix
 
 Run a cost/latency/quality tradeoff comparison across provider modes:

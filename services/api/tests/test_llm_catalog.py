@@ -115,6 +115,38 @@ def test_worker_queue_is_tenant_scoped_and_credentials_can_be_revoked(monkeypatc
     assert catalog.authenticate_worker(first["token"]) is None
 
 
+def test_configured_model_policy_remains_visible_without_a_live_worker(monkeypatch) -> None:
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.setenv("OLLAMA_APPROVED_MODEL_DIGESTS", "sha256:qwen-approved")
+    monkeypatch.setenv("OLLAMA_DEFAULT_MODEL_DIGEST", "sha256:qwen-approved")
+    local = Catalog()
+
+    assert local.configured_model_policies("org-a") == [
+        {
+            "name": "Approved Ollama model",
+            "digest": "sha256:qwen-approved",
+            "approved": True,
+            "default": True,
+        }
+    ]
+    assert local.worker_readiness("org-a", "sha256:qwen-approved")["reasonCode"] == (
+        "no_enrolled_worker"
+    )
+
+
+def test_multiple_configured_policies_require_an_explicit_digest(monkeypatch) -> None:
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.delenv("OLLAMA_DEFAULT_MODEL_DIGEST", raising=False)
+    monkeypatch.setenv(
+        "OLLAMA_APPROVED_MODEL_DIGESTS", "sha256:qwen-a,sha256:qwen-b"
+    )
+    local = Catalog()
+
+    readiness = local.worker_readiness("org-a")
+    assert readiness["ready"] is False
+    assert readiness["reasonCode"] == "model_policy_ambiguous"
+
+
 def test_completion_catalogues_reproducibility_and_requires_resolved_citations(monkeypatch) -> None:
     monkeypatch.delenv("DATABASE_URL", raising=False)
     catalog = Catalog()

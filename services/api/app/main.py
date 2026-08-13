@@ -1216,9 +1216,23 @@ def get_provider_status(
     )
     status["ollamaWorkerReadiness"] = readiness
     status["activeTenantWorkerCompatible"] = readiness["ready"]
+    policies = (
+        llm_catalog.configured_model_policies(principal.organization_id)
+        if principal and principal.organization_id
+        else []
+    )
     status["ollamaModelPolicies"] = (
-        llm_catalog.active_model_policies(principal.organization_id)
-        if principal and principal.organization_id else []
+        [
+            {
+                **policy,
+                "workerCompatibility": llm_catalog.worker_readiness(
+                    principal.organization_id, str(policy["digest"])
+                ),
+            }
+            for policy in policies
+        ]
+        if principal and principal.organization_id
+        else []
     )
     return status
 
@@ -2281,6 +2295,31 @@ def generate_packet_report_diff(packet_id: str) -> ReportDiff:
     )
     citation_before = sum(len(section.citationEvidenceIds) for section in before.sections)
     citation_after = sum(len(section.citationEvidenceIds) for section in after.sections)
+    before_storage = artifact_store.persist_json(
+        "reports",
+        packet_id,
+        f"decision-report-baseline-v{before_packet.packetVersion}.json",
+        before.model_dump(mode="json"),
+    )
+    after_storage = artifact_store.persist_json(
+        "reports",
+        packet_id,
+        f"decision-report-mutated-v{after_packet.packetVersion}.json",
+        after.model_dump(mode="json"),
+    )
+    matching_operation = next(
+        (
+            operation
+            for operation in ollama_bridge.list(packet_id)
+            if operation.get("resultPacketVersion") == after_packet.packetVersion
+        ),
+        None,
+    )
+    proposal = (
+        ollama_bridge.get_proposal(str(matching_operation["id"]))
+        if matching_operation and matching_operation.get("proposalId")
+        else None
+    )
     diff = ReportDiff(
         packetId=packet_id,
         beforePacketVersion=before_packet.packetVersion,
@@ -2294,6 +2333,21 @@ def generate_packet_report_diff(packet_id: str) -> ReportDiff:
         unchangedSections=unchanged,
         citationDelta=citation_after - citation_before,
         confidenceDelta=float(after_packet.confidence - before_packet.confidence),
+        sectionClaimAttribution={
+            title: list(after_sections[title].claimIds)
+            for title in changed
+            if title in after_sections
+        },
+        numericalChanges=[
+            {
+                "field": "confidence",
+                "before": before_packet.confidence,
+                "after": after_packet.confidence,
+                "delta": after_packet.confidence - before_packet.confidence,
+            }
+        ]
+        if before_packet.confidence != after_packet.confidence
+        else [],
         provenance={
             "beforePacketHash": hashlib.sha256(
                 json.dumps(before_packet.model_dump(mode="json"), sort_keys=True).encode()
@@ -2303,6 +2357,14 @@ def generate_packet_report_diff(packet_id: str) -> ReportDiff:
             ).hexdigest(),
             "operationId": after.operationId,
             "modelDigest": after.modelDigest,
+            "proposalId": proposal.get("id") if proposal else None,
+            "originalOutputHash": proposal.get("originalOutputHash") if proposal else None,
+            "proposedPatchHash": proposal.get("proposedPatchHash") if proposal else None,
+            "reviewerDecisionHash": proposal.get("reviewerDecisionHash") if proposal else None,
+            "beforeArtifactId": before_storage.get("artifactId"),
+            "afterArtifactId": after_storage.get("artifactId"),
+            "beforeArtifactHash": before_storage.get("contentHash"),
+            "afterArtifactHash": after_storage.get("contentHash"),
             "admittedClaimsOnly": True,
         },
     )

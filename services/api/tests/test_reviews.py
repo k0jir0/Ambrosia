@@ -642,11 +642,37 @@ def test_rejected_ollama_output_completes_as_human_review_without_packet_mutatio
     assert proposal["originalOutput"]["materialClaims"][0]["supportingEvidenceIds"] == [
         "invented-source"
     ]
+    assert any(item["evidenceId"] == "src-1" for item in proposal["evidenceSnapshot"])
+    assert proposal["proposalEvents"][0]["eventType"] == "proposal.created"
+    assert proposal["reviewImpact"][0]["reportSection"] == "pmSynthesis"
     assert client.get(f"/packets/{packet_id}").json()["packetVersion"] == 1
     report = client.post(f"/packets/{packet_id}/report")
     assert report.status_code == 200
     assert report.json()["schemaVersion"] == "ticker-intelligence-report.v2"
     assert report.json()["reportValidationStatus"] == "partial"
+    rejected = client.post(
+        f"/operations/{operation['id']}/admission",
+        headers={"Idempotency-Key": "reject-human-review-proposal"},
+        json={
+            "proposalId": proposal["id"],
+            "expectedPacketVersion": 1,
+            "expectedProposalHash": proposal["proposedPatchHash"],
+            "disposition": "rejected",
+            "claimDecisions": [
+                {"claimId": "verified-1", "decision": "reject"}
+            ],
+            "rationale": "The cited evidence is outside the immutable snapshot.",
+            "unsupportedClaimCount": 1,
+            "citationIssueCount": 1,
+            "usefulnessScore": 2,
+        },
+    )
+    assert rejected.status_code == 200, rejected.text
+    assert rejected.json()["admissionState"] == "rejected"
+    rejected_proposal = client.get(f"/operations/{operation['id']}/proposal").json()
+    assert rejected_proposal["claimDecisions"][0]["decision"] == "reject"
+    assert rejected_proposal["proposalEvents"][-1]["eventType"] == "proposal.rejected"
+    assert client.get(f"/packets/{packet_id}").json()["packetVersion"] == 1
 
 
 def test_human_correction_is_revalidated_and_admitted_exactly_once(monkeypatch) -> None:
@@ -717,6 +743,38 @@ def test_human_correction_is_revalidated_and_admitted_exactly_once(monkeypatch) 
     assert diff.json()["beforePacketVersion"] == 1
     assert diff.json()["afterPacketVersion"] == 2
     assert diff.json()["provenance"]["admittedClaimsOnly"] is True
+    assert diff.json()["provenance"]["proposalId"] == proposal["id"]
+    reviewed = client.get(f"/operations/{operation['id']}/proposal").json()
+    assert reviewed["reviewerDecisionHash"]
+    assert reviewed["claimDecisions"][0]["decision"] == (
+        "accept_with_human_correction"
+    )
+    assert reviewed["proposalEvents"][-1]["eventType"] == "proposal.admitted"
+
+    rollback = client.post(
+        f"/operations/{operation['id']}/rollback",
+        headers={"Idempotency-Key": "rollback-human-correction"},
+        json={
+            "expectedPacketVersion": 2,
+            "rationale": "Compensate the accepted proposal while preserving history.",
+        },
+    )
+    assert rollback.status_code == 200, rollback.text
+    assert rollback.json()["admissionState"] == "rolled_back"
+    assert rollback.json()["resultPacketVersion"] == 3
+    rolled_back_packet = client.get(f"/packets/{packet_id}").json()
+    assert rolled_back_packet["packetVersion"] == 3
+    assert rolled_back_packet["agentOutputs"] is None
+    rolled_back_proposal = client.get(f"/operations/{operation['id']}/proposal").json()
+    assert rolled_back_proposal["rollbackPacketVersion"] == 3
+    assert rolled_back_proposal["proposalEvents"][-1]["eventType"] == (
+        "proposal.rolled_back"
+    )
+    compensation_diff = client.post(f"/packets/{packet_id}/report/diff")
+    assert compensation_diff.status_code == 200, compensation_diff.text
+    assert compensation_diff.json()["beforePacketVersion"] == 2
+    assert compensation_diff.json()["afterPacketVersion"] == 3
+    assert compensation_diff.json()["provenance"]["proposalId"] == proposal["id"]
 
 
 def test_revoked_worker_cannot_complete_inference(monkeypatch) -> None:
@@ -1279,7 +1337,7 @@ def test_health_detailed_endpoint() -> None:
     assert "store" in health["checks"]
     assert health["checks"]["persistence"]["mode"] in {"memory", "postgres"}
     assert health["checks"]["persistence"]["databaseRequired"] is False
-    assert health["checks"]["persistence"]["dbSchemaVersion"] == "v0013"
+    assert health["checks"]["persistence"]["dbSchemaVersion"] == "v0014"
     assert "marketData" in health["checks"]
     assert "llmProviders" in health["checks"]
     assert "slo" in health

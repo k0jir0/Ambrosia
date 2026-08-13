@@ -35,6 +35,7 @@ import {
   recordPacketOutcome,
   recordProductEvent,
   refreshPacketMetrics,
+  rollbackAgentOperationProposal,
   runPacketAgents,
   writebackSignalDecision,
   writebackSignalOutcome,
@@ -206,7 +207,7 @@ export function Workbench({ initialReviewId }: { initialReviewId?: string } = {}
         setSelectedOllamaDigest((current) =>
           status.ollamaModelPolicies.some((policy) => policy.digest === current)
             ? current
-            : (status.ollamaModelPolicies[0]?.digest ?? "")
+            : (status.ollamaModelPolicies.find((policy) => policy.default)?.digest ?? status.ollamaModelPolicies[0]?.digest ?? "")
         );
       })
       .catch(() => {
@@ -931,6 +932,21 @@ export function Workbench({ initialReviewId }: { initialReviewId?: string } = {}
     }
   }
 
+  async function rollbackOllamaProposal(rationale: string) {
+    if (!agentOperation?.resultPacketVersion) return;
+    const operation = await rollbackAgentOperationProposal(
+      agentOperation.id,
+      agentOperation.resultPacketVersion,
+      rationale
+    );
+    setAgentOperation(operation);
+    setAgentProposal(await getAgentOperationProposal(operation.id));
+    const packet = await getPacket(operation.packetId);
+    syncReviewFromPacket(activeId, packet);
+    setReportArtifact(null);
+    setReportDiff(null);
+  }
+
   async function deriveConfidenceFromMarket(): Promise<ActionResult> {
     if (!activeReview?.ticker) {
       appendAuditEvent("confidence.derive.skipped", "No ticker available for technicals inspection.");
@@ -1417,6 +1433,7 @@ export function Workbench({ initialReviewId }: { initialReviewId?: string } = {}
             agentOperation={agentOperation}
             agentProposal={agentProposal}
             onReviewProposal={reviewOllamaProposal}
+            onRollbackProposal={rollbackOllamaProposal}
             onCancelOperation={cancelOllamaOperation}
             onFallbackOperation={fallbackOllamaOperation}
             onContinueOperation={continueOllamaOperation}
@@ -1855,10 +1872,10 @@ function RunbookStrip({
                 onChange={(event) => onOllamaDigestChange(event.target.value)}
                 className="focus-ring max-w-64 rounded-md border border-line bg-fog px-2 py-1 text-xs font-semibold text-slate-200 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                {ollamaModelPolicies.length === 0 ? <option value="">No active approved worker model</option> : null}
+                {ollamaModelPolicies.length === 0 ? <option value="">No configured approved model policy</option> : null}
                 {ollamaModelPolicies.map((policy) => (
                   <option key={policy.digest} value={policy.digest}>
-                    {policy.name ?? "Ollama"} · {policy.digest.slice(0, 18)}
+                    {policy.name ?? "Ollama"} · {policy.workerCompatibility?.ready ? "worker ready" : (policy.workerCompatibility?.reasonCode ?? "worker unavailable").replaceAll("_", " ")} · {policy.digest.slice(0, 18)}
                   </option>
                 ))}
               </select>
@@ -1873,7 +1890,7 @@ function RunbookStrip({
             {activeAction === "Run next checkpoint" ? "Running..." : nextStep ? "Run next checkpoint" : "Runbook complete"}
           </button>
           {providerMode === "ollama" && nextStep?.id === "agents" && !ollamaWorkerReadiness?.ready ? (
-            <span className="text-xs text-amber">Blocked: {(ollamaWorkerReadiness?.reasonCode ?? "worker_offline").replaceAll("_", " ")}</span>
+            <span className="text-xs text-amber">Blocked: {(ollamaWorkerReadiness?.reasonCode ?? "worker_offline").replaceAll("_", " ")}{ollamaWorkerReadiness?.lastHeartbeatAgeSeconds != null ? ` · last heartbeat ${ollamaWorkerReadiness.lastHeartbeatAgeSeconds}s ago` : ""}</span>
           ) : null}
           <button
             type="button"
@@ -2187,6 +2204,7 @@ function AnalysisFeed({
   agentOperation,
   agentProposal,
   onReviewProposal,
+  onRollbackProposal,
   onCancelOperation,
   onFallbackOperation,
   onContinueOperation,
@@ -2202,6 +2220,7 @@ function AnalysisFeed({
   agentOperation: AgentOperation | null;
   agentProposal: PacketMutationProposal | null;
   onReviewProposal: (body: AdmissionRequest) => Promise<void>;
+  onRollbackProposal: (rationale: string) => Promise<void>;
   onCancelOperation: () => void;
   onFallbackOperation: () => void;
   onContinueOperation: () => void;
@@ -2227,6 +2246,7 @@ function AnalysisFeed({
         </div>
         <ProviderProvenancePanel packet={packet} operation={agentOperation} proposal={agentProposal}
           onReviewProposal={onReviewProposal}
+          onRollbackProposal={onRollbackProposal}
           onCancel={onCancelOperation} onFallback={onFallbackOperation}
           onContinue={onContinueOperation} onRetry={onRetryOperation} />
 
@@ -2490,11 +2510,15 @@ function WorkflowStageCard({ stage, currentStatus, review, packet }: { stage: Wo
   );
 }
 
-function ProposalReview({ proposal, onSubmit }: {
+function ProposalReview({ proposal, onSubmit, onRollback }: {
   proposal: PacketMutationProposal;
   onSubmit: (body: AdmissionRequest) => Promise<void>;
+  onRollback: (rationale: string) => Promise<void>;
 }) {
   const claims = proposal.originalOutput.materialClaims ?? [];
+  const evidenceById = new Map(
+    proposal.evidenceSnapshot.map((item) => [String(item.evidenceId ?? item.id ?? ""), item])
+  );
   const [decisions, setDecisions] = useState<Record<string, "accept_as_proposed" | "accept_with_human_correction" | "reject">>(
     () => Object.fromEntries(claims.map((claim) => [claim.claimId, "reject"]))
   );
@@ -2538,13 +2562,30 @@ function ProposalReview({ proposal, onSubmit }: {
             <p className="font-semibold">{claim.claimId}</p>
             <p className="mt-1 text-slate-700">{claim.text}</p>
             <p className="mt-1 text-slate-500">Evidence: {claim.supportingEvidenceIds?.join(", ") || "none"}</p>
+            <div className="mt-2 space-y-2">
+              {(claim.supportingEvidenceIds ?? []).map((evidenceId) => {
+                const evidence = evidenceById.get(evidenceId);
+                return (
+                  <div key={evidenceId} className="rounded border border-line bg-fog/50 p-2">
+                    <p className="font-semibold">{evidenceId} · {String(evidence?.dataMode ?? "unknown mode")}</p>
+                    <p>Instrument: {String(evidence?.canonicalTicker ?? evidence?.subjectInstrumentId ?? "unknown")} · observed {String(evidence?.observedAt ?? "unknown")}</p>
+                    <p>Trust: {String(evidence?.trustBoundary ?? "unknown")} · permission {String(evidence?.permission ?? "unknown")}</p>
+                    <pre className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap text-[10px]">{JSON.stringify(evidence?.content ?? {}, null, 2)}</pre>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="mt-2 text-slate-600">
+              Findings: {proposal.deterministicFindings.filter((finding) => String(finding.claimId) === claim.claimId).map((finding) => `${String(finding.status)} (${String(finding.verifier ?? "deterministic")})`).join(", ") || "none"}
+            </div>
+            <p className="mt-1 text-slate-500">Report impact: {proposal.reviewImpact.filter((impact) => impact.claimId === claim.claimId).map((impact) => impact.reportSection).join(", ") || "none"}</p>
             <select
               className="mt-2 rounded border border-line px-2 py-1"
               value={decisions[claim.claimId]}
               onChange={(event) => setDecisions((current) => ({ ...current, [claim.claimId]: event.target.value as "accept_as_proposed" | "accept_with_human_correction" | "reject" }))}
             >
               <option value="accept_as_proposed">Accept as proposed</option>
-              <option value="accept_with_human_correction">Correct and accept</option>
+              <option value="accept_with_human_correction">Correct with cited evidence and accept</option>
               <option value="reject">Reject</option>
             </select>
             {decisions[claim.claimId] === "accept_with_human_correction" ? (
@@ -2564,17 +2605,29 @@ function ProposalReview({ proposal, onSubmit }: {
             <button disabled={submitting} className="rounded border border-line px-3 py-1" onClick={() => submit("rejected")}>Reject proposal</button>
           </div>
         ) : null}
+        {["auto_admitted", "human_admitted", "corrected_and_admitted"].includes(proposal.admissionState) ? (
+          <button disabled={submitting} className="rounded border border-amber px-3 py-1" onClick={() => onRollback(rationale)}>Create compensating rollback version</button>
+        ) : null}
         <p className="text-slate-500">Human admission is analytical approval, not trading authorization.</p>
+        {proposal.proposalEvents.length ? (
+          <details className="rounded border border-line p-2">
+            <summary className="cursor-pointer font-semibold">Proposal event lineage</summary>
+            {proposal.proposalEvents.map((event) => (
+              <p key={String(event.eventHash)} className="mt-1 text-slate-500">{String(event.createdAt)} · {String(event.eventType)} · {String(event.actor)}</p>
+            ))}
+          </details>
+        ) : null}
       </div>
     </details>
   );
 }
 
-function ProviderProvenancePanel({ packet, operation, proposal, onReviewProposal, onCancel, onFallback, onContinue, onRetry }: {
+function ProviderProvenancePanel({ packet, operation, proposal, onReviewProposal, onRollbackProposal, onCancel, onFallback, onContinue, onRetry }: {
   packet: DecisionPacket | null;
   operation: AgentOperation | null;
   proposal: PacketMutationProposal | null;
   onReviewProposal: (body: AdmissionRequest) => Promise<void>;
+  onRollbackProposal: (rationale: string) => Promise<void>;
   onCancel: () => void;
   onFallback: () => void;
   onContinue: () => void;
@@ -2644,7 +2697,7 @@ function ProviderProvenancePanel({ packet, operation, proposal, onReviewProposal
             {["failed", "dead_letter", "expired", "superseded"].includes(operation.state) ? <button className="rounded border border-line px-3 py-1" onClick={onRetry}>Retry Ollama</button> : null}
             {["failed", "dead_letter", "expired", "superseded"].includes(operation.state) ? <button className="rounded border border-line px-3 py-1" onClick={onFallback}>Run explicit deterministic fallback</button> : null}
           </div>
-          {proposal ? <ProposalReview proposal={proposal} onSubmit={onReviewProposal} /> : null}
+          {proposal ? <ProposalReview proposal={proposal} onSubmit={onReviewProposal} onRollback={onRollbackProposal} /> : null}
         </div>
       ) : null}
       <div className="mt-3 grid gap-2 md:grid-cols-2">

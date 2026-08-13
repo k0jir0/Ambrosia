@@ -221,7 +221,7 @@ def _verified_section(title, claims, mode="mixed"):
     )
 
 
-def _intelligence_sections(outputs, admitted):
+def _intelligence_sections(outputs, admitted, rejected):
     by_role = {item.role: item.materialClaims for item in outputs}
 
     def role(*names):
@@ -235,6 +235,7 @@ def _intelligence_sections(outputs, admitted):
     )
     gaps = sorted({gap for output in outputs for gap in output.missingEvidence})
     findings = [finding for output in outputs for finding in output.verificationFindings]
+    human_rejected = [claim for output in outputs for claim in output.humanRejectedClaims]
     calculations = [
         item
         for output in outputs
@@ -289,6 +290,25 @@ def _intelligence_sections(outputs, admitted):
             citationEvidenceIds=sorted({ref for item in findings for ref in item.evidenceIds}),
             verificationStatus="passed" if findings else "unavailable",
         ),
+        ReportSection(
+            title="Human Review Appendix",
+            content="\n".join(
+                f"- REJECTED [{item.claimId}] {item.originalText} "
+                f"(reviewer: {item.reviewerId}; reason: {item.reason})"
+                for item in human_rejected
+            )
+            or "No human-rejected proposal claims were retained for review.",
+            evidenceMode="mixed" if human_rejected else "unavailable",
+            claimIds=[item.claimId for item in human_rejected],
+            citationEvidenceIds=sorted(
+                {
+                    reference
+                    for item in human_rejected
+                    for reference in item.supportingEvidenceIds
+                }
+            ),
+            verificationStatus="partial" if human_rejected else "unavailable",
+        ),
     ]
 
 
@@ -328,7 +348,7 @@ def generate_report(packet: DecisionPacket, llm_runs: list[dict] | None = None) 
         sections[2] = sections[2].model_copy(
             update={"evidenceMode": "mixed", "verificationStatus": "partial"}
         )
-        sections.extend(_intelligence_sections(verified, admitted))
+        sections.extend(_intelligence_sections(verified, admitted, rejected))
 
     data_mode: str = "fallback"
     market_source: str | None = None
@@ -357,7 +377,7 @@ def generate_report(packet: DecisionPacket, llm_runs: list[dict] | None = None) 
         marketDataSource=market_source,
         marketDataFreshnessSeconds=freshness_seconds,
         schemaVersion="ticker-intelligence-report.v2"
-        if llm_runs
+        if verified or llm_runs
         else "ticker-intelligence-report.v1",
         tickerIdentity=_ticker_identity(packet) if verified else None,
         asOf=packet.marketSnapshot.timestamp if packet.marketSnapshot else packet.createdAt,
@@ -385,7 +405,7 @@ def generate_report(packet: DecisionPacket, llm_runs: list[dict] | None = None) 
         reportValidationStatus="passed"
         if verified and not rejected
         else "partial"
-        if llm_runs
+        if verified or llm_runs
         else "legacy",
         operationId=provider.get("operationId"),
         providerRequested=provider.get("requestedProvider"),

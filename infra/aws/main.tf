@@ -1293,10 +1293,10 @@ resource "aws_cloudwatch_log_metric_filter" "persistence_failure" {
 
 resource "aws_cloudwatch_log_metric_filter" "ollama_readiness_blockers" {
   for_each = {
-    no_enrolled_worker    = "NO_ENROLLED_WORKER"
-    worker_offline        = "WORKER_OFFLINE"
-    digest_mismatch       = "DIGEST_MISMATCH"
-    preflight_incomplete  = "PREFLIGHT_INCOMPLETE"
+    no_enrolled_worker   = "NO_ENROLLED_WORKER"
+    worker_offline       = "WORKER_OFFLINE"
+    digest_mismatch      = "DIGEST_MISMATCH"
+    preflight_incomplete = "PREFLIGHT_INCOMPLETE"
   }
   name           = "${local.name}-${each.key}"
   pattern        = "\"api_problem code=${each.value}\""

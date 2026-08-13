@@ -17,6 +17,8 @@ from app.tenant_context import (
 
 
 DATABASE_URL = os.getenv("INDEX119_TEST_DATABASE_URL")
+if DATABASE_URL:
+    os.environ.setdefault("DATABASE_URL", DATABASE_URL)
 pytestmark = pytest.mark.skipif(not DATABASE_URL, reason="INDEX119_TEST_DATABASE_URL not configured")
 
 

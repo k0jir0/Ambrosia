@@ -630,7 +630,7 @@ def test_packet_edit_supersedes_worker_result(monkeypatch) -> None:
     payload = _build_packet_payload(packet_id)
     assert client.post("/packets", json=payload).status_code == 200
     headers = _enroll_ollama_worker(digest)
-    operation = client.post(
+    client.post(
         f"/packets/{packet_id}/agent-operations",
         json={"providerMode": "ollama", "requestedModelDigest": digest},
     ).json()

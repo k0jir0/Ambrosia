@@ -110,10 +110,31 @@ def test_durable_llm_completion_rejects_stale_reclaimed_lease() -> None:
     catalog = Catalog()
     worker_id = None
     job_id = None
+    user_id = str(uuid4())
     try:
+        with catalog._connect(tenant=False) as connection:
+            connection.execute(
+                """
+                INSERT INTO users (
+                  id, email, email_canonical, display_name, password_hash,
+                  status, terms_version, privacy_version, terms_accepted_at
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    user_id,
+                    f"index119-{user_id}@example.com",
+                    f"index119-{user_id}@example.com",
+                    "Index119 durable user",
+                    "password-hash",
+                    "active",
+                    "v1",
+                    "v1",
+                    datetime.now(UTC),
+                ),
+            )
         credential = catalog.create_worker(
             LEGACY_QUARANTINE_ORGANIZATION_ID,
-            "index119-service",
+            user_id,
             f"Index119 worker {uuid4().hex[:8]}",
         )
         worker_id = credential["id"]
@@ -175,5 +196,6 @@ def test_durable_llm_completion_rejects_stale_reclaimed_lease() -> None:
                     "DELETE FROM local_worker_credentials WHERE id=%s",
                     (worker_id,),
                 )
+                connection.execute("DELETE FROM users WHERE id=%s", (user_id,))
         finally:
             reset_organization_id(tenant_token)

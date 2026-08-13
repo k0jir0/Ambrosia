@@ -46,6 +46,7 @@ from .models import (
     RoadmapOutcomeRecord,
     RoadmapPlanRecord,
     ReportArtifact,
+    ReportDiff,
     RetrievalHit,
     RetrievalRequest,
     RetrievalResponse,
@@ -217,8 +218,23 @@ def _persistence_readiness() -> None:
         raise RuntimeError("required_database_unavailable")
 
 
+def _report_export_readiness() -> None:
+    environment = os.getenv("ENVIRONMENT", "development").strip().lower()
+    default = environment not in {"production", "staging"}
+    enabled_value = os.getenv("REPORT_EXPORT_ENABLED")
+    export_enabled = (
+        default
+        if enabled_value is None
+        else enabled_value.strip().lower() in {"1", "true", "yes", "on"}
+    )
+    if not export_enabled:
+        raise RuntimeError("report_export_feature_disabled")
+    artifact_store.report_export_healthcheck()
+
+
 register_readiness_check("persistence", _persistence_readiness)
 register_readiness_check("artifactStorage", artifact_store.healthcheck)
+register_readiness_check("reportExport", _report_export_readiness)
 register_audit_sink(store.append_security_audit)
 register_identity_audit_sink(store.append_security_audit)
 
@@ -403,6 +419,17 @@ def _require_report_export_enabled() -> None:
         raise HTTPException(
             status_code=503, detail="Governed report export is temporarily unavailable"
         )
+
+
+@app.get("/report/export/status")
+def report_export_status() -> dict:
+    enabled_value = _feature_enabled(
+        "REPORT_EXPORT_ENABLED",
+        default=os.getenv("ENVIRONMENT", "development").strip().lower()
+        not in {"production", "staging"},
+    )
+    status = artifact_store.report_export_status()
+    return {**status, "enabled": enabled_value}
 
 
 @app.get("/health")
@@ -1177,14 +1204,18 @@ def list_alert_queue(
 @app.get("/providers/status")
 def get_provider_status(
     x_ambrosia_role: str | None = Header(default=None, alias="X-Ambrosia-Role"),
+    requested_model_digest: str | None = Query(default=None, alias="requestedModelDigest"),
 ) -> dict:
     _require_role(ADVANCED_ROLES, x_ambrosia_role, scope="advanced")
     status = provider_status()
     principal = current_principal()
-    status["activeTenantWorkerCompatible"] = bool(
-        principal and principal.organization_id
-        and llm_catalog.has_compatible_worker(principal.organization_id)
+    readiness = (
+        llm_catalog.worker_readiness(principal.organization_id, requested_model_digest)
+        if principal and principal.organization_id
+        else {"ready": False, "reasonCode": "tenant_identity_required", "compatibleCount": 0}
     )
+    status["ollamaWorkerReadiness"] = readiness
+    status["activeTenantWorkerCompatible"] = readiness["ready"]
     status["ollamaModelPolicies"] = (
         llm_catalog.active_model_policies(principal.organization_id)
         if principal and principal.organization_id else []
@@ -2203,6 +2234,106 @@ def generate_packet_report(packet_id: str) -> ReportArtifact:
         ),
     )
     return report
+
+
+def _report_hash(report: ReportArtifact) -> str:
+    encoded = json.dumps(
+        report.model_dump(mode="json", exclude={"artifactId", "storageStatus", "createdAt"}),
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _report_claim_ids(report: ReportArtifact) -> set[str]:
+    return {claim_id for section in report.sections for claim_id in section.claimIds}
+
+
+@app.post("/packets/{packet_id}/report/diff", response_model=ReportDiff)
+def generate_packet_report_diff(packet_id: str) -> ReportDiff:
+    """Persist a semantic diff between the two latest governed packet reports."""
+    _require_report_export_enabled()
+    versions = store.list_packet_versions(packet_id)
+    if len(versions) < 2:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "report_diff_requires_two_packet_versions"},
+        )
+    before_packet, after_packet = versions[-2], versions[-1]
+    before = generate_report(before_packet, [])
+    after = generate_report(after_packet, [])
+    before_sections = {section.title: section for section in before.sections}
+    after_sections = {section.title: section for section in after.sections}
+    titles = sorted(set(before_sections) | set(after_sections))
+    changed = [
+        title
+        for title in titles
+        if canonical_report_section(before_sections.get(title))
+        != canonical_report_section(after_sections.get(title))
+    ]
+    unchanged = [title for title in titles if title not in changed]
+    before_claims = _report_claim_ids(before)
+    after_claims = _report_claim_ids(after)
+    corrected_claims = sorted(
+        claim_id
+        for claim_id in before_claims & after_claims
+        if _packet_claim_text(before_packet, claim_id) != _packet_claim_text(after_packet, claim_id)
+    )
+    citation_before = sum(len(section.citationEvidenceIds) for section in before.sections)
+    citation_after = sum(len(section.citationEvidenceIds) for section in after.sections)
+    diff = ReportDiff(
+        packetId=packet_id,
+        beforePacketVersion=before_packet.packetVersion,
+        afterPacketVersion=after_packet.packetVersion,
+        beforeReportHash=_report_hash(before),
+        afterReportHash=_report_hash(after),
+        addedClaimIds=sorted(after_claims - before_claims),
+        correctedClaimIds=corrected_claims,
+        rejectedClaimIds=sorted(set(after.rejectedClaimIds) - set(before.rejectedClaimIds)),
+        changedSections=changed,
+        unchangedSections=unchanged,
+        citationDelta=citation_after - citation_before,
+        confidenceDelta=float(after_packet.confidence - before_packet.confidence),
+        provenance={
+            "beforePacketHash": hashlib.sha256(
+                json.dumps(before_packet.model_dump(mode="json"), sort_keys=True).encode()
+            ).hexdigest(),
+            "afterPacketHash": hashlib.sha256(
+                json.dumps(after_packet.model_dump(mode="json"), sort_keys=True).encode()
+            ).hexdigest(),
+            "operationId": after.operationId,
+            "modelDigest": after.modelDigest,
+            "admittedClaimsOnly": True,
+        },
+    )
+    storage = artifact_store.persist_json(
+        "reports",
+        packet_id,
+        f"decision-report-diff-v{before_packet.packetVersion}-v{after_packet.packetVersion}.json",
+        diff.model_dump(mode="json"),
+    )
+    return diff.model_copy(update=storage)
+
+
+def canonical_report_section(section) -> str | None:
+    if section is None:
+        return None
+    return hashlib.sha256(
+        json.dumps(section.model_dump(mode="json"), sort_keys=True).encode()
+    ).hexdigest()
+
+
+def _packet_claim_text(packet: DecisionPacket, claim_id: str) -> str | None:
+    for claim in packet.claims:
+        if claim.id == claim_id:
+            return claim.text
+    for output in (packet.agentOutputs or {}).values():
+        if not output:
+            continue
+        for claim in output.materialClaims:
+            if claim.claimId == claim_id:
+                return claim.text
+    return None
 
 
 @app.post("/packets/{packet_id}/report/async", response_model=JobRecord)

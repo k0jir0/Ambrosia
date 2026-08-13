@@ -924,6 +924,24 @@ class ReportArtifact(BaseModel):
     traceparent: str | None = None
 
 
+class ReportDiff(BaseModel):
+    packetId: str
+    beforePacketVersion: int = Field(ge=1)
+    afterPacketVersion: int = Field(ge=1)
+    beforeReportHash: str
+    afterReportHash: str
+    addedClaimIds: list[str] = Field(default_factory=list)
+    correctedClaimIds: list[str] = Field(default_factory=list)
+    rejectedClaimIds: list[str] = Field(default_factory=list)
+    changedSections: list[str] = Field(default_factory=list)
+    unchangedSections: list[str] = Field(default_factory=list)
+    citationDelta: int = 0
+    confidenceDelta: float = 0
+    provenance: dict = Field(default_factory=dict)
+    artifactId: str | None = None
+    storageStatus: str = "development_not_persisted"
+
+
 class JobRecord(BaseModel):
     id: str
     jobType: str

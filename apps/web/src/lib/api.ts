@@ -12,6 +12,7 @@ import type {
   PacketWorkflowStatus,
   ProviderMode,
   ReportArtifact,
+  ReportDiff,
   RetrievalResponse,
   ScannerCandidatePromoteRequest,
   ScannerCandidatePromotion,
@@ -617,14 +618,22 @@ export async function runPacketAgents(packetId: string, providerMode: ProviderMo
   return getPacket(packetId);
 }
 
-export type AgentOperation = { id: string; operationId: string; packetId: string; expectedPacketVersion: number; state: "queued" | "leased" | "running" | "verifying" | "repairing" | "retry_wait" | "completed" | "failed" | "dead_letter" | "expired" | "canceled" | "superseded"; stage: string; progress: number; requestedProvider: string; actualProvider?: string | null; workerId?: string | null; workerName?: string | null; modelName?: string | null; modelDigest?: string | null; verificationStatus?: string | null; fallbackOperationId?: string | null; statusUrl: string; cancelUrl: string; traceparent: string; deadlineAt: string; createdAt: string; updatedAt: string; error?: { code: string; message: string } | null };
+export type AdmissionState = "proposed" | "auto_admitted" | "awaiting_human_review" | "human_admitted" | "corrected_and_admitted" | "rejected" | "stale";
+export type AgentOperation = { id: string; operationId: string; packetId: string; expectedPacketVersion: number; state: "queued" | "leased" | "running" | "verifying" | "repairing" | "retry_wait" | "completed" | "failed" | "dead_letter" | "expired" | "canceled" | "superseded"; stage: string; progress: number; requestedProvider: string; actualProvider?: string | null; workerId?: string | null; workerName?: string | null; modelName?: string | null; modelDigest?: string | null; verificationStatus?: string | null; proposalId?: string | null; admissionState?: AdmissionState | null; resultPacketVersion?: number | null; fallbackOperationId?: string | null; statusUrl: string; cancelUrl: string; traceparent: string; deadlineAt: string; createdAt: string; updatedAt: string; error?: { code: string; message: string } | null };
 export type OllamaModelPolicy = { name?: string; digest: string; contextLength?: number; approved: boolean };
-export type ProviderStatus = { activeTenantWorkerCompatible: boolean; ollamaModelPolicies: OllamaModelPolicy[]; [key: string]: unknown };
+export type OllamaWorkerReadiness = { ready: boolean; reasonCode: "ready" | "no_enrolled_worker" | "worker_offline" | "worker_revoked" | "preflight_incomplete" | "digest_mismatch" | "model_policy_ambiguous" | "tenant_identity_required"; compatibleCount: number };
+export type ProviderStatus = { activeTenantWorkerCompatible: boolean; ollamaWorkerReadiness: OllamaWorkerReadiness; ollamaModelPolicies: OllamaModelPolicy[]; [key: string]: unknown };
+export type ProposalClaim = { claimId: string; text: string; supportingEvidenceIds?: string[]; contradictingEvidenceIds?: string[]; falsifier?: string; materiality?: string; admissionStatus?: string };
+export type PacketMutationProposal = { id: string; operationId: string; runId: string; packetId: string; basePacketVersion: number; basePacketHash: string; evidencePackHash: string; modelName: string; modelDigest: string; workerId?: string | null; originalOutputHash: string; proposedPatchHash: string; originalOutput: { materialClaims?: ProposalClaim[]; [key: string]: unknown }; proposedPatch: Record<string, unknown>; deterministicFindings: Array<Record<string, unknown>>; admissionState: AdmissionState; resultPacketVersion?: number | null; createdAt: string };
+export type ClaimDecision = { claimId: string; decision: "accept_as_proposed" | "accept_with_human_correction" | "reject"; correctedText?: string; supportingEvidenceIds?: string[]; falsifier?: string };
+export type AdmissionRequest = { proposalId: string; expectedPacketVersion: number; expectedProposalHash: string; disposition: "accepted" | "corrected" | "rejected"; claimDecisions: ClaimDecision[]; rationale: string; unsupportedClaimCount?: number; citationIssueCount?: number; usefulnessScore?: number };
 export const TERMINAL_AGENT_OPERATION_STATES = new Set<AgentOperation["state"]>(["completed", "failed", "dead_letter", "expired", "canceled", "superseded"]);
 const TERMINAL = TERMINAL_AGENT_OPERATION_STATES;
-export async function getProviderStatus(): Promise<ProviderStatus> { const base = getApiBaseUrl(); if (!base) throw new ApiUnavailableError(); return readJsonResponse(await fetchWithTimeout(`${base}/providers/status`)); }
+export async function getProviderStatus(requestedModelDigest?: string): Promise<ProviderStatus> { const base = getApiBaseUrl(); if (!base) throw new ApiUnavailableError(); const query = requestedModelDigest ? `?requestedModelDigest=${encodeURIComponent(requestedModelDigest)}` : ""; return readJsonResponse(await fetchWithTimeout(`${base}/providers/status${query}`)); }
 export async function createAgentOperation(packetId: string, idempotencyKey = crypto.randomUUID(), requestedModelDigest?: string): Promise<AgentOperation> { const base = getApiBaseUrl(); if (!base) throw new ApiUnavailableError(); const trace = crypto.randomUUID().replaceAll("-", "") + crypto.randomUUID().replaceAll("-", ""); const traceparent = `00-${trace.slice(0, 32)}-${trace.slice(32, 48)}-01`; return readJsonResponse(await fetchWithTimeout(`${base}/packets/${encodeURIComponent(packetId)}/agent-operations`, { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": idempotencyKey, traceparent }, body: JSON.stringify({ providerMode: "ollama", requestedModelDigest, traceparent }) })); }
 export async function getAgentOperation(id: string): Promise<AgentOperation> { const base = getApiBaseUrl(); if (!base) throw new ApiUnavailableError(); return readJsonResponse(await fetchWithTimeout(`${base}/operations/${encodeURIComponent(id)}`)); }
+export async function getAgentOperationProposal(id: string): Promise<PacketMutationProposal> { const base = getApiBaseUrl(); if (!base) throw new ApiUnavailableError(); return readJsonResponse(await fetchWithTimeout(`${base}/operations/${encodeURIComponent(id)}/proposal`)); }
+export async function admitAgentOperationProposal(id: string, body: AdmissionRequest, idempotencyKey = crypto.randomUUID()): Promise<AgentOperation> { const base = getApiBaseUrl(); if (!base) throw new ApiUnavailableError(); return readJsonResponse(await fetchWithTimeout(`${base}/operations/${encodeURIComponent(id)}/admission`, { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": idempotencyKey }, body: JSON.stringify(body) })); }
 export async function cancelAgentOperation(id: string): Promise<AgentOperation> { const base = getApiBaseUrl(); if (!base) throw new ApiUnavailableError(); return readJsonResponse(await fetchWithTimeout(`${base}/operations/${encodeURIComponent(id)}/cancel`, { method: "POST" })); }
 export async function fallbackAgentOperation(id: string): Promise<AgentOperation> { const base = getApiBaseUrl(); if (!base) throw new ApiUnavailableError(); return readJsonResponse(await fetchWithTimeout(`${base}/operations/${encodeURIComponent(id)}/fallback`, { method: "POST" })); }
 export async function continueAgentOperation(id: string): Promise<AgentOperation> { const base = getApiBaseUrl(); if (!base) throw new ApiUnavailableError(); return readJsonResponse(await fetchWithTimeout(`${base}/operations/${encodeURIComponent(id)}/continue`, { method: "POST" })); }
@@ -811,6 +820,16 @@ export async function generateReport(packetId: string): Promise<ReportArtifact> 
     { method: "POST" },
   );
   return readJsonResponse<ReportArtifact>(response);
+}
+
+export async function generateReportDiff(packetId: string): Promise<ReportDiff> {
+  const apiBaseUrl = getApiBaseUrl();
+  if (!apiBaseUrl) throw new ApiUnavailableError();
+  const response = await fetchWithTimeout(
+    `${apiBaseUrl}/packets/${encodeURIComponent(packetId)}/report/diff`,
+    { method: "POST" },
+  );
+  return readJsonResponse<ReportDiff>(response);
 }
 
 // ---------------------------------------------------------------------------

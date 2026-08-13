@@ -537,6 +537,23 @@ export interface ReportArtifact {
   schemaVersion?: string; asOf?: string|null; knowledgeCutoff?: string|null; modelDigest?: string|null; sourceSnapshotHash?: string|null;
   verifiedClaimCoverage?: number; unresolvedMaterialClaimCount?: number; rejectedClaimIds?: string[]; reportValidationStatus?: "passed"|"partial"|"legacy"|"failed";
 }
+export interface ReportDiff {
+  packetId: string;
+  beforePacketVersion: number;
+  afterPacketVersion: number;
+  beforeReportHash: string;
+  afterReportHash: string;
+  addedClaimIds: string[];
+  correctedClaimIds: string[];
+  rejectedClaimIds: string[];
+  changedSections: string[];
+  unchangedSections: string[];
+  citationDelta: number;
+  confidenceDelta: number;
+  provenance: Record<string, unknown>;
+  artifactId?: string | null;
+  storageStatus?: string;
+}
 export interface TickerIdentity { ticker:string; canonicalTicker:string; instrumentId:string; exchangeMic?:string|null; securityType:string; effectiveFrom?:string|null; resolutionProvider:string; resolutionStatus:"verified"|"provisional"|"ambiguous"; }
 
 // ---------------------------------------------------------------------------

@@ -5,6 +5,8 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import time
+from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 import boto3
@@ -24,6 +26,15 @@ def _production() -> bool:
 
 
 class ArtifactStore:
+    def __init__(self) -> None:
+        self._report_probe: dict = {
+            "enabled": False,
+            "writable": False,
+            "lastProbeAt": None,
+            "reasonCode": "not_probed",
+        }
+        self._report_probe_monotonic = 0.0
+
     def _bucket(self) -> str:
         return os.getenv("ARTIFACT_BUCKET", "").strip()
 
@@ -37,6 +48,56 @@ class ArtifactStore:
                 raise RuntimeError("ARTIFACT_BUCKET is required")
             return
         self._client().head_bucket(Bucket=bucket)
+
+    def report_export_healthcheck(self) -> None:
+        """Prove the staging report path can perform an encrypted S3 write."""
+        protected = _production()
+        if protected and not os.getenv("DATABASE_URL", "").strip():
+            self._record_report_probe(False, "database_unconfigured")
+            raise RuntimeError("DATABASE_URL is required for governed report export")
+        bucket = self._bucket()
+        if not bucket:
+            if protected:
+                self._record_report_probe(False, "artifact_bucket_unconfigured")
+                raise RuntimeError("ARTIFACT_BUCKET is required for governed report export")
+            self._record_report_probe(True, "development_storage_not_configured")
+            return
+        kms_key = os.getenv("ARTIFACT_KMS_KEY_ARN", "").strip()
+        if protected and not kms_key:
+            self._record_report_probe(False, "kms_key_unconfigured")
+            raise RuntimeError("ARTIFACT_KMS_KEY_ARN is required for governed report export")
+        if self._report_probe["writable"] and time.monotonic() - self._report_probe_monotonic < 60:
+            return
+        client = self._client()
+        key = f"_health/report-export/{uuid4()}.json"
+        request = {
+            "Bucket": bucket,
+            "Key": key,
+            "Body": b"{}",
+            "ContentType": "application/json",
+            "ServerSideEncryption": "aws:kms",
+        }
+        if kms_key:
+            request["SSEKMSKeyId"] = kms_key
+        try:
+            client.put_object(**request)
+            client.delete_object(Bucket=bucket, Key=key)
+        except Exception:
+            self._record_report_probe(False, "encrypted_write_probe_failed")
+            raise
+        self._record_report_probe(True, "ready")
+
+    def _record_report_probe(self, writable: bool, reason: str) -> None:
+        self._report_probe = {
+            "enabled": True,
+            "writable": writable,
+            "lastProbeAt": datetime.now(UTC).isoformat(),
+            "reasonCode": reason,
+        }
+        self._report_probe_monotonic = time.monotonic()
+
+    def report_export_status(self) -> dict:
+        return dict(self._report_probe)
 
     def persist_json(
         self,

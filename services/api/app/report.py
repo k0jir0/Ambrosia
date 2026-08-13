@@ -192,7 +192,7 @@ def _claims(outputs):
             {
                 item.claimId: item
                 for item in output.materialClaims
-                if item.admissionStatus in {"admitted", "repaired"}
+                if item.admissionStatus in {"admitted", "repaired", "human_review"}
             }
         )
         rejected.update({item.claimId: item for item in output.rejectedClaims})

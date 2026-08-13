@@ -393,6 +393,46 @@ class Catalog:
                     return True
         return False
 
+    def worker_readiness(self, organization_id: str, model_digest: str | None = None) -> dict:
+        """Explain worker compatibility instead of collapsing it to a boolean."""
+        workers = self.list_workers(organization_id)
+        if not workers:
+            return {"ready": False, "reasonCode": "no_enrolled_worker", "compatibleCount": 0}
+        active = [worker for worker in workers if worker.get("status") == "active"]
+        if not active:
+            reason = "worker_revoked" if any(w.get("status") == "revoked" for w in workers) else "worker_offline"
+            return {"ready": False, "reasonCode": reason, "compatibleCount": 0}
+        cutoff = now() - timedelta(minutes=2)
+        fresh = []
+        for worker in active:
+            seen = worker.get("last_seen_at") or worker.get("lastSeenAt")
+            if isinstance(seen, str):
+                seen = datetime.fromisoformat(seen.replace("Z", "+00:00"))
+            if not self.durable or (seen and seen > cutoff):
+                fresh.append(worker)
+        if not fresh:
+            return {"ready": False, "reasonCode": "worker_offline", "compatibleCount": 0}
+        qualified = []
+        digest_seen = False
+        for worker in fresh:
+            models = (worker.get("capabilities") or {}).get("models", [])
+            for model in models:
+                if model_digest and model.get("digest") != model_digest:
+                    continue
+                digest_seen = True
+                if model.get("readiness") == "preflighted" and model.get("preflightCompletedAt"):
+                    qualified.append((worker, model))
+        if not digest_seen:
+            return {"ready": False, "reasonCode": "digest_mismatch", "compatibleCount": 0}
+        if not qualified:
+            return {"ready": False, "reasonCode": "preflight_incomplete", "compatibleCount": 0}
+        return {
+            "ready": True,
+            "reasonCode": "ready",
+            "compatibleCount": len({str(worker.get("id")) for worker, _ in qualified}),
+            "freshnessSeconds": 120,
+        }
+
     def active_model_policies(self, organization_id: str) -> list[dict]:
         if self.durable:
             with self._connect() as connection:

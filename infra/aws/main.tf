@@ -751,7 +751,7 @@ resource "aws_ecs_task_definition" "api" {
       { name = "SIGNALS_LAB_WRITES_ENABLED", value = "false" },
       { name = "SIGNALS_VALIDATION_ENABLED", value = "false" },
       { name = "SIGNALS_EXECUTION_HANDOFF_ENABLED", value = "false" },
-      { name = "REPORT_EXPORT_ENABLED", value = "false" },
+      { name = "REPORT_EXPORT_ENABLED", value = "true" },
       { name = "SELECTIVE_INTEGRATION_ENABLED", value = "true" },
       { name = "SELECTIVE_INTEGRATION_ENFORCED", value = "true" },
       { name = "ARTIFACT_BUCKET", value = aws_s3_bucket.artifacts.id },

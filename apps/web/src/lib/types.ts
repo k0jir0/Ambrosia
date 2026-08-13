@@ -394,6 +394,9 @@ export interface DecisionPacket extends TradeReview {
     fallbackUsed: boolean;
     reason: string;
     pipelineVersion?: string; verifiedRoleCount?: number; humanReviewRoleCount?: number;
+    requestedProvider?: string; actualProvider?: string; operationId?: string;
+    workerId?: string; modelName?: string; modelDigest?: string; verificationStatus?: string;
+    runId?: string; fallbackOperationId?: string; fallbackFromOperationId?: string;
   } | null;
 }
 

@@ -100,4 +100,5 @@ def provider_status() -> dict[str, bool]:
     return {
         "hostedConfigured": _has_hosted_credentials(),
         "ollamaConfigured": _has_ollama_endpoint(),
+        "synchronousServerOllamaConfigured": _has_ollama_endpoint(),
     }

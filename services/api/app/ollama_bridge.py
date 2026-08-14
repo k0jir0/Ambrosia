@@ -76,6 +76,7 @@ class OperationView(BaseModel):
     admissionState: str | None = None
     resultPacketVersion: int | None = None
     fallbackOperationId: str | None = None
+    completionEvidenceArtifactId: str | None = None
     error: dict | None = None
     createdAt: str
     updatedAt: str
@@ -203,6 +204,31 @@ class Bridge:
         return value
 
     @staticmethod
+    def _completion_evidence_payload(operation: dict, proposal: dict, worker: dict, body: WorkerResult, run_id: str, verification: str) -> dict:
+        output = body.output.model_dump(mode="json", exclude_unset=True)
+        return {
+            "schemaVersion": "ollama-completion-evidence.v1",
+            "operationId": operation["id"],
+            "runId": str(run_id),
+            "proposalId": str(proposal["id"]),
+            "packetId": operation["packetId"],
+            "organizationId": str(operation["tenant"]),
+            "workerId": str(worker["id"]),
+            "workerName": worker.get("name"),
+            "modelName": body.modelName,
+            "modelDigest": body.modelDigest,
+            "ollamaVersion": body.ollamaVersion,
+            "verification": verification,
+            "resultHash": canonical_hash(output),
+            "outputHash": canonical_hash(output),
+            "proposalHash": proposal["originalOutputHash"],
+            "inputHash": operation["inputHash"],
+            "claimCount": len(output.get("materialClaims", [])),
+            "evidenceReferences": output.get("evidenceReferences", []),
+            "createdAt": now(),
+        }
+
+    @staticmethod
     def approved_digest(tenant: str, requested: str | None) -> str:
         policies = catalog.active_model_policies(tenant)
         available = {str(item["digest"]) for item in policies}
@@ -228,13 +254,14 @@ class Bridge:
                  progress,provider_requested,provider_used,input_hash,input_artifact_id,
                  requested_model_digest,model_name,model_digest,
                  worker_id,job_id,fallback_operation_id,result_packet_version,result_hash,verification_status,
-                 deadline_at,trace_id,created_by,error,proposal_id,admission_state,created_at,updated_at)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s,%s,%s,%s)
+                 completion_evidence_artifact_id,deadline_at,trace_id,created_by,error,proposal_id,
+                 admission_state,created_at,updated_at)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s,%s,%s,%s)
                 ON CONFLICT(id) DO UPDATE SET state=EXCLUDED.state,stage=EXCLUDED.stage,progress=EXCLUDED.progress,
                  provider_used=EXCLUDED.provider_used,model_name=EXCLUDED.model_name,model_digest=EXCLUDED.model_digest,
                  worker_id=EXCLUDED.worker_id,job_id=EXCLUDED.job_id,fallback_operation_id=EXCLUDED.fallback_operation_id,
                  result_packet_version=EXCLUDED.result_packet_version,result_hash=EXCLUDED.result_hash,
-                 verification_status=EXCLUDED.verification_status,error=EXCLUDED.error,
+                 verification_status=EXCLUDED.verification_status,completion_evidence_artifact_id=EXCLUDED.completion_evidence_artifact_id,error=EXCLUDED.error,
                  proposal_id=EXCLUDED.proposal_id,admission_state=EXCLUDED.admission_state,
                  deadline_at=EXCLUDED.deadline_at,updated_at=EXCLUDED.updated_at""",
                 (
@@ -262,6 +289,7 @@ class Bridge:
                     row.get("resultPacketVersion"),
                     row.get("resultHash"),
                     row.get("verificationStatus"),
+                    row.get("completionEvidenceArtifactId"),
                     row["deadlineAt"],
                     row["traceId"],
                     row["createdBy"],
@@ -297,6 +325,9 @@ class Bridge:
             "proposalId": str(value["proposal_id"]) if value.get("proposal_id") else None,
             "admissionState": value.get("admission_state"),
             "resultPacketVersion": value["result_packet_version"],
+            "completionEvidenceArtifactId": str(value["completion_evidence_artifact_id"])
+            if value.get("completion_evidence_artifact_id")
+            else None,
             "fallbackOperationId": str(value["fallback_operation_id"])
             if value["fallback_operation_id"]
             else None,
@@ -880,13 +911,7 @@ class Bridge:
             ).fetchone()
             event["previousHash"] = prior["event_hash"] if prior else "0" * 64
             event["eventHash"] = canonical_hash(
-                [
-                    proposal["id"],
-                    event_type,
-                    actor,
-                    payload_hash,
-                    event["previousHash"],
-                ]
+                [proposal["id"], event_type, actor, payload_hash, event["previousHash"]]
             )
             connection.execute(
                 """INSERT INTO llm_proposal_events
@@ -2067,6 +2092,18 @@ class Bridge:
             )
             self.persist(row)
             return
+        tenant_token = set_organization_id(str(row["tenant"]))
+        try:
+            completion_artifact = artifact_store.persist_json(
+                "llm",
+                packet.id,
+                f"ollama-completion-{oid}.json",
+                self._completion_evidence_payload(
+                    row, proposal, worker, body, run_id, verification
+                ),
+            )
+        finally:
+            reset_organization_id(tenant_token)
         updated = self.result_packet(
             packet, worker, body, verification, run_id, str(oid), row["traceId"]
         )
@@ -2097,6 +2134,7 @@ class Bridge:
                 resultPacketVersion=saved.packetVersion,
                 resultHash=digest,
                 admissionState="auto_admitted",
+                completionEvidenceArtifactId=completion_artifact.get("artifactId"),
                 updatedAt=now(),
             )
             self.persist(row)
@@ -2282,6 +2320,14 @@ class Bridge:
                 job.get("attempt_id"),
             )
             return {"duplicate": False, "superseded": False, "rejected": True}
+        completion_artifact = artifact_store.persist_json(
+            "llm",
+            packet.id,
+            f"ollama-completion-{operation_id}.json",
+            self._completion_evidence_payload(
+                operation, proposal, worker, body, run_id, verification
+            ),
+        )
         updated = self.result_packet(
             packet, worker, body, verification, run_id, operation_id, operation["trace_id"]
         )
@@ -2302,7 +2348,8 @@ class Bridge:
             provider_used='ollama-local-worker',model_name=%s,model_digest=%s,worker_id=%s,
             verification_status=%s,
             result_packet_version=%s,result_hash=%s,proposal_id=%s,
-            admission_state='auto_admitted',updated_at=now(),completed_at=now()
+            admission_state='auto_admitted',completion_evidence_artifact_id=%s,
+            updated_at=now(),completed_at=now()
             WHERE id=%s""",
             (
                 body.modelName,
@@ -2312,6 +2359,7 @@ class Bridge:
                 updated.packetVersion,
                 result_hash,
                 proposal["id"],
+                completion_artifact.get("artifactId"),
                 operation_id,
             ),
         )

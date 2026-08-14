@@ -947,7 +947,9 @@ def test_ollama_completion_is_effectively_once_and_packet_versioned(monkeypatch)
     result = _ollama_result(claim)
     first = client.post(f"/local-worker/jobs/{claim['id']}/result", headers=headers, json=result)
     assert first.status_code == 200, first.text
-    assert client.get(f"/operations/{created['id']}").json()["state"] == "completed"
+    completed = client.get(f"/operations/{created['id']}").json()
+    assert completed["state"] == "completed"
+    assert completed["completionEvidenceArtifactId"]
     assert client.get(f"/packets/{packet_id}").json()["packetVersion"] == 2
     duplicate = client.post(
         f"/local-worker/jobs/{claim['id']}/result", headers=headers, json=result
@@ -1397,7 +1399,7 @@ def test_deployment_version_and_capabilities_attest_report_policy(monkeypatch) -
     version = client.get("/version")
     assert version.status_code == 200
     assert version.json()["buildSha"] == "a" * 40
-    assert version.json()["dbSchemaVersion"] == "v0015"
+    assert version.json()["dbSchemaVersion"] == "v0016"
     capabilities = client.get("/capabilities")
     assert capabilities.status_code == 200
     assert capabilities.json()["schemaVersion"] == "deployment-capabilities.v1"
@@ -1432,7 +1434,7 @@ def test_health_detailed_endpoint() -> None:
     assert "store" in health["checks"]
     assert health["checks"]["persistence"]["mode"] in {"memory", "postgres"}
     assert health["checks"]["persistence"]["databaseRequired"] is False
-    assert health["checks"]["persistence"]["dbSchemaVersion"] == "v0015"
+    assert health["checks"]["persistence"]["dbSchemaVersion"] == "v0016"
     assert "marketData" in health["checks"]
     assert "llmProviders" in health["checks"]
     assert "slo" in health

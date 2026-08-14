@@ -618,7 +618,7 @@ jobs:
           test "$(jq -r .governedReportExport "$RUNNER_TEMP/web-version.json")" = "true"
           test "$(jq -r .reportExport.enabled "$RUNNER_TEMP/capabilities.json")" = "true"
           test "$(jq -r .reportExport.writable "$RUNNER_TEMP/capabilities.json")" = "true"
-          test "$(jq -r .dbSchemaVersion "$RUNNER_TEMP/api-version.json")" = "v0015"
+          test "$(jq -r .dbSchemaVersion "$RUNNER_TEMP/api-version.json")" = "v0016"
           echo "api=$API_URL" >> "$GITHUB_OUTPUT"
           echo "web=$WEB_URL" >> "$GITHUB_OUTPUT"
           {

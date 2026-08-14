@@ -10,47 +10,6 @@ they never hold decision authority or mutate a live brokerage account.
 Ambrosia is distributed under the MIT License. See [LICENSE](LICENSE) for the
 full text.
 
-## Current staging state
-
-AWS staging is deployed from the protected `staging` branch at:
-
-<https://d1c00nr674401f.cloudfront.net/>
-
-The most recent applied AWS release before this README update was successful
-for staging commit `97f040d16be3a2c791750988c7592a707787a38b` in workflow run
-`31269029604`. On August 8, 2026, the landing, login, signup, onboarding,
-`/api/live`, and `/api/ready` routes returned HTTP 200. Readiness reported
-healthy persistence, artifact storage, distributed rate limiting, account
-identity, and identity checks. The environment uses synthetic data, generated
-CloudFront addressing, one API task, and one web task in `ca-central-1`; no
-website custom domain is enabled.
-
-Transactional email is qualified for activation. The SES domain identity
-`agentresearchcompany.com` is verified in AWS account `111204669733` and
-`ca-central-1`; Easy DKIM RSA 2048 and signing report `SUCCESS`, DMARC monitoring
-is published with `p=none`, and a mailbox-simulator send succeeded through the
-`ambrosia-staging-transactional` configuration set. SES uses its default MAIL
-FROM domain so the existing Namecheap email-forwarding MX and SPF records
-remain intact. Account-level suppression covers bounces and complaints, and
-the enabled event destination publishes bounce, complaint, and reject events.
-
-AWS Support granted production access in case `178621567500544` on August 13,
-2026. SES reports sending enabled, healthy enforcement, a 50,000-message daily
-quota, and a 14-message-per-second rate. The protected staging deployment
-inputs now select `no-reply@agentresearchcompany.com` with the verified domain
-identity; the currently running task remains in console mode until the next
-protected staging release. The separate `ryanvwatkins@gmail.com` identity
-remains failed and is not a sender. Keep `CUSTOM_DOMAIN_ENABLED=false` because
-DNS remains authoritative in Namecheap rather than Route53.
-
-This proves that the current staging web and API are deployed and reachable. It
-also proves SES domain ownership, DKIM qualification, and sandbox submission.
-It does not prove SES production access, inbox placement, production readiness,
-unrestricted public-beta readiness, model quality, security certification,
-backup recovery, or the complete signup-to-decision journey. The evidence-backed
-Index133 readiness generator still returns `NO_GO` with 25 pending external
-gates.
-
 ## The first product journey
 
 1. A visitor understands the product promise on the public landing page.
@@ -248,3 +207,44 @@ improvement, AWS production hosting, paid customers, retention, or revenue
 without the scoped evidence and approvals named in the release claims register.
 Guided data is a dated illustrative sample, not live market data or a customer
 result.
+
+## Current staging state
+
+AWS staging is deployed from the protected `staging` branch at:
+
+<https://d1c00nr674401f.cloudfront.net/>
+
+The most recent applied AWS release before this README update was successful
+for staging commit `97f040d16be3a2c791750988c7592a707787a38b` in workflow run
+`31269029604`. On August 8, 2026, the landing, login, signup, onboarding,
+`/api/live`, and `/api/ready` routes returned HTTP 200. Readiness reported
+healthy persistence, artifact storage, distributed rate limiting, account
+identity, and identity checks. The environment uses synthetic data, generated
+CloudFront addressing, one API task, and one web task in `ca-central-1`; no
+website custom domain is enabled.
+
+Transactional email is qualified for activation. The SES domain identity
+`agentresearchcompany.com` is verified in AWS account `111204669733` and
+`ca-central-1`; Easy DKIM RSA 2048 and signing report `SUCCESS`, DMARC monitoring
+is published with `p=none`, and a mailbox-simulator send succeeded through the
+`ambrosia-staging-transactional` configuration set. SES uses its default MAIL
+FROM domain so the existing Namecheap email-forwarding MX and SPF records
+remain intact. Account-level suppression covers bounces and complaints, and
+the enabled event destination publishes bounce, complaint, and reject events.
+
+AWS Support granted production access in case `178621567500544` on August 13,
+2026. SES reports sending enabled, healthy enforcement, a 50,000-message daily
+quota, and a 14-message-per-second rate. The protected staging deployment
+inputs now select `no-reply@agentresearchcompany.com` with the verified domain
+identity; the currently running task remains in console mode until the next
+protected staging release. The separate `ryanvwatkins@gmail.com` identity
+remains failed and is not a sender. Keep `CUSTOM_DOMAIN_ENABLED=false` because
+DNS remains authoritative in Namecheap rather than Route53.
+
+This proves that the current staging web and API are deployed and reachable. It
+also proves SES domain ownership, DKIM qualification, and sandbox submission.
+It does not prove SES production access, inbox placement, production readiness,
+unrestricted public-beta readiness, model quality, security certification,
+backup recovery, or the complete signup-to-decision journey. The evidence-backed
+Index133 readiness generator still returns `NO_GO` with 25 pending external
+gates.

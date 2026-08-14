@@ -2092,14 +2092,18 @@ class Bridge:
             )
             self.persist(row)
             return
-        completion_artifact = artifact_store.persist_json(
-            "llm",
-            packet.id,
-            f"ollama-completion-{oid}.json",
-            self._completion_evidence_payload(
-                row, proposal, worker, body, run_id, verification
-            ),
-        )
+        tenant_token = set_organization_id(str(row["tenant"]))
+        try:
+            completion_artifact = artifact_store.persist_json(
+                "llm",
+                packet.id,
+                f"ollama-completion-{oid}.json",
+                self._completion_evidence_payload(
+                    row, proposal, worker, body, run_id, verification
+                ),
+            )
+        finally:
+            reset_organization_id(tenant_token)
         updated = self.result_packet(
             packet, worker, body, verification, run_id, str(oid), row["traceId"]
         )

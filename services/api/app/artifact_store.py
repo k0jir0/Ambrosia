@@ -35,6 +35,7 @@ class ArtifactStore:
         }
         self._report_probe_monotonic = 0.0
         self._report_requests: dict[tuple[str, str, str], dict] = {}
+        self._development_artifacts: dict[str, dict] = {}
 
     def _bucket(self) -> str:
         return os.getenv("ARTIFACT_BUCKET", "").strip()
@@ -112,20 +113,24 @@ class ArtifactStore:
         organization_id = current_organization_id()
         if not organization_id:
             raise PermissionError("tenant context is required for artifact persistence")
+        encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+        content_hash = hashlib.sha256(encoded).hexdigest()
         bucket = self._bucket()
         if not bucket:
             if _production():
                 raise RuntimeError("ARTIFACT_BUCKET is required")
+            artifact_id = str(uuid4())
+            self._development_artifacts[artifact_id] = {
+                "organizationId": str(organization_id),
+                "contentHash": content_hash,
+                "payload": json.loads(encoded),
+            }
             return {
-                "artifactId": None,
+                "artifactId": artifact_id,
                 "storageStatus": "development_not_persisted",
-                "contentHash": hashlib.sha256(
-                    json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
-                ).hexdigest(),
+                "contentHash": content_hash,
             }
 
-        encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
-        content_hash = hashlib.sha256(encoded).hexdigest()
         key = tenant_object_key(kind, object_reference, filename)
         artifact_id = str(uuid4())
         principal = current_principal()
@@ -341,7 +346,12 @@ class ArtifactStore:
         """Read and hash-verify one tenant-scoped durable JSON artifact server-side."""
         database_url = os.getenv("DATABASE_URL", "").strip()
         if not database_url or not self._bucket():
-            raise RuntimeError("Durable artifact storage is unavailable")
+            cached = self._development_artifacts.get(artifact_id)
+            if not cached:
+                raise RuntimeError("Durable artifact storage is unavailable")
+            if str(current_organization_id()) != cached["organizationId"]:
+                raise FileNotFoundError("Governed artifact not found")
+            return json.loads(json.dumps(cached["payload"]))
         with psycopg.connect(database_url, row_factory=dict_row) as connection:
             apply_tenant_context(connection)
             row = connection.execute(
@@ -362,6 +372,7 @@ class ArtifactStore:
         """Compensate a failed parent transaction without leaving readable input data."""
         database_url = os.getenv("DATABASE_URL", "").strip()
         if not database_url or not self._bucket():
+            self._development_artifacts.pop(artifact_id, None)
             return
         with psycopg.connect(database_url, row_factory=dict_row) as connection:
             apply_tenant_context(connection)

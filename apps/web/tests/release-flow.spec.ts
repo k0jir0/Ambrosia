@@ -55,10 +55,123 @@ test("visitor can complete signup, verification, and onboarding choice", async (
 });
 
 test("protected workspace redirects an unauthenticated visitor to login", async ({ page }) => {
-  await page.route(LOCAL_API_ROUTE, (route) => route.abort());
+  test.slow();
+  await page.route(LOCAL_API_ROUTE, async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (path === "/auth/me") {
+      await route.fulfill({
+        status: 401,
+        contentType: "application/json",
+        body: JSON.stringify({ detail: "Authenticated account session required" }),
+      });
+      return;
+    }
+    await route.abort();
+  });
   await page.goto("/app");
   await page.waitForURL(/\/login\?returnTo=%2Fapp/);
   await expect(page.getByRole("heading", { name: /Return to the decisions/i })).toBeVisible();
+});
+
+test("transient session check failure retries without signing the user out", async ({ page }) => {
+  let sessionChecks = 0;
+  await page.route(LOCAL_API_ROUTE, async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (path === "/auth/me") {
+      sessionChecks += 1;
+      if (sessionChecks === 1) {
+        await route.fulfill({
+          status: 503,
+          contentType: "application/json",
+          body: JSON.stringify({ detail: "Temporary session lookup failure" }),
+        });
+        return;
+      }
+      if (await fulfillAuthenticatedAccount(route)) return;
+    }
+    await route.abort();
+  });
+
+  await page.goto("/app");
+  await expect(page.getByText("Northstar Capital")).toBeVisible();
+  await expect(page).toHaveURL(/\/app$/);
+  expect(sessionChecks).toBe(2);
+});
+
+test("transient background revalidation preserves and restores the authenticated shell", async ({ page }) => {
+  let sessionChecks = 0;
+  await page.route(LOCAL_API_ROUTE, async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (path === "/auth/me") {
+      sessionChecks += 1;
+      if (sessionChecks === 2) {
+        await route.fulfill({
+          status: 503,
+          contentType: "application/json",
+          body: JSON.stringify({ detail: "Temporary session lookup failure" }),
+        });
+        return;
+      }
+      if (await fulfillAuthenticatedAccount(route)) return;
+    }
+    await route.abort();
+  });
+
+  await page.goto("/app");
+  await expect(page.getByText("Northstar Capital")).toBeVisible();
+  await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+  await expect(page.getByRole("status")).toContainText("Your session remains open");
+  await expect(page).toHaveURL(/\/app$/);
+  await expect(page.getByText("Northstar Capital")).toBeVisible();
+  await page.getByRole("button", { name: "Retry session check" }).click();
+  await expect(page.getByRole("status")).toHaveCount(0);
+  expect(sessionChecks).toBe(3);
+});
+
+test("terminal background revalidation redirects to login", async ({ page }) => {
+  test.slow();
+  let sessionChecks = 0;
+  await page.route(LOCAL_API_ROUTE, async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (path === "/auth/me") {
+      sessionChecks += 1;
+      if (sessionChecks === 2) {
+        await route.fulfill({
+          status: 401,
+          contentType: "application/json",
+          body: JSON.stringify({ detail: "Authenticated account session required" }),
+        });
+        return;
+      }
+      if (await fulfillAuthenticatedAccount(route)) return;
+    }
+    await route.abort();
+  });
+
+  await page.goto("/app");
+  await expect(page.getByText("Northstar Capital")).toBeVisible();
+  await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+  await page.waitForURL(/\/login\?returnTo=%2Fapp/);
+  expect(sessionChecks).toBe(2);
+});
+
+test("protected route navigation reuses the verified shell session", async ({ page }) => {
+  test.slow();
+  let sessionChecks = 0;
+  await page.route(LOCAL_API_ROUTE, async (route) => {
+    if (await fulfillAuthenticatedAccount(route)) {
+      sessionChecks += 1;
+      return;
+    }
+    await route.abort();
+  });
+
+  await page.goto("/app");
+  await expect(page.getByText("Northstar Capital")).toBeVisible();
+  await page.getByRole("link", { name: "Review Queue" }).click();
+  await expect(page).toHaveURL(/\/review$/, { timeout: 30000 });
+  await expect(page.getByText("Northstar Capital")).toBeVisible();
+  expect(sessionChecks).toBe(1);
 });
 
 test("password recovery reports unavailable delivery without claiming success", async ({ page }) => {

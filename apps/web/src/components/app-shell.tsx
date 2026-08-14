@@ -18,11 +18,17 @@ import {
   Activity,
   BarChart3,
   RadioTower,
+  RefreshCw,
   Users,
   X,
 } from "lucide-react";
 
-import { getAccountSession, logoutAccount, type AccountSession } from "@/lib/api";
+import {
+  getAccountSession,
+  isAuthenticationRequired,
+  logoutAccount,
+  type AccountSession,
+} from "@/lib/api";
 import { getRouteAvailability, isRouteAvailable, PUBLIC_PATHS } from "@/lib/route-availability";
 import { CommandPalette } from "./command-palette";
 import { cn } from "./ui";
@@ -42,6 +48,9 @@ const NAV_ITEMS = [
   { href: "/admin", label: "Admin", icon: Settings },
 ] as const;
 
+const SESSION_RETRY_DELAYS_MS = [250, 750] as const;
+const SESSION_REVALIDATION_MS = 90_000;
+
 function activePath(pathname: string, href: string) {
   return pathname === href || pathname.startsWith(`${href}/`);
 }
@@ -53,40 +62,113 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const routeEnabled = routeAvailability?.enabled ?? true;
   const [profile, setProfile] = useState<AccountSession | null>(null);
   const [checking, setChecking] = useState(!isPublic);
+  const [sessionIssue, setSessionIssue] = useState<string | null>(null);
+  const [sessionRetryKey, setSessionRetryKey] = useState(0);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
+  const sessionId = profile?.session.id;
 
   useEffect(() => {
     if (isPublic) {
       setChecking(false);
       return;
     }
-    if (!routeEnabled && routeAvailability) {
-      window.location.replace(routeAvailability.unavailableRedirect);
+    if (profile) {
+      setChecking(false);
       return;
     }
+
     let active = true;
-    setChecking(true);
-    getAccountSession()
-      .then((session) => {
+    let retryTimer: number | undefined;
+
+    async function loadSession(attempt: number) {
+      setChecking(true);
+      try {
+        const session = await getAccountSession();
         if (!active) return;
         if (!isRouteAvailable(pathname, session.organization.role)) {
           window.location.replace(routeAvailability?.unavailableRedirect ?? "/app");
           return;
         }
         setProfile(session);
-      })
-      .catch(() => {
-        const returnTo = encodeURIComponent(pathname);
-        window.location.assign(`/login?returnTo=${returnTo}`);
-      })
-      .finally(() => {
-        if (active) setChecking(false);
-      });
+        setSessionIssue(null);
+        setChecking(false);
+      } catch (error) {
+        if (!active) return;
+        if (isAuthenticationRequired(error)) {
+          const returnTo = encodeURIComponent(pathname);
+          window.location.assign(`/login?returnTo=${returnTo}`);
+          return;
+        }
+        if (attempt < SESSION_RETRY_DELAYS_MS.length) {
+          setSessionIssue("Connection interrupted. Reconnecting your session...");
+          retryTimer = window.setTimeout(
+            () => void loadSession(attempt + 1),
+            SESSION_RETRY_DELAYS_MS[attempt],
+          );
+          return;
+        }
+        setSessionIssue("We could not verify your session. Your sign-in was not cleared.");
+        setChecking(false);
+      }
+    }
+
+    void loadSession(0);
     return () => {
       active = false;
+      if (retryTimer !== undefined) window.clearTimeout(retryTimer);
     };
-  }, [isPublic, pathname, routeAvailability, routeEnabled]);
+  }, [isPublic, pathname, profile, routeAvailability, sessionRetryKey]);
+
+  useEffect(() => {
+    if (isPublic || !profile) return;
+    if (!routeEnabled && routeAvailability) {
+      window.location.replace(routeAvailability.unavailableRedirect);
+      return;
+    }
+    if (!isRouteAvailable(pathname, profile.organization.role)) {
+      window.location.replace(routeAvailability?.unavailableRedirect ?? "/app");
+    }
+  }, [isPublic, pathname, profile, routeAvailability, routeEnabled]);
+
+  useEffect(() => {
+    if (isPublic || !sessionId) return;
+    let active = true;
+    let inFlight = false;
+
+    async function revalidateSession() {
+      if (inFlight) return;
+      inFlight = true;
+      try {
+        const session = await getAccountSession();
+        if (!active) return;
+        setProfile(session);
+        setSessionIssue(null);
+      } catch (error) {
+        if (!active) return;
+        if (isAuthenticationRequired(error)) {
+          const returnTo = encodeURIComponent(window.location.pathname);
+          window.location.assign(`/login?returnTo=${returnTo}`);
+          return;
+        }
+        setSessionIssue("Connection interrupted. Your session remains open while we retry.");
+      } finally {
+        inFlight = false;
+      }
+    }
+
+    const interval = window.setInterval(() => void revalidateSession(), SESSION_REVALIDATION_MS);
+    function handleVisibilityChange() {
+      if (document.visibilityState === "visible") void revalidateSession();
+    }
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    if (sessionRetryKey > 0) void revalidateSession();
+    return () => {
+      active = false;
+      window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [isPublic, sessionId, sessionRetryKey]);
 
   useEffect(() => {
     function openCommandPalette(event: KeyboardEvent) {
@@ -105,8 +187,21 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     return (
       <main className="grid min-h-screen place-items-center bg-fog px-6 text-ink">
         <div className="text-center">
-          <div className="mx-auto h-8 w-8 animate-spin rounded-full border-2 border-teal/25 border-t-teal" />
-          <p className="mt-4 text-sm text-ink/65">Opening your decision workspace…</p>
+          {checking ? (
+            <div className="mx-auto h-8 w-8 animate-spin rounded-full border-2 border-teal/25 border-t-teal" />
+          ) : null}
+          <p className="mt-4 text-sm text-ink/65">
+            {sessionIssue ?? "Opening your decision workspace…"}
+          </p>
+          {!checking && sessionIssue ? (
+            <button
+              type="button"
+              onClick={() => setSessionRetryKey((value) => value + 1)}
+              className="focus-ring mx-auto mt-4 inline-flex items-center gap-2 rounded-md border border-line px-4 py-2 text-sm text-ink/80"
+            >
+              <RefreshCw className="h-4 w-4" /> Retry session check
+            </button>
+          ) : null}
         </div>
       </main>
     );
@@ -178,7 +273,22 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </section>
         </aside>
 
-        <main className="min-h-screen min-w-0 flex-1 p-4 pb-24 lg:p-8 lg:pb-8">{children}</main>
+        <main className="min-h-screen min-w-0 flex-1 p-4 pb-24 lg:p-8 lg:pb-8">
+          {sessionIssue ? (
+            <div className="mb-4 flex items-center justify-between gap-4 rounded-md border border-amber-300/30 bg-amber-300/10 px-4 py-3 text-sm text-ink/80" role="status">
+              <span>{sessionIssue}</span>
+              <button
+                type="button"
+                onClick={() => setSessionRetryKey((value) => value + 1)}
+                className="focus-ring shrink-0 rounded-md p-2 text-ink/70 hover:bg-white/5 hover:text-ink"
+                aria-label="Retry session check"
+              >
+                <RefreshCw className="h-4 w-4" />
+              </button>
+            </div>
+          ) : null}
+          {children}
+        </main>
       </div>
 
       <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-line bg-paper/95 p-2 backdrop-blur lg:hidden">

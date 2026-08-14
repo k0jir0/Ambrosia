@@ -81,6 +81,11 @@ export class ApiProblemError extends ApiRequestError {
   }
 }
 
+export function isAuthenticationRequired(error: unknown): boolean {
+  return error instanceof ApiRequestError
+    && (error.status === 401 || error.code === "AUTHENTICATION_REQUIRED");
+}
+
 async function readJsonResponse<T>(response: Response): Promise<T> {
   const contentType = response.headers.get("content-type") ?? "";
   const isJson = contentType.includes("application/json") || contentType.includes("+json");

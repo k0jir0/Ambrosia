@@ -181,6 +181,18 @@ resource "aws_route_table_association" "data" {
   route_table_id = aws_route_table.data.id
 }
 
+# Free Gateway endpoint keeps S3 traffic off the NAT Gateway, reducing NAT data-processing cost.
+resource "aws_vpc_endpoint" "s3" {
+  vpc_id            = aws_vpc.main.id
+  service_name      = "com.amazonaws.${var.aws_region}.s3"
+  vpc_endpoint_type = "Gateway"
+  route_table_ids = concat(
+    [aws_route_table.public.id, aws_route_table.data.id],
+    aws_route_table.application[*].id,
+  )
+  tags = { Name = "${local.name}-s3-endpoint" }
+}
+
 resource "aws_security_group" "alb" {
   name        = "${local.name}-alb"
   description = "CloudFront origin ingress only"
@@ -948,102 +960,9 @@ resource "aws_cloudfront_function" "strip_api_prefix" {
   JAVASCRIPT
 }
 
-resource "aws_wafv2_web_acl" "regional" {
-  name  = "${local.name}-regional"
-  scope = "REGIONAL"
-  default_action {
-    allow {}
-  }
-  rule {
-    name     = "auth-rate-limit"
-    priority = 1
-    action {
-      block {}
-    }
-    statement {
-      rate_based_statement {
-        limit              = 100
-        aggregate_key_type = "IP"
-        scope_down_statement {
-          or_statement {
-            statement {
-              byte_match_statement {
-                search_string         = "/auth/"
-                positional_constraint = "STARTS_WITH"
-                field_to_match {
-                  uri_path {}
-                }
-                text_transformation {
-                  priority = 0
-                  type     = "NONE"
-                }
-              }
-            }
-            statement {
-              byte_match_statement {
-                search_string         = "/api/auth/"
-                positional_constraint = "STARTS_WITH"
-                field_to_match {
-                  uri_path {}
-                }
-                text_transformation {
-                  priority = 0
-                  type     = "NONE"
-                }
-              }
-            }
-          }
-        }
-      }
-    }
-    visibility_config {
-      cloudwatch_metrics_enabled = true
-      metric_name                = "auth-rate"
-      sampled_requests_enabled   = true
-    }
-  }
-  rule {
-    name     = "expensive-workflow-rate-limit"
-    priority = 2
-    action {
-      block {}
-    }
-    statement {
-      rate_based_statement {
-        limit              = 300
-        aggregate_key_type = "IP"
-        scope_down_statement {
-          regex_match_statement {
-            regex_string = "^/(api/)?(scanner|discovery|agents|llm/jobs)(/|$)"
-            field_to_match {
-              uri_path {}
-            }
-            text_transformation {
-              priority = 0
-              type     = "NONE"
-            }
-          }
-        }
-      }
-    }
-    visibility_config {
-      cloudwatch_metrics_enabled = true
-      metric_name                = "expensive-workflow-rate"
-      sampled_requests_enabled   = true
-    }
-  }
-  visibility_config {
-    cloudwatch_metrics_enabled = true
-    metric_name                = local.name
-    sampled_requests_enabled   = true
-  }
-}
-
-resource "aws_wafv2_web_acl_association" "alb" {
-  resource_arn = aws_lb.main.arn
-  web_acl_arn  = aws_wafv2_web_acl.regional.arn
-}
-
+# Regional WAF on the ALB was removed: the ALB security group already restricts
+# ingress to the CloudFront managed prefix list, so the edge WAF below is the
+# sole entry point and a second Web ACL was redundant cost with no added protection.
 resource "aws_wafv2_web_acl" "edge" {
   provider = aws.us_east_1
   name     = "${local.name}-edge"

@@ -1,30 +1,51 @@
 # Ambrosia
 
-Ambrosia is a governed investment-decision workspace. It helps an investment
-team challenge a thesis, preserve evidence and disagreement, apply deterministic
-risk gates, record a human decision, and learn from the outcome. Models advise;
-they never hold decision authority or mutate a live brokerage account.
+Ambrosia is an investment-decision workspace built to help investors
+**pressure-test investment theses against evidence, expose weaknesses, and
+document the reasoning behind their decisions.** Models are advisory; people
+retain decision authority. Ambrosia is not an autonomous trading system.
+
+## Project status
+
+Documentation reviewed on **September 29, 2026**.
+
+- **Source branches:** this guide describes the
+  [`stagingfix` source tree](https://github.com/k0jir0/Ambrosia/tree/stagingfix).
+  The repository home page on `main` carries this overview, but its application
+  code is older. AWS deployment uses the separately approved `staging` branch;
+  updating this README does not merge or deploy application code.
+- **Hosting:** AWS is the current deployment platform. Ambrosia no longer
+  deploys on Render. Remaining Render configuration, URLs, and migration notes
+  in older files are legacy material, not current deployment instructions.
+- **Environment:** the configured release workflow targets AWS **staging**.
+  The recorded staging entry point is
+  <https://d1c00nr674401f.cloudfront.net/>. This README is not a live uptime or
+  production-readiness attestation.
+- **Release authority:** use the current workflow, runtime configuration, and
+  approved evidence. Historical "100% complete" documents and passing health
+  checks do not establish model quality, security certification, or investment
+  performance.
 
 ## License
 
-Ambrosia is distributed under the MIT License. See [LICENSE](LICENSE) for the
+Ambrosia is distributed under the MIT License. See [LICENSE](https://github.com/k0jir0/Ambrosia/blob/stagingfix/LICENSE) for the
 full text.
 
-## The first product journey
+## Core workflow
 
-1. A visitor understands the product promise on the public landing page.
-2. The user creates an email/password account and private organization.
-3. Email verification opens a tenant-bound workspace and dated guided sample.
-4. The user chooses the guided case or enters a thesis.
-5. Ambrosia builds an adversarial decision packet with provenance, uncertainty,
-   strongest disagreement, missing evidence, and risk/policy gates.
-6. The user records the decision and can later attach the observed outcome.
-7. Organization administrators can inspect minimized activation evidence,
-   sessions, team members, governed artifacts, and catalogued local-model runs.
+1. Create an account and organization workspace, then complete verification.
+2. Enter an instrument, investment thesis, horizon, expression, and source pointers,
+  or open a dated illustrative sample.
+3. Create a review draft and decision packet. Initial review creation is not the
+  same as completed evidence retrieval or model analysis.
+4. Refresh available market context, run configured specialist analysis, and
+  inspect evidence, disagreement, missing information, and policy gates.
+5. Review the advisory output and record a human decision.
+6. Attach an observed outcome and retain the decision history for later review.
 
-The signed-in production navigation intentionally exposes only the sellable
-decision loop. Research labs remain available in development or behind
-`NEXT_PUBLIC_ENABLE_LABS=true`.
+The principal web experience focuses on this decision loop. Scanner, ticker
+research, and experimental labs depend on feature flags and the deployed
+configuration; not every repository module is exposed in staging.
 
 ## Implemented repository scope
 
@@ -38,7 +59,7 @@ decision loop. Research labs remain available in development or behind
 - Adversarial review, packet, provenance, deterministic risk, outcome, report,
   signal, and decision-memory workflows.
 - Privacy-minimized activation telemetry with a fixed taxonomy and idempotency.
-- KMS-encrypted S3 artifact persistence in production, content hashes, a durable
+- KMS-encrypted S3 artifact persistence for AWS deployments, content hashes, a durable
   database catalogue, and short-lived tenant-scoped download URLs.
 - An outbound-only local Ollama worker protocol with revocable credentials,
   strict structured output, model/prompt/evidence metadata, human review, and a
@@ -46,17 +67,9 @@ decision loop. Research labs remain available in development or behind
 - AWS Terraform for CloudFront, WAF, ALB, private ECS/Fargate services, RDS
   PostgreSQL, TLS Redis, S3/KMS, SES/DKIM/SPF/DMARC, Secrets Manager,
   autoscaling, logs, alarms, and protected migration tasks.
-- An AWS release workflow that builds once, scans before push, emits SBOMs,
-  signs image digests, deploys immutable digests, and separates migration from
+- An AWS release workflow configured to build once, scan before push, emit SBOMs,
+  sign image digests, deploy immutable digests, and separate migration from
   runtime credentials.
-- Render-to-AWS inventory, rehearsal, validation, cutover, rollback, and
-  evidence procedures.
-
-The AWS staging deployment is evidence of a reachable environment, but
-repository code and basic health checks are not evidence of model quality,
-legal approval, security certification, customer traction, investment
-performance, or recovery readiness. The machine-readable release decision
-stays `NO_GO` until the remaining external gates have approved evidence.
 
 ## Architecture
 
@@ -82,39 +95,85 @@ processing. No LLM belongs in a live order-validity or kill-switch loop.
 - `packages/evals/` — model and workflow evaluation protocols
 - `packages/cli/`, `packages/sdk-python/` — operator interfaces
 - `infra/aws/` — AWS infrastructure as code
-- `infra/db/` — schema and ordered migrations through `v0009`
+- `infra/db/` — schema and ordered migrations
 - `scripts/` — migration, validation, evidence, and local-stack automation
 - `docs/operations/` — current operational and release authority
 - `docs/session-archives/` — historical planning material, not current proof
 
 Older percent-complete documents and historical deployment notes are not
 release evidence. Current claims are governed by
-`docs/operations/RELEASE_CLAIMS_REGISTER.md` and
-`docs/operations/INDEX132_IMPLEMENTATION_LEDGER.md`.
+[the release claims register](https://github.com/k0jir0/Ambrosia/blob/stagingfix/docs/operations/RELEASE_CLAIMS_REGISTER.md) and
+[the implementation ledger](https://github.com/k0jir0/Ambrosia/blob/stagingfix/docs/operations/INDEX132_IMPLEMENTATION_LEDGER.md),
+read alongside the current code and release evidence.
 
 ## Local development
 
-Requirements: Node.js 20+, pnpm 9.12, Python 3.12, and uv.
+Requirements: Node.js 20+, pnpm 9.12.0, Python 3.12+, and
+[uv](https://docs.astral.sh/uv/). AWS validation additionally requires Docker,
+Terraform, and appropriately scoped AWS credentials.
+
+### Windows quick start
+
+For a fresh checkout of the source described here:
+
+```powershell
+git clone --branch stagingfix https://github.com/k0jir0/Ambrosia.git
+cd Ambrosia
+```
+
+From that repository root:
 
 ```powershell
 pnpm install --frozen-lockfile
+uv sync --project services/api --frozen
 pnpm local:serve
 ```
 
-The web and API can also be started independently:
+Default local addresses:
+
+- Web: <http://127.0.0.1:3000>
+- API: <http://127.0.0.1:8000>
+- API documentation: <http://127.0.0.1:8000/docs>
+
+The `local:*` commands use PowerShell scripts. To run the web and API separately,
+use separate terminals:
 
 ```powershell
 pnpm local:web:serve
 pnpm local:api:serve
 ```
 
-Development may use an in-memory identity/persistence adapter and deterministic
-fallback data. Staging and production fail closed when PostgreSQL, Redis,
-artifact storage, or required secrets are unavailable.
+Background lifecycle commands are `pnpm local:start`, `pnpm local:status`,
+`pnpm local:logs`, and `pnpm local:stop`.
+
+### Direct development commands
+
+For environments without the Windows launch scripts, start the web from the
+repository root with `pnpm dev:web`. In another terminal:
+
+```sh
+cd services/api
+uv run --frozen uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+```
+
+Local development can use in-memory adapters and fallback data. Configure real
+providers and persistence explicitly when testing integrations. Browser-local
+drafts, fixture data, and successful page rendering do not prove a canonical
+server save or completed analysis. Do not use production credentials for local
+experiments or commit secrets.
+
+### Local model worker
+
+The outbound Ollama worker is a separate process from the web/API stack. Running
+the web app does not start a model or enroll a worker. The governed review path
+requires a tenant-enrolled, compatible worker and an approved model digest; see
+[the worker implementation](https://github.com/k0jir0/Ambrosia/blob/stagingfix/packages/local-worker/ambrosia_local_worker.py) and
+[the operation bridge](https://github.com/k0jir0/Ambrosia/blob/stagingfix/services/api/app/ollama_bridge.py). Model output remains
+advisory and must follow the configured proposal/admission workflow.
 
 ## Verification
 
-Primary repository gates:
+Run applicable checks from the repository root:
 
 ```powershell
 pnpm lint:web
@@ -126,10 +185,17 @@ pnpm test:unit
 python scripts/verify-migrations.py
 python scripts/verify-index119-readiness.py
 python scripts/verify-aws-staging-control-plane.py
-python packages/evals/run_ollama_disconfirmation_eval.py
-python scripts/generate-index132-readiness.py
-python scripts/generate-index133-staging-readiness.py
 ```
+
+The focused review tests can be run independently:
+
+```powershell
+uv run --project services/api --frozen pytest tests/unit-tests/test_backend_review_engine_unit.py tests/unit-tests/test_index157_pipeline_unit.py --confcutdir=tests/unit-tests -q -p no:cacheprovider
+```
+
+These tests cover selected contracts and mocked/model-independent behavior, not
+live model quality or a deployed end-to-end journey. On Windows, use an explicit
+writable `--basetemp` if pytest's default temporary directory is inaccessible.
 
 Terraform validation:
 
@@ -139,66 +205,93 @@ terraform -chdir=infra/aws init -backend=false
 terraform -chdir=infra/aws validate
 ```
 
-PostgreSQL integration tests require `RUNTIME_DATABASE_URL`. Migration
-comparison requires read-only `RENDER_DATABASE_URL` and `AWS_DATABASE_URL`.
-No credential values belong in logs or evidence JSON.
+PostgreSQL integration tests require `RUNTIME_DATABASE_URL`. Supply test database
+credentials through your environment; do not include them in logs or evidence.
 
-## AWS migration and release
+The [Ollama evaluation script](https://github.com/k0jir0/Ambrosia/blob/stagingfix/packages/evals/run_ollama_disconfirmation_eval.py)
+without model outputs only validates a frozen protocol and reports
+`not_executed`. It is not a model-quality benchmark result. Its current threshold
+logic also needs correction before it can serve as a quality gate.
 
-Follow `docs/operations/AWS_MIGRATION_RUNBOOK.md`. AWS staging is live on its
-generated CloudFront hostname. The remaining sequence is evidence completion,
-two isolated data rehearsals, restore and rollback rehearsals, an approved
-production cutover, and a minimum 72-hour bake. Render remains a recovery
-reference until the formal go decision supersedes it.
+## AWS deployment
 
-The current AWS staging evidence template is
-`docs/operations/index133-staging-evidence.template.json`. Run:
+The deployment entry point is the
+[AWS release workflow](https://github.com/k0jir0/Ambrosia/blob/staging/.github/workflows/aws-release.yml), backed by
+[Terraform in infra/aws](https://github.com/k0jir0/Ambrosia/tree/staging/infra/aws). **Do not use Render deploy buttons,
+Render service URLs, or `render.yaml` to deploy the current application.**
+
+The configured apply path requires:
+
+1. The protected `staging` branch and GitHub `staging` environment approvals.
+2. A full `candidate_sha` matching the selected workflow commit.
+3. AWS OIDC deployment access, protected remote Terraform state, and the required
+  repository/environment variables and secrets listed in the workflow.
+4. Container validation, image scanning, database migration, deployment, and
+  environment-specific validation under that workflow.
+
+Use GitHub Actions to dispatch **AWS release** on `staging`, select the staging
+environment, supply the approved commit SHA, and enable `apply` only for an
+authorized deployment. A README push to `main` does not invoke this protected
+AWS apply path. The current workflow does not expose a production deployment
+option; do not describe a staging release as a production cutover.
+
+Review release evidence separately from infrastructure deployment. The staging
+and broader readiness commands are:
 
 ```powershell
 python scripts/generate-index133-staging-readiness.py `
   --external-evidence <approved-staging-evidence.json> `
   --require-live
-```
 
-For the broader release-readiness decision, use
-`docs/operations/index132-external-evidence.template.json`:
-
-```powershell
 python scripts/generate-index132-readiness.py `
   --external-evidence <approved-evidence.json> `
   --require-release-ready
 ```
 
-The command must fail until every external gate is passed and linked to real
-evidence. That failure is a safety property, not missing repository work.
+Use the [staging evidence template](https://github.com/k0jir0/Ambrosia/blob/stagingfix/docs/operations/index133-staging-evidence.template.json)
+and [broader release template](https://github.com/k0jir0/Ambrosia/blob/stagingfix/docs/operations/index132-external-evidence.template.json).
+The strict commands must fail until their required gates have approved evidence.
+Neither a successful deploy nor a readiness artifact alone certifies research
+quality, recovery readiness, or public-beta suitability.
 
-## Current limitations
+### Legacy documentation
 
-- The default production navigation exposes the governed decision loop. Market
-  Scanner uses `NEXT_PUBLIC_ENABLE_MARKET_SCANNER` with
-  `MARKET_SCANNER_ENABLED`; ticker intelligence is independently controlled by
-  `NEXT_PUBLIC_ENABLE_MARKET_INTELLIGENCE` with
-  `MARKET_INTELLIGENCE_ENABLED`. Market Intelligence is explicitly enabled in
-  staging and production release configuration after Index154 qualification;
-  either switch still provides an independent fail-closed rollback. AWS release builds
-  enable scanner discovery, ticker research, and review intake while keeping scanner promotion
-  and unrelated research or execution capabilities disabled.
-- AWS staging enforces governed selective integration, while the mobile client
-  still uses a legacy direct decision endpoint. Mobile parity requires an
-  enforced-mode compatibility update and test.
-- The current administration surface focuses on identity, workers, activation,
-  and artifacts. Earlier provider-health, alert, certification, metric, and
-  tool-boundary panels do not yet have an equivalent staging-native operator
-  console.
-- The local API suite passes 240 tests with three skipped when run with an
-  explicit writable `--basetemp`; the default shared Windows pytest temp and
-  cache directories can be inaccessible on this workstation.
-- pnpm 9 warns that the `pnpm` field in `package.json` no longer applies the
-  configured overrides and audit settings. Dependency policy should be moved to
-  the supported pnpm configuration surface.
-- Portfolio Intelligence is not part of staging. The former local portfolio
-  branch, integration worktree, migrations, and development servers were
-  removed rather than merged.
+The [AWS migration runbook](https://github.com/k0jir0/Ambrosia/blob/stagingfix/docs/operations/AWS_MIGRATION_RUNBOOK.md) contains
+historical migration and rehearsal procedures. Older deployment guides, Render
+configuration, and migration-only environment variables may remain in the
+repository for reference. They are not prerequisites for normal AWS releases or
+local development. Use the current workflow for deployment requirements rather
+than following an archived "deploy now" or percent-complete report.
+
+## Known limitations
+
+The September 2026 source audit identified gaps between a completed workflow
+object and validated analysis:
+
+- **Initial reviews are drafts:** [the generator](https://github.com/k0jir0/Ambrosia/blob/stagingfix/services/api/app/review_engine.py)
+  uses template critiques and tests, a pending historical analogue, and a fixed
+  initial confidence value. Creating a review does not retrieve its source URLs.
+- **Verification is incomplete:** claim-verification coverage and missing-source
+  disconfirmation checks need correction before their pass labels can be treated
+  as substantive evidence validation.
+- **Fallbacks are not research:** generated market data can lose its explicit
+  synthetic label during evidence construction. Browser fallbacks can preserve
+  a local review after API failure. Inspect origin and persistence state.
+- **Quantitative outputs need qualification:** the controlled backtest in
+  [day6.py](https://github.com/k0jir0/Ambrosia/blob/stagingfix/services/api/app/day6.py) generates seeded synthetic metrics, not a
+  historical strategy simulation. Position-size units and heuristic risk and
+  confidence calculations need correction or clearer boundaries.
+- **Quality gates are not yet sufficient:** the unsupported-claim threshold in
+  the Ollama evaluator has an inverted comparison. Passing schema or fixture
+  tests does not establish model accuracy or investment usefulness.
+- **Client and feature parity remains work:** mobile decision writeback and
+  experimental modules should not be assumed equivalent to the governed web
+  workflow. Feature flags and worker configuration affect what is available.
+
+The next reliability milestone is a narrow end-to-end review using authentic,
+inspectable evidence, complete claim verification, honest abstention, consistent
+units, and a durable human decision. These limitations are documented here, not
+claimed to have been fixed by this README update.
 
 ## Claims boundary
 
@@ -207,44 +300,3 @@ improvement, AWS production hosting, paid customers, retention, or revenue
 without the scoped evidence and approvals named in the release claims register.
 Guided data is a dated illustrative sample, not live market data or a customer
 result.
-
-## Current staging state
-
-AWS staging is deployed from the protected `staging` branch at:
-
-<https://d1c00nr674401f.cloudfront.net/>
-
-The most recent applied AWS release before this README update was successful
-for staging commit `97f040d16be3a2c791750988c7592a707787a38b` in workflow run
-`31269029604`. On August 8, 2026, the landing, login, signup, onboarding,
-`/api/live`, and `/api/ready` routes returned HTTP 200. Readiness reported
-healthy persistence, artifact storage, distributed rate limiting, account
-identity, and identity checks. The environment uses synthetic data, generated
-CloudFront addressing, one API task, and one web task in `ca-central-1`; no
-website custom domain is enabled.
-
-Transactional email is qualified for activation. The SES domain identity
-`agentresearchcompany.com` is verified in AWS account `111204669733` and
-`ca-central-1`; Easy DKIM RSA 2048 and signing report `SUCCESS`, DMARC monitoring
-is published with `p=none`, and a mailbox-simulator send succeeded through the
-`ambrosia-staging-transactional` configuration set. SES uses its default MAIL
-FROM domain so the existing Namecheap email-forwarding MX and SPF records
-remain intact. Account-level suppression covers bounces and complaints, and
-the enabled event destination publishes bounce, complaint, and reject events.
-
-AWS Support granted production access in case `178621567500544` on August 13,
-2026. SES reports sending enabled, healthy enforcement, a 50,000-message daily
-quota, and a 14-message-per-second rate. The protected staging deployment
-inputs now select `no-reply@agentresearchcompany.com` with the verified domain
-identity; the currently running task remains in console mode until the next
-protected staging release. The separate `ryanvwatkins@gmail.com` identity
-remains failed and is not a sender. Keep `CUSTOM_DOMAIN_ENABLED=false` because
-DNS remains authoritative in Namecheap rather than Route53.
-
-This proves that the current staging web and API are deployed and reachable. It
-also proves SES domain ownership, DKIM qualification, and sandbox submission.
-It does not prove SES production access, inbox placement, production readiness,
-unrestricted public-beta readiness, model quality, security certification,
-backup recovery, or the complete signup-to-decision journey. The evidence-backed
-Index133 readiness generator still returns `NO_GO` with 25 pending external
-gates.

@@ -263,36 +263,6 @@ repository for reference. They are not prerequisites for normal AWS releases or
 local development. Use the current workflow for deployment requirements rather
 than following an archived "deploy now" or percent-complete report.
 
-## Known limitations
-
-The September 2026 source audit identified gaps between a completed workflow
-object and validated analysis:
-
-- **Initial reviews are drafts:** [the generator](https://github.com/k0jir0/Ambrosia/blob/stagingfix/services/api/app/review_engine.py)
-  uses template critiques and tests, a pending historical analogue, and a fixed
-  initial confidence value. Creating a review does not retrieve its source URLs.
-- **Verification is incomplete:** claim-verification coverage and missing-source
-  disconfirmation checks need correction before their pass labels can be treated
-  as substantive evidence validation.
-- **Fallbacks are not research:** generated market data can lose its explicit
-  synthetic label during evidence construction. Browser fallbacks can preserve
-  a local review after API failure. Inspect origin and persistence state.
-- **Quantitative outputs need qualification:** the controlled backtest in
-  [day6.py](https://github.com/k0jir0/Ambrosia/blob/stagingfix/services/api/app/day6.py) generates seeded synthetic metrics, not a
-  historical strategy simulation. Position-size units and heuristic risk and
-  confidence calculations need correction or clearer boundaries.
-- **Quality gates are not yet sufficient:** the unsupported-claim threshold in
-  the Ollama evaluator has an inverted comparison. Passing schema or fixture
-  tests does not establish model accuracy or investment usefulness.
-- **Client and feature parity remains work:** mobile decision writeback and
-  experimental modules should not be assumed equivalent to the governed web
-  workflow. Feature flags and worker configuration affect what is available.
-
-The next reliability milestone is a narrow end-to-end review using authentic,
-inspectable evidence, complete claim verification, honest abstention, consistent
-units, and a durable human decision. These limitations are documented here, not
-claimed to have been fixed by this README update.
-
 ## Claims boundary
 
 Do not claim returns, alpha, enterprise-grade security, compliance, model

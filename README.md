@@ -9,14 +9,6 @@ retain decision authority. Ambrosia is not an autonomous trading system.
 
 Documentation reviewed on **September 29, 2026**.
 
-- **Source branches:** this guide describes the
-  [`stagingfix` source tree](https://github.com/k0jir0/Ambrosia/tree/stagingfix).
-  The repository home page on `main` carries this overview, but its application
-  code is older. AWS deployment uses the separately approved `staging` branch;
-  updating this README does not merge or deploy application code.
-- **Hosting:** AWS is the current deployment platform. Ambrosia no longer
-  deploys on Render. Remaining Render configuration, URLs, and migration notes
-  in older files are legacy material, not current deployment instructions.
 - **Environment:** the configured release workflow targets AWS **staging**.
   The recorded staging entry point is
   <https://d1c00nr674401f.cloudfront.net/>. This README is not a live uptime or

@@ -11,12 +11,7 @@ Documentation reviewed on **September 29, 2026**.
 
 - **Environment:** the configured release workflow targets AWS **staging**.
   The recorded staging entry point is
-  <https://d1c00nr674401f.cloudfront.net/>. This README is not a live uptime or
-  production-readiness attestation.
-- **Release authority:** use the current workflow, runtime configuration, and
-  approved evidence. Historical "100% complete" documents and passing health
-  checks do not establish model quality, security certification, or investment
-  performance.
+  <https://d1c00nr674401f.cloudfront.net/> which is currently disabled.
 
 ## License
 
